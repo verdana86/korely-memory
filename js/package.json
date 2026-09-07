@@ -1,7 +1,7 @@
 {
   "name": "korely-memory",
-  "version": "0.1.1",
-  "description": "JavaScript / TypeScript SDK for Korely Agents — memory for AI agents with bi-temporal typed facts.",
+  "version": "0.1.2",
+  "description": "JavaScript / TypeScript SDK for Korely Agents \u2014 memory for AI agents with bi-temporal typed facts.",
   "keywords": [
     "ai",
     "agents",
@@ -12,6 +12,14 @@
     "typescript"
   ],
   "homepage": "https://korely.ai/agents",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/verdana86/korely-memory.git",
+    "directory": "js"
+  },
+  "bugs": {
+    "url": "https://github.com/verdana86/korely-memory/issues"
+  },
   "license": "MIT",
   "author": "Korely <hello@korely.ai>",
   "type": "module",
