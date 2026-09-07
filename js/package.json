@@ -1,0 +1,48 @@
+{
+  "name": "korely-memory",
+  "version": "0.1.1",
+  "description": "JavaScript / TypeScript SDK for Korely Agents — memory for AI agents with bi-temporal typed facts.",
+  "keywords": [
+    "ai",
+    "agents",
+    "memory",
+    "llm",
+    "rag",
+    "knowledge-graph",
+    "typescript"
+  ],
+  "homepage": "https://korely.ai/agents",
+  "license": "MIT",
+  "author": "Korely <hello@korely.ai>",
+  "type": "module",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "sideEffects": false,
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "build": "tsup",
+    "test": "node --test",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "@types/node": "^22.9.0",
+    "tsup": "^8.3.5",
+    "typescript": "^5.6.3"
+  }
+}
