@@ -125,6 +125,36 @@ korely facts --as-of 2026-03-01 --user-id maria
 - **Prompt-ready context.** `get_context()` returns a block you can paste straight into a system prompt, with the token count.
 - **EU-hosted.** Runs in Helsinki. End users can see, correct, and erase what agents remember about them.
 
+## Examples
+
+[`examples/audit_trail.py`](examples/audit_trail.py) answers the question this
+store exists for: **what did your agent know on the day it answered?**
+
+A support agent tells a customer in March that they have priority support. In
+June the customer moves to a cheaper plan. In September they complain, quoting
+your bot back at you. Was the bot wrong, or right at the time?
+
+```
+  What the store believed in March, when the agent answered:
+      customer-4821 · subscribes_to · Business plan
+      Business plan · includes · priority support
+
+  What is true today:
+      customer-4821 · subscribes_to · Standard plan
+      customer-4821 · lacks · priority support
+```
+
+Right in March, right today, and both provable. Run it yourself in about
+twenty seconds:
+
+```bash
+pip install korely-memory
+korely init --agent --agent-caller audit-example
+python examples/audit_trail.py
+```
+
+It checks its own claims rather than making them, erasure included.
+
 ## Repository layout
 
 | Path | Package |
