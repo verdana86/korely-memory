@@ -87,6 +87,14 @@ curl -X POST https://api.korely.ai/v1/agents/init \
 
 The response carries a `kor_live_` key. Set it as `KORELY_API_KEY` and the SDK, the CLI, and the REST API all authenticate with it.
 
+Or let the CLI do it for you. `korely init` saves the key to `~/.korely/config.json`, and the SDK reads it from there when `KORELY_API_KEY` is not set, so this is enough to get going:
+
+```bash
+pip install korely-memory
+korely init --agent --agent-caller your-name
+python -c "from korely_memory import Korely; print(Korely().get_context(query='hi').tokens)"
+```
+
 ## TypeScript
 
 ```ts

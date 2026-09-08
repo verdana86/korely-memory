@@ -38,7 +38,7 @@ from .models import (
     UsersPage,
 )
 
-__version__ = "0.1.5"
+__version__ = "0.1.6"
 
 # All keys are the EU region; data is stored and processed in the EU.
 _REGIONS = {"eu": "https://api.korely.ai"}
@@ -77,6 +77,25 @@ def _coerce_content(content: Any) -> str:
     return str(content)
 
 
+def _key_from_config() -> Optional[str]:
+    """Fall back to the key `korely init` saved.
+
+    The CLI writes it to ~/.korely/config.json, and the docs tell people to run
+    `korely init` first. Without this the documented path (init, then import the
+    SDK) fails with "No API key", which is the first thing a new user hits.
+    Best effort: any read problem just means we carry on and raise the normal
+    missing-key error.
+    """
+    try:
+        home = os.environ.get("KORELY_CONFIG_HOME") or os.path.join(
+            os.path.expanduser("~"), ".korely")
+        with open(os.path.join(home, "config.json"), encoding="utf-8") as fh:
+            key = json.load(fh).get("api_key")
+        return key if isinstance(key, str) and key else None
+    except Exception:
+        return None
+
+
 class Korely:
     """Typed client over the Korely REST API.
 
@@ -91,10 +110,11 @@ class Korely:
         base_url: Optional[str] = None,
         timeout: float = 30.0,
     ):
-        self.api_key = api_key or os.environ.get("KORELY_API_KEY")
+        self.api_key = api_key or os.environ.get("KORELY_API_KEY") or _key_from_config()
         if not self.api_key:
             raise KorelyError(
-                "No API key. Pass api_key='kor_live_...' or set KORELY_API_KEY."
+                "No API key. Pass api_key='kor_live_...', set KORELY_API_KEY, "
+                "or run `korely init --agent` to get a free one."
             )
         self.base_url = (base_url or _REGIONS.get(region) or _REGIONS["eu"]).rstrip("/")
         self.timeout = timeout

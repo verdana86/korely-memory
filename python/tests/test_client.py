@@ -4,7 +4,10 @@ assert the SDK builds the right request and parses the right model. Run with:
 
     cd sdk/python && python3 -m unittest discover -s tests -v
 """
+import json
 import os
+import shutil
+import tempfile
 import sys
 import unittest
 
@@ -292,6 +295,49 @@ class TestMethodParity(unittest.TestCase):
         p = _client(rec).get_profile(user_id="u")
         self.assertTrue(p.truncated)
         self.assertEqual(p.total, 250)
+
+
+class TestKeyResolution(unittest.TestCase):
+    """`korely init` saves the key to ~/.korely/config.json and the docs tell
+    people to run it first. The SDK must find it, otherwise the documented path
+    (init, then import the SDK) dies on "No API key" — which is exactly what a
+    new user hits first. Found walking the product from outside, 2026-09-08."""
+
+    def setUp(self):
+        self._tmp = tempfile.mkdtemp()
+        os.environ["KORELY_CONFIG_HOME"] = self._tmp
+        self._saved_env = os.environ.pop("KORELY_API_KEY", None)
+
+    def tearDown(self):
+        os.environ.pop("KORELY_CONFIG_HOME", None)
+        if self._saved_env is not None:
+            os.environ["KORELY_API_KEY"] = self._saved_env
+        shutil.rmtree(self._tmp, ignore_errors=True)
+
+    def _write_config(self, key):
+        with open(os.path.join(self._tmp, "config.json"), "w", encoding="utf-8") as fh:
+            json.dump({"api_key": key}, fh)
+
+    def test_reads_the_key_saved_by_korely_init(self):
+        self._write_config("kor_live_from_config")
+        self.assertEqual(Korely().api_key, "kor_live_from_config")
+
+    def test_environment_wins_over_the_config_file(self):
+        self._write_config("kor_live_from_config")
+        os.environ["KORELY_API_KEY"] = "kor_live_from_env"
+        try:
+            self.assertEqual(Korely().api_key, "kor_live_from_env")
+        finally:
+            os.environ.pop("KORELY_API_KEY", None)
+
+    def test_explicit_argument_wins_over_everything(self):
+        self._write_config("kor_live_from_config")
+        self.assertEqual(Korely(api_key="kor_live_explicit").api_key, "kor_live_explicit")
+
+    def test_missing_key_still_raises_with_a_useful_hint(self):
+        with self.assertRaises(KorelyError) as ctx:
+            Korely()
+        self.assertIn("korely init", str(ctx.exception))
 
 
 if __name__ == "__main__":
