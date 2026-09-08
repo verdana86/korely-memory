@@ -208,20 +208,32 @@ class Korely:
         return Memory.from_dict(body)
 
     def search(self, query: str, *, user_id: Optional[str] = None,
-               agent_id: Optional[str] = None, limit: Optional[int] = None) -> List[SearchHit]:
+               agent_id: Optional[str] = None, run_id: Optional[str] = None,
+               metadata: Optional[dict] = None,
+               limit: Optional[int] = None) -> List[SearchHit]:
         """POST /v1/memories/search — hybrid retrieval, ranked by score.
+
+        ``run_id`` scopes to one session and ``metadata`` filters on what you
+        stored at write time (keys ANDed, compared as strings). Both mirror the
+        arguments ``add()`` accepts, so anything you can write you can query.
 
         ``limit`` defaults to the server default (15) when not passed."""
         body = self._call("POST", "/v1/memories/search", json_body=_clean({
-            "query": query, "user_id": user_id, "agent_id": agent_id, "limit": limit,
+            "query": query, "user_id": user_id, "agent_id": agent_id,
+            "run_id": run_id, "metadata": metadata, "limit": limit,
         }))
         return [SearchHit.from_dict(h) for h in body.get("results", [])]
 
     def get_all(self, *, user_id: Optional[str] = None, agent_id: Optional[str] = None,
+                run_id: Optional[str] = None,
                 limit: int = 50, offset: int = 0) -> MemoryPage:
-        """GET /v1/memories — list a scope, newest first."""
+        """GET /v1/memories — list a scope, newest first.
+
+        ``run_id`` narrows to one session. Metadata filtering lives on
+        ``search()``, which carries a body and can take a dict."""
         body = self._call("GET", "/v1/memories", params=_clean({
-            "user_id": user_id, "agent_id": agent_id, "limit": limit, "offset": offset,
+            "user_id": user_id, "agent_id": agent_id, "run_id": run_id,
+            "limit": limit, "offset": offset,
         }))
         return MemoryPage.from_dict(body)
 

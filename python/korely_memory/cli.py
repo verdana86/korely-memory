@@ -123,7 +123,7 @@ def cmd_add(k: Korely, a) -> int:
 
 
 def cmd_search(k: Korely, a) -> int:
-    hits = k.search(a.query, user_id=a.user_id, agent_id=a.agent_id, limit=a.limit)
+    hits = k.search(a.query, run_id=getattr(a, 'run_id', None), user_id=a.user_id, agent_id=a.agent_id, limit=a.limit)
     if a.json:
         _emit_json(hits)
         return 0
@@ -337,6 +337,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("search", parents=[common], help="hybrid search over memories")
     sp.add_argument("query")
+    sp.add_argument("--run-id", help="scope to one run/session")
     sp.add_argument("--limit", type=int, default=10)
     sp.set_defaults(func=cmd_search)
 
