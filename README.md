@@ -64,7 +64,16 @@ what you want when you are importing history.
 | `search()` over raw memories | immediately |
 | `get_facts()` and `get_context()` typed facts | after a few seconds |
 
-The `time.sleep(10)` above exists only so the snippet works when you paste it. **You do not need it in production**: an agent writes at the end of one turn and reads at the start of the next, and by then the facts are there. If you do need to read right after a write, poll `get_facts()` until it returns what you expect.
+The `time.sleep(10)` above exists only so the snippet works when you paste it. **You do not need it in production**: an agent writes at the end of one turn and reads at the start of the next, and by then the facts are there.
+
+If you do need to know exactly when, ask instead of guessing. Every memory carries a `status` of `processing`, `ready`, or `error`, and `events()` reports what is still in flight:
+
+```python
+korely.events()
+# {"events": [{"memory_id": "mem_...", "status": "ready", ...}], "processing": 0}
+```
+
+`processing: 0` means every write you sent has been extracted. Batch imports can wait on that one number instead of walking every id. If you can receive webhooks, `fact_extracted` pushes the same signal without polling.
 
 ## Install
 

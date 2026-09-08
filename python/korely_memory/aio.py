@@ -133,6 +133,9 @@ class AsyncKorely:
     async def delete_agent(self, agent_id: str) -> AgentDeleteReceipt:
         return await self._run(self._sync.delete_agent, agent_id)
 
+    async def events(self, **kw) -> dict:
+        return await self._run(lambda: self._sync.events(**kw))
+
     async def batch_status(self, job_id: str) -> BatchJob:
         return await self._run(self._sync.batch_status, job_id)
 

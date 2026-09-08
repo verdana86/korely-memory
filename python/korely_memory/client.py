@@ -38,7 +38,7 @@ from .models import (
     UsersPage,
 )
 
-__version__ = "0.1.7"
+__version__ = "0.1.8"
 
 # All keys are the EU region; data is stored and processed in the EU.
 _REGIONS = {"eu": "https://api.korely.ai"}
@@ -364,6 +364,23 @@ class Korely:
         return Context.from_dict(body)
 
     # ── batch ────────────────────────────────────────────────────────────────
+    def events(self, *, user_id: Optional[str] = None, status: Optional[str] = None,
+               limit: int = 50) -> dict:
+        """GET /v1/events — which writes have finished being processed.
+
+        ``add()`` returns as soon as the memory is stored, then fact extraction
+        runs behind it, so a read taken immediately can legitimately find no
+        facts. This tells you which is which. The ``processing`` count is how
+        many are still in flight for your account, so a batch import can wait on
+        one number instead of walking every id.
+
+        Prefer the ``fact_extracted`` webhook when you can receive one. This is
+        the pull equivalent for local development, serverless, and scripts.
+        """
+        return self._call("GET", "/v1/events", params=_clean({
+            "user_id": user_id, "status": status, "limit": limit,
+        }))
+
     def batch(self, memories: List[dict]) -> BatchJob:
         """POST /v1/batch — bulk import (up to 500 memory objects), async."""
         body = self._call("POST", "/v1/batch", json_body={"memories": list(memories)})
