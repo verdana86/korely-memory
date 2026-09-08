@@ -125,6 +125,32 @@ korely facts --as-of 2026-03-01 --user-id maria
 - **Prompt-ready context.** `get_context()` returns a block you can paste straight into a system prompt, with the token count.
 - **EU-hosted.** Runs in Helsinki. End users can see, correct, and erase what agents remember about them.
 
+## Async
+
+An agent in production does not make one call at a time. `AsyncKorely` mirrors
+every method of `Korely`, so nothing you learned transfers away:
+
+```python
+import asyncio
+from korely_memory import AsyncKorely
+
+async def main():
+    korely = AsyncKorely()
+    contexts = await asyncio.gather(
+        korely.get_context(query="what plan?", user_id="a"),
+        korely.get_context(query="what plan?", user_id="b"),
+        korely.get_context(query="what plan?", user_id="c"),
+    )
+
+asyncio.run(main())
+```
+
+Six calls against the live API: **5.6s sequential, 1.7s concurrent**.
+
+Calls run on a thread pool rather than an async HTTP library, because keeping
+this package at **zero runtime dependencies** is worth more than the last drop
+of efficiency. Your event loop is never blocked and requests really do overlap.
+
 ## Examples
 
 [`examples/audit_trail.py`](examples/audit_trail.py) answers the question this

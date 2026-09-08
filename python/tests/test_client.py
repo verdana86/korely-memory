@@ -342,3 +342,64 @@ class TestKeyResolution(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestAsyncClient(unittest.TestCase):
+    """An agent in production fans out across users. With only a blocking client
+    we become the thing the event loop waits on, which is row 3 of the checklist
+    a developer runs us through."""
+
+    def setUp(self):
+        os.environ["KORELY_API_KEY"] = "kor_live_async_test"
+
+    def tearDown(self):
+        os.environ.pop("KORELY_API_KEY", None)
+
+    def test_mirrors_every_sync_method(self):
+        """Parity is the promise, so it is worth a test rather than a comment.
+        If someone adds a method to Korely and forgets AsyncKorely, this fails."""
+        import inspect
+        from korely_memory import AsyncKorely, Korely
+
+        def public(cls):
+            return {n for n, _ in inspect.getmembers(cls, inspect.isfunction)
+                    if not n.startswith("_")}
+
+        missing = public(Korely) - public(AsyncKorely)
+        self.assertEqual(missing, set(), f"AsyncKorely is missing: {sorted(missing)}")
+
+    def test_every_mirrored_method_is_awaitable(self):
+        import inspect
+        from korely_memory import AsyncKorely
+
+        for name, fn in inspect.getmembers(AsyncKorely, inspect.isfunction):
+            if name.startswith("_"):
+                continue
+            with self.subTest(method=name):
+                self.assertTrue(inspect.iscoroutinefunction(fn),
+                                f"{name} should be async")
+
+    def test_calls_reach_the_transport_and_run_concurrently(self):
+        import asyncio
+        from korely_memory import AsyncKorely
+
+        rec = _Recorder()
+        for _ in range(3):
+            rec.queue(200, {"context": "ctx", "tokens": 3, "sources": []})
+        korely = AsyncKorely()
+        korely._sync._send = rec
+
+        async def go():
+            return await asyncio.gather(*[
+                korely.get_context(query="q", user_id=u) for u in ("a", "b", "c")
+            ])
+
+        out = asyncio.run(go())
+        self.assertEqual(len(out), 3)
+        self.assertEqual(len(rec.calls), 3)
+        self.assertEqual({c["params"]["user_id"] for c in rec.calls}, {"a", "b", "c"})
+
+    def test_shares_the_key_resolution_of_the_sync_client(self):
+        from korely_memory import AsyncKorely
+        self.assertEqual(AsyncKorely().api_key, "kor_live_async_test")
+        self.assertEqual(AsyncKorely(api_key="kor_live_explicit").api_key, "kor_live_explicit")

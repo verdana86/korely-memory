@@ -10,6 +10,7 @@ checking) runs server-side.
     korely.add("User prefers TypeScript", agent_id="coding-assistant")
     ctx = korely.get_context(query="what does the user like?", user_id="dana")
 """
+from .aio import AsyncKorely
 from .client import Korely, __version__
 from .exceptions import (
     APIError,
@@ -41,6 +42,7 @@ from .models import (
 
 __all__ = [
     "Korely",
+    "AsyncKorely",
     "__version__",
     # exceptions
     "KorelyError",
