@@ -149,7 +149,8 @@ def cmd_context(k: Korely, a) -> int:
 
 
 def cmd_facts(k: Korely, a) -> int:
-    facts = k.get_facts(entity=a.entity, subject=a.subject, predicate_family=a.family,
+    facts = k.get_facts(entity=a.entity, subject=a.subject, predicate=a.predicate,
+                        predicate_family=a.family,
                         user_id=a.user_id, agent_id=a.agent_id, as_of=a.as_of,
                         include_invalidated=a.include_invalidated, limit=a.limit)
     if a.json:
@@ -349,6 +350,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help="typed facts; --as-of DATE for point-in-time (time-travel)")
     sp.add_argument("--entity", help="match subject OR object")
     sp.add_argument("--subject")
+    sp.add_argument("--predicate", help="exact predicate, e.g. subscribes_to")
     sp.add_argument("--family", help="predicate family")
     sp.add_argument("--as-of", help="ISO date: what was true on that day")
     sp.add_argument("--include-invalidated", action="store_true",

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "korely-memory"
-version = "0.1.4"
+version = "0.1.5"
 description = "Python SDK for Korely Agents — memory for AI agents with bi-temporal typed facts."
 readme = "README.md"
 requires-python = ">=3.9"
