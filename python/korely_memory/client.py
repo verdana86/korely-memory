@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from typing import Any, List, Optional
 from urllib import error as _urlerror
 from urllib import parse as _urlparse
@@ -96,6 +97,53 @@ def _key_from_config() -> Optional[str]:
         return None
 
 
+
+
+def _sni_hint(base_url: str, reason: object) -> str:
+    """Explain the one TLS failure whose message explains nothing.
+
+    A server named after its own IP address, `2.29.27.64.nip.io`, is what the
+    install instructions suggest when a machine has no DNS name yet. It works in
+    every browser. From the Python that ships with macOS it fails with
+    `TLSV1_ALERT_INTERNAL_ERROR` and nothing else, on both ends: the server sees
+    a handshake with no server name and hangs up, the client reports an internal
+    error it did not have.
+
+    The cause is that that Python is built against LibreSSL 2.8.3, which reads a
+    name beginning with four numbers as an IP address. RFC 6066 forbids sending
+    an IP address as the server name, so it sends no name at all, and a server
+    holding one certificate cannot tell which one was wanted. Measured against a
+    server that logs what it receives: `2.29.27.64.nip.io` arrives empty,
+    `2-29-27-64.nip.io` arrives intact, and a current Python sends both.
+
+    Nothing here can fix it. What it can do is stop the next person spending an
+    afternoon on it, which is what happened to the person this was written for.
+    """
+    try:
+        import ssl
+        if not isinstance(reason, ssl.SSLError):
+            return ""
+        host = _urlparse.urlsplit(base_url).hostname or ""
+        m = re.match(r"^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.", host)
+        if not m or any(int(g) > 255 for g in m.groups()):
+            return ""
+        if not ssl.OPENSSL_VERSION.startswith("LibreSSL"):
+            return ""
+        dashed = host.replace(".".join(m.groups()), "-".join(m.groups()), 1)
+        return (
+            "\n\nThis is not your server. This Python is built against "
+            + ssl.OPENSSL_VERSION + ", which reads a host name starting with "
+            "four numbers as an IP address and then sends no server name at all, "
+            "so the server cannot tell which certificate you wanted.\n"
+            "Two ways out, either is enough:\n"
+            "  use the dashed name, which resolves to the same address:\n"
+            "    base_url=\"https://" + dashed + "\"\n"
+            "  or run this on a Python built against OpenSSL 3, which sends it "
+            "correctly."
+        )
+    except Exception:
+        return ""
+
 class Korely:
     """Typed client over the Korely REST API.
 
@@ -153,7 +201,9 @@ class Korely:
             parsed.setdefault("_retry_after", retry_after)
             return e.code, parsed
         except _urlerror.URLError as e:
-            raise KorelyError("Connection error: " + str(e.reason))
+            raise KorelyError(
+                "Connection error: " + str(e.reason) + _sni_hint(self.base_url, e.reason)
+            )
 
     def _call(self, method: str, path: str, *, params: Optional[dict] = None,
               json_body: Optional[Any] = None) -> dict:

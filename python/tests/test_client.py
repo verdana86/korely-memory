@@ -403,3 +403,43 @@ class TestAsyncClient(unittest.TestCase):
         from korely_memory import AsyncKorely
         self.assertEqual(AsyncKorely().api_key, "kor_live_async_test")
         self.assertEqual(AsyncKorely(api_key="kor_live_explicit").api_key, "kor_live_explicit")
+
+
+class TheSniTrap(unittest.TestCase):
+    """The one TLS failure whose own message explains nothing.
+
+    Found by a tester following the install instructions, which suggest
+    `<ip>.nip.io` for a machine without a DNS name. The handshake fails with
+    TLSV1_ALERT_INTERNAL_ERROR and neither side says why. The client cannot fix
+    it, so the least it can do is name it.
+    """
+
+    def _hint(self, url, libressl=True):
+        import ssl
+        from unittest import mock
+        from korely_memory.client import _sni_hint
+        version = "LibreSSL 2.8.3" if libressl else "OpenSSL 3.5.7 9 Jun 2026"
+        with mock.patch.object(ssl, "OPENSSL_VERSION", version):
+            return _sni_hint(url, ssl.SSLError("tlsv1 alert internal error"))
+
+    def test_it_offers_the_dashed_name(self):
+        self.assertIn('https://2-29-27-64.nip.io', self._hint("https://2.29.27.64.nip.io"))
+
+    def test_it_says_the_server_is_not_at_fault(self):
+        self.assertIn("not your server", self._hint("https://2.29.27.64.nip.io"))
+
+    def test_an_ordinary_name_gets_nothing(self):
+        self.assertEqual("", self._hint("https://api.korely.ai"))
+
+    def test_a_name_that_only_looks_numeric_gets_nothing(self):
+        """999 is not an octet, so this name is not read as an address."""
+        self.assertEqual("", self._hint("https://999.1.1.1.nip.io"))
+
+    def test_a_modern_python_gets_nothing(self):
+        """It sends the name correctly, so the failure is something else and
+        guessing would send the reader down the wrong path."""
+        self.assertEqual("", self._hint("https://2.29.27.64.nip.io", libressl=False))
+
+    def test_a_failure_that_is_not_tls_gets_nothing(self):
+        from korely_memory.client import _sni_hint
+        self.assertEqual("", _sni_hint("https://2.29.27.64.nip.io", OSError("refused")))
