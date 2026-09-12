@@ -443,3 +443,47 @@ class TheSniTrap(unittest.TestCase):
     def test_a_failure_that_is_not_tls_gets_nothing(self):
         from korely_memory.client import _sni_hint
         self.assertEqual("", _sni_hint("https://2.29.27.64.nip.io", OSError("refused")))
+
+
+class TheServerItTalksTo(unittest.TestCase):
+    """Chi installa sulla propria macchina non deve finire sulla nostra.
+
+    `KORELY_BASE_URL` era letto dalla CLI e non dalla classe. Chi installava
+    Korely sul proprio server, esportava KORELY_API_KEY e KORELY_BASE_URL e
+    scriveva `Korely()` parlava con api.korely.ai. La chiave veniva rifiutata
+    con un 401, quindi non si memorizzava niente, ma la memoria era gia'
+    partita nel corpo della richiesta.
+
+    Per un prodotto venduto sul fatto che i dati restano sulla tua macchina,
+    mandarli altrove in silenzio non e' una scomodita'.
+    """
+
+    def setUp(self):
+        self._saved = {k: os.environ.get(k) for k in ("KORELY_BASE_URL", "KORELY_API_KEY")}
+        os.environ["KORELY_API_KEY"] = "kor_live_test"
+
+    def tearDown(self):
+        for k, v in self._saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def test_la_variabile_e_rispettata(self):
+        os.environ["KORELY_BASE_URL"] = "https://2-29-27-64.nip.io"
+        self.assertEqual(Korely().base_url, "https://2-29-27-64.nip.io")
+
+    def test_senza_variabile_resta_il_servizio_ospitato(self):
+        os.environ.pop("KORELY_BASE_URL", None)
+        self.assertEqual(Korely().base_url, "https://api.korely.ai")
+
+    def test_l_argomento_esplicito_vince_sulla_variabile(self):
+        """Un argomento e' una decisione, una variabile e' un'impostazione."""
+        os.environ["KORELY_BASE_URL"] = "https://variabile.example"
+        self.assertEqual(
+            Korely(base_url="https://esplicito.example").base_url,
+            "https://esplicito.example")
+
+    def test_la_barra_finale_non_raddoppia(self):
+        os.environ["KORELY_BASE_URL"] = "https://mio.example/"
+        self.assertEqual(Korely().base_url, "https://mio.example")

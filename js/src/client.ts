@@ -102,8 +102,18 @@ export class Korely {
       );
     }
     this.apiKey = key;
+    // KORELY_BASE_URL comes before the region default, and not for convenience.
+    // Somebody who installed Korely on their own machine sets KORELY_API_KEY and
+    // KORELY_BASE_URL, writes `new Korely()`, and expects to be talking to their
+    // own server. Without this they are talking to ours: the key is rejected with
+    // a 401, so nothing is stored, but the memory travelled in the body of the
+    // request before being refused. For a product sold on "your data stays on
+    // your machine" that is the one failure that cannot be waved through.
+    const envBase =
+      typeof process !== "undefined" ? process.env?.KORELY_BASE_URL : undefined;
     this.baseUrl = (
       opts.baseUrl ??
+      envBase ??
       REGIONS[opts.region ?? "eu"] ??
       REGIONS.eu
     ).replace(/\/+$/, "");

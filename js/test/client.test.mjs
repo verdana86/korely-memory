@@ -160,3 +160,48 @@ test("422 maps to generic APIError", async () => {
   ]);
   await assert.rejects(() => k.add("x", { user_id: "u" }), APIError);
 });
+
+// Il server con cui parla. KORELY_BASE_URL era letto dalla CLI e non dal
+// client: chi installava Korely sulla propria macchina, esportava le due
+// variabili e scriveva `new Korely()` parlava con api.korely.ai. La chiave
+// veniva rifiutata con un 401, quindi non si memorizzava niente, ma la memoria
+// era gia' partita nel corpo della richiesta. Per un prodotto venduto sul
+// fatto che i dati restano sulla tua macchina, non e' una scomodita'.
+test("KORELY_BASE_URL viene rispettato", () => {
+  const prima = process.env.KORELY_BASE_URL;
+  process.env.KORELY_BASE_URL = "https://2-29-27-64.nip.io";
+  try {
+    const k = new Korely({ apiKey: "kor_live_x", fetch: async () => ({}) });
+    assert.equal(k.baseUrl, "https://2-29-27-64.nip.io");
+  } finally {
+    if (prima === undefined) delete process.env.KORELY_BASE_URL;
+    else process.env.KORELY_BASE_URL = prima;
+  }
+});
+
+test("senza la variabile resta il servizio ospitato", () => {
+  const prima = process.env.KORELY_BASE_URL;
+  delete process.env.KORELY_BASE_URL;
+  try {
+    const k = new Korely({ apiKey: "kor_live_x", fetch: async () => ({}) });
+    assert.equal(k.baseUrl, "https://api.korely.ai");
+  } finally {
+    if (prima !== undefined) process.env.KORELY_BASE_URL = prima;
+  }
+});
+
+test("l'opzione esplicita vince sulla variabile", () => {
+  const prima = process.env.KORELY_BASE_URL;
+  process.env.KORELY_BASE_URL = "https://variabile.example";
+  try {
+    const k = new Korely({
+      apiKey: "kor_live_x",
+      baseUrl: "https://esplicito.example",
+      fetch: async () => ({}),
+    });
+    assert.equal(k.baseUrl, "https://esplicito.example");
+  } finally {
+    if (prima === undefined) delete process.env.KORELY_BASE_URL;
+    else process.env.KORELY_BASE_URL = prima;
+  }
+});

@@ -39,7 +39,7 @@ from .models import (
     UsersPage,
 )
 
-__version__ = "0.1.9"
+__version__ = "0.1.10"
 
 # All keys are the EU region; data is stored and processed in the EU.
 _REGIONS = {"eu": "https://api.korely.ai"}
@@ -164,7 +164,24 @@ class Korely:
                 "No API key. Pass api_key='kor_live_...', set KORELY_API_KEY, "
                 "or run `korely init --agent` to get a free one."
             )
-        self.base_url = (base_url or _REGIONS.get(region) or _REGIONS["eu"]).rstrip("/")
+        # KORELY_BASE_URL comes before the region default, and the reason is not
+        # convenience. Somebody who installed Korely on their own machine sets
+        # KORELY_API_KEY and KORELY_BASE_URL, writes `Korely()`, and expects to
+        # be talking to their own server. Without this line they are talking to
+        # ours: their key is rejected with a 401, so nothing is stored, but the
+        # memory travelled in the body of the request before being refused.
+        #
+        # For a product sold on "your data stays on your machine", quietly
+        # sending it somewhere else is the one failure that cannot be waved
+        # through as a nuisance. An explicit `base_url=` still wins over the
+        # environment, because an argument is a decision and a variable is a
+        # setting.
+        self.base_url = (
+            base_url
+            or os.environ.get("KORELY_BASE_URL")
+            or _REGIONS.get(region)
+            or _REGIONS["eu"]
+        ).rstrip("/")
         self.timeout = timeout
 
     # ── low-level transport (the one seam tests override) ──────────────────
