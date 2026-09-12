@@ -487,3 +487,55 @@ class TheServerItTalksTo(unittest.TestCase):
     def test_la_barra_finale_non_raddoppia(self):
         os.environ["KORELY_BASE_URL"] = "https://mio.example/"
         self.assertEqual(Korely().base_url, "https://mio.example")
+
+
+class IlPercorsoDocumentato(unittest.TestCase):
+    """`korely init --base-url ...`, poi `from korely_memory import Korely`.
+
+    La CLI scrive nel file di configurazione sia la chiave sia l'indirizzo, e
+    li rilegge entrambi. La classe rileggeva solo la chiave, quindi il percorso
+    che la documentazione chiama documentato prendeva una chiave self-hosted e
+    la mandava ad api.korely.ai. Stesso difetto della variabile d'ambiente,
+    nell'ultimo posto dove restava.
+    """
+
+    def setUp(self):
+        self.dir = tempfile.mkdtemp()
+        self._saved = {k: os.environ.get(k) for k in
+                       ("KORELY_CONFIG_HOME", "KORELY_BASE_URL", "KORELY_API_KEY")}
+        os.environ["KORELY_CONFIG_HOME"] = self.dir
+        os.environ.pop("KORELY_BASE_URL", None)
+        os.environ.pop("KORELY_API_KEY", None)
+        with open(os.path.join(self.dir, "config.json"), "w", encoding="utf-8") as fh:
+            json.dump({"api_key": "kor_live_dal_file",
+                       "base_url": "https://il-mio-server.example"}, fh)
+
+    def tearDown(self):
+        shutil.rmtree(self.dir, ignore_errors=True)
+        for k, v in self._saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def test_prende_dal_file_sia_la_chiave_sia_l_indirizzo(self):
+        k = Korely()
+        self.assertEqual(k.api_key, "kor_live_dal_file")
+        self.assertEqual(k.base_url, "https://il-mio-server.example")
+
+    def test_la_variabile_vince_sul_file(self):
+        os.environ["KORELY_BASE_URL"] = "https://dalla-variabile.example"
+        self.assertEqual(Korely().base_url, "https://dalla-variabile.example")
+
+    def test_un_file_senza_indirizzo_non_rompe_niente(self):
+        """I file scritti da una `korely init` piu' vecchia hanno solo la
+        chiave. Devono continuare a funzionare, sul servizio ospitato."""
+        with open(os.path.join(self.dir, "config.json"), "w", encoding="utf-8") as fh:
+            json.dump({"api_key": "kor_live_vecchio"}, fh)
+        self.assertEqual(Korely().base_url, "https://api.korely.ai")
+
+    def test_un_file_illeggibile_non_rompe_niente(self):
+        with open(os.path.join(self.dir, "config.json"), "w", encoding="utf-8") as fh:
+            fh.write("non e json")
+        os.environ["KORELY_API_KEY"] = "kor_live_x"
+        self.assertEqual(Korely().base_url, "https://api.korely.ai")

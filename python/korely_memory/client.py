@@ -39,7 +39,7 @@ from .models import (
     UsersPage,
 )
 
-__version__ = "0.1.10"
+__version__ = "0.1.11"
 
 # All keys are the EU region; data is stored and processed in the EU.
 _REGIONS = {"eu": "https://api.korely.ai"}
@@ -93,6 +93,25 @@ def _key_from_config() -> Optional[str]:
         with open(os.path.join(home, "config.json"), encoding="utf-8") as fh:
             key = json.load(fh).get("api_key")
         return key if isinstance(key, str) and key else None
+    except Exception:
+        return None
+
+
+def _base_from_config() -> Optional[str]:
+    """The server `korely init` was pointed at, from the same file.
+
+    `korely init --base-url https://my-server` writes both the key and the
+    address, and the CLI reads both back. This class read only the key, so the
+    documented path (init, then import the SDK) picked up a self-hosted key and
+    sent it to api.korely.ai. Same defect as the environment variable, in the
+    one path the docstring above calls the documented one.
+    """
+    try:
+        home = os.environ.get("KORELY_CONFIG_HOME") or os.path.join(
+            os.path.expanduser("~"), ".korely")
+        with open(os.path.join(home, "config.json"), encoding="utf-8") as fh:
+            base = json.load(fh).get("base_url")
+        return base if isinstance(base, str) and base else None
     except Exception:
         return None
 
@@ -176,9 +195,14 @@ class Korely:
         # through as a nuisance. An explicit `base_url=` still wins over the
         # environment, because an argument is a decision and a variable is a
         # setting.
+        # Same order as the key above, and for the same reason: an argument is a
+        # decision, a variable is a setting, a config file is what `korely init`
+        # was told once. The hosted region is the last resort, not the default
+        # that quietly wins.
         self.base_url = (
             base_url
             or os.environ.get("KORELY_BASE_URL")
+            or _base_from_config()
             or _REGIONS.get(region)
             or _REGIONS["eu"]
         ).rstrip("/")
