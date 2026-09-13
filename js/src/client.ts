@@ -21,6 +21,7 @@ import type {
   AddFactTripleOptions,
   AddOptions,
   AgentDeleteReceipt,
+  AgentScope,
   AgentsPage,
   BatchJob,
   BulkReceipt,
@@ -41,6 +42,7 @@ import type {
   SearchOptions,
   UpdateOptions,
   UsersOptions,
+  UserScope,
   UsersPage,
 } from "./types.js";
 
@@ -85,6 +87,25 @@ function coerceContent(content: string | Message[]): string {
 }
 
 type Params = Record<string, string | number | boolean | undefined | null>;
+
+
+/** Give a `{items: T[], …}` response an iterator over its items.
+ *
+ *  The Python SDK returns pages you can loop over directly; this one returned
+ *  the wrapper, so the same call read differently in the two languages while
+ *  the documentation said "same idea". The wrapper keeps all its fields, so
+ *  nothing that worked before stops working. */
+function iterableOver<T, K extends string, P extends Record<K, T[]>>(
+  page: P,
+  key: K,
+): P & Iterable<T> {
+  const out = page as P & Iterable<T>;
+  Object.defineProperty(out, Symbol.iterator, {
+    value: () => (page[key] ?? [])[Symbol.iterator](),
+    enumerable: false,
+  });
+  return out;
+}
 
 export class Korely {
   readonly apiKey: string;
@@ -305,13 +326,15 @@ export class Korely {
    * namespaces), each with active memory + fact counts and last-active time.
    */
   async users(opts: UsersOptions = {}): Promise<UsersPage> {
-    return this.request("GET", "/v1/users", {
-      params: {
-        agent_id: opts.agent_id,
-        limit: opts.limit ?? 50,
-        offset: opts.offset ?? 0,
-      },
-    });
+    const page: { users: UserScope[]; total: number } = await this.request(
+      "GET", "/v1/users", {
+        params: {
+          agent_id: opts.agent_id,
+          limit: opts.limit ?? 50,
+          offset: opts.offset ?? 0,
+        },
+      });
+    return iterableOver(page, "users");
   }
 
   // ── agents ────────────────────────────────────────────────────────────────
@@ -324,12 +347,14 @@ export class Korely {
    * reuse one instead of minting a new id.
    */
   async listAgents(opts: ListAgentsOptions = {}): Promise<AgentsPage> {
-    return this.request("GET", "/v1/agents", {
-      params: {
-        limit: opts.limit ?? 50,
-        offset: opts.offset ?? 0,
-      },
-    });
+    const page: { agents: AgentScope[]; total: number; cap: number; used: number } =
+      await this.request("GET", "/v1/agents", {
+        params: {
+          limit: opts.limit ?? 50,
+          offset: opts.offset ?? 0,
+        },
+      });
+    return iterableOver(page, "agents");
   }
 
   /**

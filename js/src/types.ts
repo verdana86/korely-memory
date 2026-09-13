@@ -134,7 +134,12 @@ export interface UserScope {
   last_active?: string;
 }
 
-export interface UsersPage {
+/** Iterable, like the Python SDK's UsersPage, so `for (const u of page)`
+ *  works and `page.users` / `page.total` still do. The two SDKs claim to be
+ *  "the same idea" and this was the one place a reader could see they were
+ *  not: Python handed back something you iterate, Node handed back a wrapper.
+ *  Adding the iterator keeps every existing caller working. */
+export interface UsersPage extends Iterable<UserScope> {
   users: UserScope[];
   total: number;
 }
@@ -146,7 +151,7 @@ export interface AgentScope {
   last_active?: string;
 }
 
-export interface AgentsPage {
+export interface AgentsPage extends Iterable<AgentScope> {
   agents: AgentScope[];
   /** Distinct agent namespaces == `used` slots. */
   total: number;

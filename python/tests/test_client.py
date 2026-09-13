@@ -574,3 +574,42 @@ class LoStatoDellaScrittura(unittest.TestCase):
         })
         self.assertEqual(len(m.facts), 1)
         self.assertEqual(m.facts[0].subject, "a")
+
+
+class ErrorsCarryWhatTheServerSaid(unittest.TestCase):
+    """A 422 from a self-hosted install names the row. The SDK used to drop it.
+
+    The hosted service answers `{code, message}`; a self-hosted install answers
+    FastAPI's `{detail: [...]}`. Reading only `message` turned every one of
+    those into the string "HTTP 422", so on a five-hundred-row batch there was
+    no way to learn which row was bad without repeating the call with curl.
+    """
+
+    def test_the_message_names_the_field(self):
+        from korely_memory.client import Korely
+        from korely_memory.exceptions import APIError
+
+        body = {"detail": [
+            {"loc": ["body", "memories", 1, "content"],
+             "msg": "String should have at least 1 character"},
+        ]}
+        with self.assertRaises(APIError) as caught:
+            Korely._raise(422, body)
+        self.assertIn("memories.1.content", str(caught.exception))
+        self.assertEqual(caught.exception.body, body)
+
+    def test_a_hosted_style_envelope_still_wins(self):
+        from korely_memory.client import Korely
+        from korely_memory.exceptions import QuotaExceededError
+
+        with self.assertRaises(QuotaExceededError) as caught:
+            Korely._raise(429, {"code": "quota_exceeded", "message": "over the cap"})
+        self.assertEqual(str(caught.exception), "over the cap")
+
+    def test_with_neither_it_still_says_something(self):
+        from korely_memory.client import Korely
+        from korely_memory.exceptions import APIError
+
+        with self.assertRaises(APIError) as caught:
+            Korely._raise(500, {})
+        self.assertIn("500", str(caught.exception))

@@ -39,7 +39,7 @@ from .models import (
     UsersPage,
 )
 
-__version__ = "0.1.12"
+__version__ = "0.1.13"
 
 # All keys are the EU region; data is stored and processed in the EU.
 _REGIONS = {"eu": "https://api.korely.ai"}
@@ -254,25 +254,51 @@ class Korely:
         return body if isinstance(body, dict) else {}
 
     @staticmethod
+    def _detail_line(body: dict) -> Optional[str]:
+        """Render FastAPI's `detail` into one line.
+
+        The hosted service answers `{code, message}`. A self-hosted install
+        answers FastAPI's own `{detail: [...]}`, where each entry names the
+        exact field: on a batch load that is `memories.1.content` and the
+        reason. Reading only `message` meant every self-hosted validation error
+        arrived as the string "HTTP 422".
+        """
+        d = body.get("detail")
+        if isinstance(d, str):
+            return d
+        if isinstance(d, list) and d:
+            parts = []
+            for e in d[:3]:
+                if not isinstance(e, dict):
+                    parts.append(str(e)); continue
+                where = ".".join(str(x) for x in (e.get("loc") or []) if x != "body")
+                parts.append(f"{where}: {e.get('msg', 'invalid')}" if where
+                             else str(e.get("msg", "invalid")))
+            more = len(d) - 3
+            return "; ".join(parts) + (f" (and {more} more)" if more > 0 else "")
+        return None
+
+    @staticmethod
     def _raise(status: int, body: dict) -> None:
         code = body.get("code")
-        msg = body.get("message") or code or ("HTTP " + str(status))
+        msg = (body.get("message") or Korely._detail_line(body) or code
+               or ("HTTP " + str(status)))
         if status == 401:
-            raise AuthenticationError(msg, status=status, code=code)
+            raise AuthenticationError(msg, status=status, code=code, body=body)
         if status == 403:
-            raise NamespaceForbiddenError(msg, status=status, code=code)
+            raise NamespaceForbiddenError(msg, status=status, code=code, body=body)
         if status == 404:
-            raise NotFoundError(msg, status=status, code=code)
+            raise NotFoundError(msg, status=status, code=code, body=body)
         if status == 409:
-            raise StaleWriteError(msg, status=status, code=code)
+            raise StaleWriteError(msg, status=status, code=code, body=body)
         if status == 429:
             ra = body.get("_retry_after") or body.get("retry_after")
             try:
                 ra = int(ra) if ra is not None else None
             except (ValueError, TypeError):
                 ra = None
-            raise QuotaExceededError(msg, status=status, code=code, retry_after=ra)
-        raise APIError(msg, status=status, code=code)
+            raise QuotaExceededError(msg, status=status, code=code, retry_after=ra, body=body)
+        raise APIError(msg, status=status, code=code, body=body)
 
     # ── memories ───────────────────────────────────────────────────────────
     def add(self, content: "str | list", *, agent_id: Optional[str] = None,

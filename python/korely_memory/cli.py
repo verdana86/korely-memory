@@ -251,6 +251,31 @@ def cmd_init(args) -> int:
 
     base = (getattr(args, "base_url", None) or os.environ.get("KORELY_BASE_URL")
             or _DEFAULT_BASE).rstrip("/")
+
+    # `--api-key` means "I already have one, save it" and skips signup entirely.
+    # Somebody running their own install has a key their own dashboard minted;
+    # there is nothing to sign up for, and until now there was no way to put it
+    # in the config file the library reads. The self-hosted README documented
+    # this flag as one of the three ways to point the client at your own
+    # server, which made the README right about the idea and wrong about the
+    # command: it did not exist, and the error was an unrecognized argument.
+    given = (getattr(args, "api_key", None) or "").strip()
+    if given:
+        cfg = _load_config()
+        cfg["api_key"] = given
+        cfg["base_url"] = base
+        path = _save_config(cfg)
+        if getattr(args, "json", False):
+            _emit_json({"api_key": given, "base_url": base, "config": str(path)})
+            return 0
+        print(f"Saved to {path} (chmod 600).")
+        print(f"  key       {_mask(given)}")
+        print(f"  base_url  {base}")
+        print()
+        print("Check it reaches your server:")
+        print("  korely auth")
+        return 0
+
     payload = json.dumps({"agent_caller": getattr(args, "agent_caller", None)}).encode("utf-8")
     req = urllib.request.Request(
         base + "/v1/agents/init", data=payload,
@@ -319,7 +344,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub = p.add_subparsers(dest="command", required=True)
 
-    sp = sub.add_parser("init", help="sign up and save a free hobby key (no key needed)")
+    sp = sub.add_parser(
+        "init",
+        help="save a key to ~/.korely/config.json — or sign up for a free one")
+    sp.add_argument("--api-key",
+                    help="save this key instead of signing up (self-hosted: the "
+                         "key your own dashboard minted)")
     sp.add_argument("--agent", action="store_true",
                     help="agent self-signup (default; mints an anonymous hobby account)")
     sp.add_argument("--agent-caller", help="who is signing up, e.g. 'claude-code'")
