@@ -35,6 +35,13 @@ export interface Fact {
 export interface Memory {
   id?: string;
   content?: string;
+  /**
+   * "processing" while the worker is still mining facts from this memory,
+   * which is a few seconds after the write. It is on the wire and was missing
+   * here, so the only way to tell an empty `facts` from a not-yet `facts` was
+   * to guess or to poll blindly.
+   */
+  status?: string;
   user_id?: string;
   agent_id?: string;
   run_id?: string;

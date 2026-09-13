@@ -41,8 +41,17 @@ class Fact:
 
 @dataclass
 class Memory:
+    # `status` is on the wire and was not here, so the field the documentation
+    # tells you to look at came back and was dropped on the floor. Facts are
+    # mined by a worker a few seconds after the write, and "processing" is how
+    # a write says the facts are not there yet: without it the only way to tell
+    # an empty list from a not-yet list is to guess or to poll blindly.
+    #
+    # Found by a tester following the README, which says: what the
+    # `"status": "processing"` in the reply means.
     id: Optional[str] = None
     content: Optional[str] = None
+    status: Optional[str] = None
     user_id: Optional[str] = None
     agent_id: Optional[str] = None
     run_id: Optional[str] = None

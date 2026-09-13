@@ -539,3 +539,38 @@ class IlPercorsoDocumentato(unittest.TestCase):
             fh.write("non e json")
         os.environ["KORELY_API_KEY"] = "kor_live_x"
         self.assertEqual(Korely().base_url, "https://api.korely.ai")
+
+
+class LoStatoDellaScrittura(unittest.TestCase):
+    """`status` era sul filo e non nel modello.
+
+    Il README del server dice, del risultato di una scrittura: "what the
+    `"status": "processing"` in the reply means". Il campo arrivava e veniva
+    buttato via, perche' `Memory` non lo dichiarava e `_take` tiene solo i campi
+    dichiarati.
+
+    Non e' cosmetico: i fatti vengono estratti da un worker qualche secondo dopo
+    la scrittura, e "processing" e' il modo in cui una scrittura dice che i
+    fatti non ci sono ancora. Senza, distinguere una lista vuota da una lista
+    non-ancora si puo' fare solo tirando a indovinare o interrogando alla cieca.
+
+    Trovato da un collaudatore che stava seguendo il README.
+    """
+
+    def test_lo_stato_arriva_fino_a_chi_chiama(self):
+        m = Memory.from_dict({"id": "mem_1", "content": "x", "status": "processing"})
+        self.assertEqual(m.status, "processing")
+
+    def test_una_risposta_senza_stato_non_rompe_niente(self):
+        m = Memory.from_dict({"id": "mem_1", "content": "x"})
+        self.assertIsNone(m.status)
+
+    def test_i_fatti_continuano_ad_arrivare(self):
+        """Il controllo del controllo: aggiungere un campo non deve aver
+        spostato quello che c'era."""
+        m = Memory.from_dict({
+            "id": "mem_1", "content": "x", "status": "done",
+            "facts": [{"id": "fct_1", "subject": "a", "predicate": "b", "object": "c"}],
+        })
+        self.assertEqual(len(m.facts), 1)
+        self.assertEqual(m.facts[0].subject, "a")
