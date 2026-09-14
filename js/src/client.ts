@@ -108,6 +108,58 @@ function iterableOver<T, K extends string, P extends Record<K, T[]>>(
   return out;
 }
 
+/** Hosts that are ours. A key we issued must not be handed to somebody else's
+ *  machine, and a key issued by somebody else's install must not be sent to us. */
+const OUR_HOSTS = ["korely.ai"];
+
+function isOurs(baseUrl: string): boolean {
+  let host = "";
+  try {
+    host = new URL(baseUrl).hostname.toLowerCase();
+  } catch {
+    return false;
+  }
+  return OUR_HOSTS.some((h) => host === h || host.endsWith("." + h));
+}
+
+/**
+ * Stop before the request, not after the 401.
+ *
+ * A key carries where it came from in its first nine characters: `kor_live_`
+ * from the hosted service, `kor_self_` from an install somebody runs
+ * themselves. When the key says one thing and the address says another, the
+ * only outcomes are a refusal and a memory that travelled to reach it.
+ *
+ * That is the failure 0.1.11 half-solved. It made the environment variable win
+ * over the region default, so somebody who had set both stopped talking to us
+ * by accident. It did nothing for the case where only one of the two is set,
+ * which is the same mistake with one hand tied.
+ *
+ * No override on purpose. If somebody is genuinely fronting the hosted service
+ * with their own domain this refuses them, and we will hear about it, which is
+ * a better way to learn the case is real than shipping a switch for a user who
+ * may not exist.
+ */
+function refuseAMismatchedPair(apiKey: string, baseUrl: string): void {
+  const ours = isOurs(baseUrl);
+  if (apiKey.startsWith("kor_self_") && ours) {
+    throw new KorelyError(
+      "This key was issued by an install you run yourself (kor_self_), and " +
+        `${baseUrl} is the hosted Korely service. It would be refused there, ` +
+        "but the memory would arrive first. Point baseUrl at your own server, " +
+        "or set KORELY_BASE_URL.",
+    );
+  }
+  if (apiKey.startsWith("kor_live_") && !ours) {
+    throw new KorelyError(
+      "This key was issued by the hosted Korely service (kor_live_), and " +
+        `${baseUrl} is not it. Sending it there hands a credential we issued ` +
+        "to a machine that is not ours. Use a key minted by that install " +
+        "(kor_self_), or drop baseUrl to reach the hosted service.",
+    );
+  }
+}
+
 export class Korely {
   readonly apiKey: string;
   readonly baseUrl: string;
@@ -139,6 +191,7 @@ export class Korely {
       REGIONS[opts.region ?? "eu"] ??
       REGIONS.eu
     ).replace(/\/+$/, "");
+    refuseAMismatchedPair(this.apiKey, this.baseUrl);
     this.timeoutMs = opts.timeoutMs ?? 30000;
     const f = opts.fetch ?? (globalThis.fetch as typeof fetch | undefined);
     if (!f) {

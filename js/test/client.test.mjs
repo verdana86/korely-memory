@@ -33,7 +33,7 @@ function fakeFetch(queue) {
 function client(queue) {
   const f = fakeFetch(queue);
   const k = new Korely({
-    apiKey: "kor_live_test",
+    apiKey: "kor_self_test",
     baseUrl: "https://api.test",
     fetch: f,
   });
@@ -171,7 +171,7 @@ test("KORELY_BASE_URL viene rispettato", () => {
   const prima = process.env.KORELY_BASE_URL;
   process.env.KORELY_BASE_URL = "https://2-29-27-64.nip.io";
   try {
-    const k = new Korely({ apiKey: "kor_live_x", fetch: async () => ({}) });
+    const k = new Korely({ apiKey: "kor_self_x", fetch: async () => ({}) });
     assert.equal(k.baseUrl, "https://2-29-27-64.nip.io");
   } finally {
     if (prima === undefined) delete process.env.KORELY_BASE_URL;
@@ -180,6 +180,8 @@ test("KORELY_BASE_URL viene rispettato", () => {
 });
 
 test("senza la variabile resta il servizio ospitato", () => {
+  // Con una chiave del servizio ospitato, si intende. Una `kor_self_` senza
+  // indirizzo adesso viene fermata prima di partire, ed e' il punto.
   const prima = process.env.KORELY_BASE_URL;
   delete process.env.KORELY_BASE_URL;
   try {
@@ -190,12 +192,40 @@ test("senza la variabile resta il servizio ospitato", () => {
   }
 });
 
+test("una chiave di casa senza indirizzo viene fermata", () => {
+  // Il caso esatto che ha fatto partire una memoria verso di noi: chiave della
+  // propria installazione, nessun indirizzo, e il default che vince.
+  const prima = process.env.KORELY_BASE_URL;
+  delete process.env.KORELY_BASE_URL;
+  try {
+    assert.throws(
+      () => new Korely({ apiKey: "kor_self_x", fetch: async () => ({}) }),
+      /kor_self_/,
+    );
+  } finally {
+    if (prima !== undefined) process.env.KORELY_BASE_URL = prima;
+  }
+});
+
+test("una chiave ospitata su una macchina altrui viene fermata", () => {
+  // Lo specchio: una credenziale emessa da noi non si consegna alla macchina
+  // di qualcun altro.
+  assert.throws(
+    () => new Korely({
+      apiKey: "kor_live_x",
+      baseUrl: "https://non-e-nostra.example",
+      fetch: async () => ({}),
+    }),
+    /kor_live_/,
+  );
+});
+
 test("l'opzione esplicita vince sulla variabile", () => {
   const prima = process.env.KORELY_BASE_URL;
   process.env.KORELY_BASE_URL = "https://variabile.example";
   try {
     const k = new Korely({
-      apiKey: "kor_live_x",
+      apiKey: "kor_self_x",
       baseUrl: "https://esplicito.example",
       fetch: async () => ({}),
     });

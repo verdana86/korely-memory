@@ -163,6 +163,56 @@ def _sni_hint(base_url: str, reason: object) -> str:
     except Exception:
         return ""
 
+
+# Hosts that are ours. A key we issued must not be handed to anybody else's
+# machine, and a key issued by somebody else's install must not be sent to us.
+_OUR_HOSTS = ("korely.ai",)
+
+
+def _is_ours(base_url: str) -> bool:
+    host = (_urlparse.urlsplit(base_url).hostname or "").lower()
+    return any(host == h or host.endswith("." + h) for h in _OUR_HOSTS)
+
+
+def _refuse_a_mismatched_pair(api_key: str, base_url: str) -> None:
+    """Stop before the request, not after the 401.
+
+    A key carries where it came from in its first nine characters: `kor_live_`
+    from the hosted service, `kor_self_` from an install somebody runs
+    themselves. When the key says one thing and the address says another, the
+    only outcomes are a refusal and a memory that travelled to reach it.
+
+    That is the failure 0.1.11 half-solved. It made the environment variable win
+    over the region default, so somebody who had set both stopped talking to us
+    by accident. It did nothing for the case where only one of the two is set,
+    which is the same mistake with one hand tied: a self-hosted key, no address,
+    and the default takes it to api.korely.ai.
+
+    Checked here, in the constructor, because the point is to fail before
+    anything is sent. A 401 is an answer that arrives after the body.
+
+    No override on purpose. If somebody is genuinely fronting the hosted service
+    with their own domain, this refuses them and we will hear about it, which is
+    a better way to learn that the case is real than shipping a switch for a
+    user who may not exist.
+    """
+    ours = _is_ours(base_url)
+    if api_key.startswith("kor_self_") and ours:
+        raise KorelyError(
+            "This key was issued by an install you run yourself (kor_self_), "
+            f"and {base_url} is the hosted Korely service. It would be refused "
+            "there, but the memory would arrive first. Point base_url at your "
+            "own server, or set KORELY_BASE_URL."
+        )
+    if api_key.startswith("kor_live_") and not ours:
+        raise KorelyError(
+            "This key was issued by the hosted Korely service (kor_live_), and "
+            f"{base_url} is not it. Sending it there hands a credential we "
+            "issued to a machine that is not ours. Use a key minted by that "
+            "install (kor_self_), or drop base_url to reach the hosted service."
+        )
+
+
 class Korely:
     """Typed client over the Korely REST API.
 
@@ -206,6 +256,7 @@ class Korely:
             or _REGIONS.get(region)
             or _REGIONS["eu"]
         ).rstrip("/")
+        _refuse_a_mismatched_pair(self.api_key, self.base_url)
         self.timeout = timeout
 
     # ── low-level transport (the one seam tests override) ──────────────────

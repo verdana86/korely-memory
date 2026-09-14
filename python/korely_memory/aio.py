@@ -99,6 +99,12 @@ class AsyncKorely:
         return await self._run(
             lambda: self._sync.add_fact_triple(subject, predicate, object, **kw))
 
+    async def forget_fact(self, fact_id: str, **kw) -> dict:
+        return await self._run(lambda: self._sync.forget_fact(fact_id, **kw))
+
+    async def correct_fact(self, fact_id: str, **kw) -> Fact:
+        return await self._run(lambda: self._sync.correct_fact(fact_id, **kw))
+
     async def batch(self, memories: List[dict]) -> BatchJob:
         return await self._run(self._sync.batch, memories)
 

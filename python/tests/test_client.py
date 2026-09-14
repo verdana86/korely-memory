@@ -460,7 +460,7 @@ class TheServerItTalksTo(unittest.TestCase):
 
     def setUp(self):
         self._saved = {k: os.environ.get(k) for k in ("KORELY_BASE_URL", "KORELY_API_KEY")}
-        os.environ["KORELY_API_KEY"] = "kor_live_test"
+        os.environ["KORELY_API_KEY"] = "kor_self_test"
 
     def tearDown(self):
         for k, v in self._saved.items():
@@ -474,8 +474,34 @@ class TheServerItTalksTo(unittest.TestCase):
         self.assertEqual(Korely().base_url, "https://2-29-27-64.nip.io")
 
     def test_senza_variabile_resta_il_servizio_ospitato(self):
+        """Con una chiave del servizio ospitato, si intende: una `kor_self_`
+        senza indirizzo adesso viene rifiutata prima di partire, ed e' il punto
+        della riparazione."""
         os.environ.pop("KORELY_BASE_URL", None)
+        os.environ["KORELY_API_KEY"] = "kor_live_test"
         self.assertEqual(Korely().base_url, "https://api.korely.ai")
+
+    def test_una_chiave_di_casa_senza_indirizzo_viene_fermata(self):
+        """Il caso esatto che ha fatto partire una memoria verso di noi: chiave
+        della propria installazione, nessun indirizzo, e il default che vince.
+        Adesso non parte niente."""
+        from korely_memory.exceptions import KorelyError
+
+        os.environ.pop("KORELY_BASE_URL", None)
+        os.environ["KORELY_API_KEY"] = "kor_self_test"
+        with self.assertRaises(KorelyError) as caught:
+            Korely()
+        self.assertIn("kor_self_", str(caught.exception))
+        self.assertIn("base_url", str(caught.exception))
+
+    def test_una_chiave_ospitata_su_una_macchina_altrui_viene_fermata(self):
+        """Lo specchio: una credenziale che abbiamo emesso noi non si consegna
+        alla macchina di qualcun altro."""
+        from korely_memory.exceptions import KorelyError
+
+        os.environ["KORELY_API_KEY"] = "kor_live_test"
+        with self.assertRaises(KorelyError):
+            Korely(base_url="https://non-e-nostra.example")
 
     def test_l_argomento_esplicito_vince_sulla_variabile(self):
         """Un argomento e' una decisione, una variabile e' un'impostazione."""
@@ -507,7 +533,7 @@ class IlPercorsoDocumentato(unittest.TestCase):
         os.environ.pop("KORELY_BASE_URL", None)
         os.environ.pop("KORELY_API_KEY", None)
         with open(os.path.join(self.dir, "config.json"), "w", encoding="utf-8") as fh:
-            json.dump({"api_key": "kor_live_dal_file",
+            json.dump({"api_key": "kor_self_dal_file",
                        "base_url": "https://il-mio-server.example"}, fh)
 
     def tearDown(self):
@@ -520,7 +546,7 @@ class IlPercorsoDocumentato(unittest.TestCase):
 
     def test_prende_dal_file_sia_la_chiave_sia_l_indirizzo(self):
         k = Korely()
-        self.assertEqual(k.api_key, "kor_live_dal_file")
+        self.assertEqual(k.api_key, "kor_self_dal_file")
         self.assertEqual(k.base_url, "https://il-mio-server.example")
 
     def test_la_variabile_vince_sul_file(self):
