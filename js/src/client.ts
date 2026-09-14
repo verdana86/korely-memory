@@ -28,6 +28,7 @@ import type {
   Context,
   DeleteReceipt,
   Fact,
+  ForgetReceipt,
   GetContextOptions,
   GetFactsOptions,
   GetProfileOptions,
@@ -422,6 +423,42 @@ export class Korely {
    * facts known about them, the end user's own facts first, grouped by family.
    * Pass `as_of` (ISO date) for the point-in-time profile.
    */
+  /**
+   * POST /v1/facts/:id/forget — close a fact: it stops being current and stays
+   * in history.
+   *
+   * `at` is the date it STOPPED being true, not the date you noticed. Reading
+   * `as_of` a date before it still returns the fact, which is the reason
+   * history is kept rather than rows deleted.
+   *
+   * Idempotent: closing an already-closed fact changes nothing and comes back
+   * with `status === "already_forgotten"`.
+   *
+   * This is the half that makes a no-model write path possible: an agent that
+   * knows a fact is finished says so, and nothing has to infer it.
+   */
+  async forgetFact(factId: string, opts: { at?: string } = {}): Promise<ForgetReceipt> {
+    return this.request("POST", `/v1/facts/${encodeURIComponent(factId)}/forget`, {
+      body: { at: opts.at },
+    });
+  }
+
+  /**
+   * PATCH /v1/facts/:id — supersede a fact with a corrected one.
+   *
+   * Not an edit: the old row keeps its dates and gains a pointer to the new
+   * one, so `as_of` before the correction still returns what you believed then.
+   * At least one of the three fields is required.
+   */
+  async correctFact(
+    factId: string,
+    changes: { subject?: string; predicate?: string; object?: string },
+  ): Promise<Fact> {
+    return this.request("PATCH", `/v1/facts/${encodeURIComponent(factId)}`, {
+      body: changes,
+    });
+  }
+
   async getProfile(opts: GetProfileOptions): Promise<Profile> {
     return this.request("GET", "/v1/profile", {
       params: {

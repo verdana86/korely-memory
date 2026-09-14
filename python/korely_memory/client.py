@@ -458,6 +458,38 @@ class Korely:
         }))
         return Fact.from_dict(body)
 
+    def forget_fact(self, fact_id: str, *, at: Optional[str] = None) -> dict:
+        """POST /v1/facts/{id}/forget — close a fact: it stops being current and
+        stays in history.
+
+        ``at`` is the date it STOPPED being true, not the date you noticed.
+        Reading ``as_of`` a date before it still returns the fact, which is the
+        reason history is kept rather than rows deleted.
+
+        Idempotent: closing an already-closed fact changes nothing and comes
+        back with ``status == "already_forgotten"``.
+
+        This is the half that makes a no-model write path possible. An agent
+        that knows a fact is finished says so, and nothing has to infer it from
+        a later sentence.
+        """
+        return self._call("POST", f"/v1/facts/{fact_id}/forget",
+                          json_body=_clean({"at": at}))
+
+    def correct_fact(self, fact_id: str, *, subject: Optional[str] = None,
+                     predicate: Optional[str] = None,
+                     object: Optional[str] = None) -> Fact:
+        """PATCH /v1/facts/{id} — supersede a fact with a corrected one.
+
+        Not an edit: the old row keeps its dates and gains a pointer to the new
+        one, so ``as_of`` before the correction still returns what you believed
+        then. At least one of the three fields is required.
+        """
+        body = self._call("PATCH", f"/v1/facts/{fact_id}", json_body=_clean({
+            "subject": subject, "predicate": predicate, "object": object,
+        }))
+        return Fact.from_dict(body)
+
     def get_profile(self, *, user_id: str, agent_id: Optional[str] = None,
                     as_of: Optional[str] = None) -> Profile:
         """GET /v1/profile — the assembled profile of one end user: the active

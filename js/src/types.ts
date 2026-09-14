@@ -252,3 +252,14 @@ export interface GetContextOptions {
   agent_id?: string;
   token_budget?: number;
 }
+
+
+/** What `forgetFact` gives back. `status` is "forgotten" the first time and
+ *  "already_forgotten" afterwards; `invalid_at` is the date it stopped being
+ *  true, which is the one you passed if you passed one. */
+export interface ForgetReceipt {
+  id: string;
+  status: "forgotten" | "already_forgotten";
+  invalid_at?: string | null;
+  audit_id?: string | null;
+}
