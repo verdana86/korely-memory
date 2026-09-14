@@ -1,0 +1,40 @@
+{
+  "name": "n8n-nodes-korely",
+  "version": "0.1.0",
+  "description": "Bi-temporal memory for n8n workflows. Store what happened, ask what was true on a date, and retract a fact when it stops being true.",
+  "keywords": [
+    "n8n-community-node-package",
+    "korely",
+    "memory",
+    "agent-memory",
+    "rag"
+  ],
+  "license": "MIT",
+  "homepage": "https://korely.ai/agents",
+  "author": { "name": "Massimiliano Martella" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/verdana86/korely-memory.git",
+    "directory": "n8n"
+  },
+  "engines": { "node": ">=20.15" },
+  "main": "index.js",
+  "scripts": {
+    "build": "rm -rf dist && tsc && node scripts/copy-icons.mjs",
+    "lint": "tsc --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "files": ["dist"],
+  "n8n": {
+    "n8nNodesApiVersion": 1,
+    "strict": true,
+    "credentials": ["dist/credentials/KorelyApi.credentials.js"],
+    "nodes": ["dist/nodes/Korely/Korely.node.js"]
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "n8n-workflow": "*",
+    "typescript": "^5.7.2"
+  },
+  "peerDependencies": { "n8n-workflow": "*" }
+}
