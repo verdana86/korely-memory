@@ -150,3 +150,46 @@ class TestVersionConsistency(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheTenseOfAFactThatEndsLater(unittest.TestCase):
+    """`superseded 3026-01-01` reads as a thing that has happened, for a date a
+    thousand years away. A tester read that line and it is what convinced them
+    the underlying behaviour was a defect rather than a choice."""
+
+    def _fact(self, invalid_at):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(subject="u1", predicate="is_on", object="Gold",
+                               valid_from="2026-03-15T00:00:00+00:00",
+                               invalid_at=invalid_at)
+
+    def test_a_past_end_is_superseded(self):
+        from korely_memory.cli import _fact_line
+
+        line = _fact_line(self._fact("2026-06-20T00:00:00+00:00"))
+        self.assertIn("superseded 2026-06-20", line)
+
+    def test_a_future_end_is_until(self):
+        from korely_memory.cli import _fact_line
+
+        line = _fact_line(self._fact("3026-01-01T00:00:00+00:00"))
+        self.assertIn("until 3026-01-01", line)
+        self.assertNotIn("superseded", line)
+
+    def test_an_unreadable_date_does_not_crash_the_listing(self):
+        """A listing that dies on one odd row shows nothing at all. It falls
+        back to the past tense, which is the safe half of the guess: it is
+        already closed for every date we can read."""
+        from korely_memory.cli import _fact_line
+
+        line = _fact_line(self._fact("non-una-data"))
+        self.assertIn("u1 · is_on · Gold", line)
+        self.assertIn("superseded", line)
+
+    def test_an_open_fact_says_nothing_about_an_end(self):
+        from korely_memory.cli import _fact_line
+
+        line = _fact_line(self._fact(None))
+        self.assertNotIn("superseded", line)
+        self.assertNotIn("until", line)

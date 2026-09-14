@@ -84,10 +84,29 @@ def _mask(key: str) -> str:
 
 
 def _fact_line(f) -> str:
+    """One fact, and the right tense for its dates.
+
+    `superseded 3026-01-01` reads as a thing that has happened, for a date a
+    thousand years away. A fact can be closed on a future date — a contract
+    that ends on 31 December, a subscription with a known last day — and until
+    then it is still true. Saying so in the past tense is a small lie that
+    makes somebody distrust the rest of the line.
+    """
+    from datetime import datetime, timezone
+
     base = f"{f.subject} · {f.predicate} · {f.object}"
     when = f" [from {f.valid_from[:10]}]" if f.valid_from else ""
     if f.invalid_at:
-        when += f" (superseded {f.invalid_at[:10]})"
+        finito = True
+        try:
+            end = datetime.fromisoformat(f.invalid_at.replace("Z", "+00:00"))
+            if end.tzinfo is None:
+                end = end.replace(tzinfo=timezone.utc)
+            finito = end <= datetime.now(timezone.utc)
+        except (ValueError, AttributeError):
+            pass
+        when += (f" (superseded {f.invalid_at[:10]})" if finito
+                 else f" (until {f.invalid_at[:10]})")
     return base + when
 
 
