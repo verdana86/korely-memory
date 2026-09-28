@@ -196,7 +196,14 @@ export class Korely implements INodeType {
 				default: {},
 				options: [
 					{ displayName: 'Agent ID', name: 'agent_id', type: 'string', default: '' },
-					{ displayName: 'Run ID', name: 'run_id', type: 'string', default: '' },
+					{
+						displayName: 'Run ID',
+						name: 'run_id',
+						type: 'string',
+						default: '',
+						description:
+							'One session or run. Memory Add, Memory Search and Fact Write take it. Context and Fact List have no run filter, so setting it there is an error rather than a filter that silently does nothing.',
+					},
 					{ displayName: 'Limit', name: 'limit', type: 'number', default: 15 },
 					{
 						displayName: 'Happened On',
@@ -231,7 +238,23 @@ export class Korely implements INodeType {
 				const scope: IDataObject = {};
 				if (userId) scope.user_id = userId;
 				if (extra.agent_id) scope.agent_id = extra.agent_id;
-				if (extra.run_id) scope.run_id = extra.run_id;
+				// GET /v1/context and GET /v1/facts have no run_id parameter, and a
+				// GET ignores query keys it does not know: the node used to send it
+				// anyway, and a workflow that set Run ID on a read believed it was
+				// scoped to one run while it read across all of them.
+				const takesRunId =
+					(resource === 'memory' && (operation === 'add' || operation === 'search')) ||
+					(resource === 'fact' && operation === 'write');
+				if (extra.run_id) {
+					if (!takesRunId) {
+						throw new NodeOperationError(
+							this.getNode(),
+							`Run ID does not apply to ${resource}: ${operation}. Only Memory Add, Memory Search and Fact Write take it.`,
+							{ itemIndex: i },
+						);
+					}
+					scope.run_id = extra.run_id;
+				}
 
 				if (resource === 'memory' && operation === 'add') {
 					method = 'POST';

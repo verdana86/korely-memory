@@ -3,12 +3,16 @@
 Bi-temporal memory in a workflow: store what happened, ask what was true on a
 date, and retract a fact when it stops being true.
 
-```
-npm install n8n-nodes-korely
+`n8n-nodes-korely` is not on npm yet, so **Settings → Community Nodes →
+Install** cannot find it. Until it is, build it here and install the tarball
+into the folder where your self-hosted n8n keeps community nodes:
+
+```bash
+cd n8n && npm ci && npm run build && npm pack
+cd ~/.n8n/nodes && npm install /path/to/korely-memory/n8n/n8n-nodes-korely-0.1.0.tgz
 ```
 
-Or, in n8n: **Settings → Community Nodes → Install**, and type
-`n8n-nodes-korely`.
+Then restart n8n.
 
 ## Why this and not the HTTP Request node
 
