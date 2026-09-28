@@ -375,3 +375,55 @@ class InitRefusesAPairThatCannotWork(_CleanEnv):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestLaConformitaDel29Set(unittest.TestCase):
+    """The public conformance test of 2026-09-29: what the CLI docs promise."""
+
+    def test_facts_json_has_the_api_shape(self):
+        import json as _json
+        rec = _Recorder().queue(200, {"facts": [{"id": "fct_1", "subject": "Maria",
+                                                 "predicate": "lives_in", "object": "Milan"}],
+                                      "total": 1})
+        out = io.StringIO()
+        with redirect_stdout(out):
+            rc = cli.cmd_facts(_client(rec), _args(["facts", "--user-id", "c", "--json"]))
+        self.assertEqual(rc, 0)
+        data = _json.loads(out.getvalue())
+        self.assertEqual(data["total"], 1)
+        self.assertEqual(data["facts"][0]["object"], "Milan")
+
+    def test_search_json_has_the_api_shape(self):
+        import json as _json
+        rec = _Recorder().queue(200, {"results": [{"id": "mem_1", "score": 0.9, "snippet": "on the Pro plan"}]})
+        out = io.StringIO()
+        with redirect_stdout(out):
+            rc = cli.cmd_search(_client(rec), _args(["search", "plan", "--user-id", "c", "--json"]))
+        self.assertEqual(rc, 0)
+        self.assertEqual(_json.loads(out.getvalue())["results"][0]["snippet"], "on the Pro plan")
+
+    def test_an_error_with_json_is_an_object_with_a_code(self):
+        import json as _json
+        from unittest import mock
+        rec = _Recorder().queue(404, {"code": "not_found", "message": "Memory not found"})
+        err, out = io.StringIO(), io.StringIO()
+        with mock.patch.object(cli, "Korely", side_effect=lambda **kw: _client(rec)), \
+             redirect_stderr(err), redirect_stdout(out):
+            rc = cli.main(["delete", "mem_00000000000000000000000000000000", "--json",
+                           "--api-key", "kor_live_test"])
+        self.assertEqual(rc, 1)
+        self.assertEqual(out.getvalue(), "")
+        data = _json.loads(err.getvalue())
+        self.assertEqual((data["code"], data["status"]), ("not_found", 404))
+
+    def test_add_takes_a_timestamp(self):
+        rec = _Recorder().queue(201, {"id": "mem_1", "content": "x", "facts": []})
+        with redirect_stdout(io.StringIO()):
+            cli.cmd_add(_client(rec), _args(["add", "Price went up", "--timestamp", "2026-06-15"]))
+        self.assertEqual(rec.last["json"]["timestamp"], "2026-06-15")
+
+    def test_get_context_takes_the_query_by_position(self):
+        rec = _Recorder().queue(200, {"context": "ok", "tokens": 1, "sources": []})
+        ctx = _client(rec).get_context("What's the latest?", user_id="acme")
+        self.assertEqual(ctx.context, "ok")
+        self.assertEqual(rec.last["params"]["query"], "What's the latest?")

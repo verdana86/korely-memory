@@ -10,6 +10,13 @@ and a batch `timestamp` is refused there with a 422.
 
 ## Unreleased
 
+Found by the public conformance test of 2026-09-29 (production, docs as written):
+- `korely facts --json` answers `{"facts": [...], "total": n}` and `korely search --json` answers `{"results": [...]}`, the API's own shapes, so the documented `jq '.facts[]'` and `jq '.results[0].snippet'` work (they were bare lists).
+- With `--json`, an error is a JSON object on stderr with `code`, `message` and `status` (it was the plain line).
+- `korely add --timestamp DATE`: the facts take the date the events happened, like `add(timestamp=)` in the SDK.
+- `get_context("...", user_id=...)`: the query may be passed by position (it raised TypeError); `getContext("...")` in the Node SDK takes a bare string too (it answered 422).
+- README quickstart: a city move instead of "switched to Rust", which the hosted engine does not supersede yet (being measured).
+
 Python:
 
 - `Korely(ca_file=...)` (or `KORELY_CA_FILE`): the certificate authority to

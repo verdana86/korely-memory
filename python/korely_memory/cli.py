@@ -160,7 +160,8 @@ def cmd_add(k: Korely, a) -> int:
     if not content or not content.strip():
         print("error: no content (pass text, '-' for stdin, or pipe it).", file=sys.stderr)
         return 2
-    m = k.add(content, user_id=a.user_id, agent_id=a.agent_id, run_id=a.run_id)
+    m = k.add(content, user_id=a.user_id, agent_id=a.agent_id, run_id=a.run_id,
+              timestamp=getattr(a, "timestamp", None))
     if a.json:
         _emit_json(m)
     else:
@@ -175,7 +176,10 @@ def cmd_add(k: Korely, a) -> int:
 def cmd_search(k: Korely, a) -> int:
     hits = k.search(a.query, run_id=getattr(a, 'run_id', None), user_id=a.user_id, agent_id=a.agent_id, limit=a.limit)
     if a.json:
-        _emit_json(hits)
+        # The API's own shape (GET /v1/memories/search answers {"results": [...]}),
+        # so `jq '.results[0].snippet'` from the docs works (2026-09-29: it was a
+        # bare list, found by the public conformance test).
+        _emit_json({"results": [dataclasses.asdict(h) for h in hits]})
         return 0
     if not hits:
         print("no matches.")
@@ -204,7 +208,10 @@ def cmd_facts(k: Korely, a) -> int:
                         user_id=a.user_id, agent_id=a.agent_id, as_of=a.as_of,
                         include_invalidated=a.include_invalidated, limit=a.limit)
     if a.json:
-        _emit_json(facts)
+        # The API's own shape ({"facts": [...], "total": n}), as the docs show
+        # (`jq '.facts[]'`); it was a bare list until 2026-09-29.
+        _emit_json({"facts": [dataclasses.asdict(f) for f in facts],
+                    "total": getattr(facts, "total", len(facts))})
         return 0
     if not facts:
         print("no facts." + (f" (as of {a.as_of})" if a.as_of else ""))
@@ -435,6 +442,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("add", parents=[common], help="store a memory ('-' or pipe for stdin)")
     sp.add_argument("content", nargs="?", help="text to remember; '-' reads stdin")
     sp.add_argument("--run-id", help="optional run/session id")
+    sp.add_argument("--timestamp",
+                    help="ISO date the events happened (backfill): the facts take it as valid_from")
     sp.set_defaults(func=cmd_add)
 
     sp = sub.add_parser("search", parents=[common], help="semantic search over memories")
@@ -508,7 +517,14 @@ def main(argv=None) -> int:
         return args.func(client, args)
     except KorelyError as e:
         code = getattr(e, "code", None)
-        print(f"error: {e}" + (f" [{code}]" if code else ""), file=sys.stderr)
+        if getattr(args, "json", False):
+            # The docs: with --json an error is a machine-readable object with
+            # a `code`, on stderr (2026-09-29: it was the plain line).
+            print(json.dumps({"code": code or "error", "message": str(e),
+                              "status": getattr(e, "status", None)}, ensure_ascii=False),
+                  file=sys.stderr)
+        else:
+            print(f"error: {e}" + (f" [{code}]" if code else ""), file=sys.stderr)
         return 1
     except BrokenPipeError:
         return 0

@@ -547,3 +547,17 @@ test("base_url (the Python spelling) is refused, not ignored", () => {
   const k = new Korely({ apiKey: "kor_self_x", baseUrl: "https://memory.example.com/" });
   assert.equal(k.baseUrl, "https://memory.example.com");
 });
+
+test("getContext takes a bare query string (the Vercel AI SDK example, 2026-09-29)", async () => {
+  const { k, f } = client([
+    { status: 200, body: { context: "ok", tokens: 1, sources: [] } },
+    { status: 200, body: { context: "ok", tokens: 1, sources: [] } },
+  ]);
+  await k.getContext("latest on the renewal");
+  let u = new URL(f.calls[0].url);
+  assert.equal(u.searchParams.get("query"), "latest on the renewal");
+  await k.getContext("latest", { user_id: "acme" });
+  u = new URL(f.calls[1].url);
+  assert.equal(u.searchParams.get("user_id"), "acme");
+  await assert.rejects(() => k.getContext(""), KorelyError);
+});

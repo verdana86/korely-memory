@@ -16,8 +16,9 @@ server-side, so your install stays small and your process stays light.
 pip install korely-memory
 ```
 
-Python 3.9 or later. The optional MCP server (`pip install 'korely-memory[mcp]'`)
-needs Python 3.10 or later, because the `mcp` package does.
+Python 3.9 or later, for the SDK, the `korely` CLI and the `korely-mcp` stdio
+server alike: the MCP server needs no extra package since 0.1.16
+(`pip install 'korely-memory[mcp]'` still works, the extra is empty).
 
 ## Quickstart
 
@@ -29,17 +30,18 @@ korely = Korely(api_key="kor_live_...", region="eu")
 korely = Korely(region="eu")
 
 # Remember: the write path extracts facts and resolves contradictions
-korely.add("Dana prefers TypeScript with strict mode", user_id="dana")
-korely.add("Dana switched to Rust", user_id="dana")
+korely.add("Maria lives in Rome", user_id="maria")
+korely.add("Maria moved to Milan", user_id="maria")
 
 # Recall the raw memories, ranked by meaning. Both come back: memories are
 # kept as written, it is the facts extracted from them that get superseded.
-for hit in korely.search("preferred language", user_id="dana", limit=5):
+for hit in korely.search("where does Maria live", user_id="maria", limit=5):
     print(hit.id, hit.score, hit.snippet)
 
 # One-call, prompt-ready context for your LLM. Its "Known facts" are the
-# current ones, so the TypeScript fact, once superseded, is not among them.
-ctx = korely.get_context(query="what language should I use?", user_id="dana",
+# current ones, so the Rome fact, once superseded, is not among them.
+# (Facts are extracted a few seconds after each write on the hosted service.)
+ctx = korely.get_context("where should I send the package?", user_id="maria",
                          token_budget=800)
 messages = [{"role": "system", "content": f"You are helpful.\n\n{ctx.context}"}]
 ```

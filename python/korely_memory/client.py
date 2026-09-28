@@ -724,10 +724,15 @@ class Korely:
         return Profile.from_dict(body)
 
     # ── context ──────────────────────────────────────────────────────────────
-    def get_context(self, *, query: str, user_id: Optional[str] = None,
+    def get_context(self, query: Optional[str] = None, *, user_id: Optional[str] = None,
                     agent_id: Optional[str] = None, token_budget: int = 800) -> Context:
         """GET /v1/context: one call that assembles a prompt-ready context
-        block (profile + relevant facts + memories) within a token budget."""
+        block (profile + relevant facts + memories) within a token budget.
+
+        ``query`` by position or by name: ``get_context("...", user_id=...)``
+        is how the docs write it, and it raised TypeError until 2026-09-29."""
+        if not query or not str(query).strip():
+            raise KorelyError("get_context needs a query.")
         body = self._call("GET", "/v1/context", params=_clean({
             "query": query, "user_id": user_id, "agent_id": agent_id,
             "token_budget": token_budget,

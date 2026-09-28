@@ -683,13 +683,22 @@ export class Korely {
    * GET /v1/context: one call that assembles a prompt-ready context block
    * (profile + relevant facts + memories) within a token budget.
    */
-  async getContext(opts: GetContextOptions): Promise<Context> {
+  async getContext(
+    opts: GetContextOptions | string,
+    extra: Omit<GetContextOptions, "query"> = {},
+  ): Promise<Context> {
+    // A bare string is the query (2026-09-29): the Vercel AI SDK example in
+    // the docs calls `korely.getContext(query)` and got 422 "query required".
+    const o: GetContextOptions = typeof opts === "string" ? { ...extra, query: opts } : opts;
+    if (!o || typeof o.query !== "string" || !o.query.trim()) {
+      throw new KorelyError("getContext needs a query.");
+    }
     return this.request("GET", "/v1/context", {
       params: {
-        query: opts.query,
-        user_id: opts.user_id,
-        agent_id: opts.agent_id,
-        token_budget: opts.token_budget ?? 800,
+        query: o.query,
+        user_id: o.user_id,
+        agent_id: o.agent_id,
+        token_budget: o.token_budget ?? 800,
       },
     });
   }

@@ -123,8 +123,8 @@ class AsyncKorely:
     async def get_all(self, **kw) -> MemoryPage:
         return await self._run(lambda: self._sync.get_all(**kw))
 
-    async def get_context(self, **kw) -> Context:
-        return await self._run(lambda: self._sync.get_context(**kw))
+    async def get_context(self, query: Optional[str] = None, **kw) -> Context:
+        return await self._run(lambda: self._sync.get_context(query, **kw))
 
     async def get_facts(self, **kw) -> FactList:
         return await self._run(lambda: self._sync.get_facts(**kw))
