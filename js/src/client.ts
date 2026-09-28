@@ -1,7 +1,7 @@
 /**
  * The Korely client. A thin, dependency-free HTTP wrapper over the Korely REST
- * API: every method maps 1:1 onto an endpoint. All the intelligence —
- * embeddings, entity + typed-fact extraction, contradiction checking — runs
+ * API: every method maps 1:1 onto an endpoint. All the intelligence
+ * (embeddings, entity and typed-fact extraction, contradiction checking) runs
  * server-side, so this stays a small client over the native `fetch`.
  *
  *   import { Korely } from "korely-memory";
@@ -27,7 +27,10 @@ import type {
   BulkReceipt,
   Context,
   DeleteReceipt,
+  EventsOptions,
+  EventsResponse,
   Fact,
+  FactList,
   ForgetReceipt,
   GetContextOptions,
   GetFactsOptions,
@@ -47,7 +50,9 @@ import type {
   UsersPage,
 } from "./types.js";
 
-export const VERSION = "0.1.1";
+/** Must equal `version` in package.json (a test checks). It goes out in the
+ *  X-Korely-Client header, and said 0.1.1 from 0.1.1 to 0.1.6. */
+export const VERSION = "0.1.6";
 
 const REGIONS: Record<string, string> = { eu: "https://api.korely.ai" };
 
@@ -56,9 +61,9 @@ export interface KorelyOptions {
   apiKey?: string;
   /** EU only for now (data stored and processed in the EU). */
   region?: "eu";
-  /** Override the base URL (mainly for testing). */
+  /** Override the base URL (a self-hosted install, or testing). */
   baseUrl?: string;
-  /** Per-request timeout in milliseconds. Default 30000. */
+  /** Per-request timeout in milliseconds, response body included. Default 30000. */
   timeoutMs?: number;
   /** Inject a fetch implementation (mainly for testing / older runtimes). */
   fetch?: typeof fetch;
@@ -76,7 +81,7 @@ function coerceContent(content: string | Message[]): string {
         const body = raw == null ? "" : String(raw).trim();
         if (role && body) parts.push(`${role}: ${body}`);
         else if (body) parts.push(body);
-        // role-only / empty message → dropped
+        // role-only / empty message: dropped
       } else {
         const s = String(m).trim();
         if (s) parts.push(s);
@@ -85,6 +90,21 @@ function coerceContent(content: string | Message[]): string {
     return parts.join("\n");
   }
   return String(content);
+}
+
+/**
+ * One id as a URL path segment, percent-encoded.
+ *
+ * Ids went into the path as they came. An end user id is usually somebody
+ * else's string, and one carrying `/`, `?` or `#` changed which endpoint was
+ * called: `deleteAgent("bot#1")` sent `DELETE /v1/agents/bot`, because `#`
+ * starts a fragment the request never sends, and purged the namespace `bot`.
+ * An empty id is refused: `get("")` asked for the list endpoint.
+ */
+function seg(value: unknown, what: string): string {
+  const s = value == null ? "" : String(value);
+  if (!s) throw new KorelyError(`${what} is empty.`);
+  return encodeURIComponent(s);
 }
 
 type Params = Record<string, string | number | boolean | undefined | null>;
@@ -229,28 +249,57 @@ export class Korely {
       headers["Content-Type"] = "application/json";
     }
 
+    // The timer covers the whole exchange, body included. It used to be
+    // cleared as soon as the headers arrived, so a server that sent headers
+    // and then stalled kept `await resp.text()` waiting forever, whatever
+    // `timeoutMs` said.
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, this.timeoutMs);
+    const failed = (e: any): KorelyError =>
+      new KorelyError(
+        timedOut
+          ? `Request timed out after ${this.timeoutMs} ms (${method} ${path}).`
+          : `Connection error: ${e?.message ?? String(e)}`,
+      );
     let resp: Response;
+    let text: string;
     try {
-      resp = await this.fetchImpl(url, {
-        method,
-        headers,
-        body,
-        signal: controller.signal,
-      });
-    } catch (e: any) {
-      throw new KorelyError(`Connection error: ${e?.message ?? String(e)}`);
+      try {
+        resp = await this.fetchImpl(url, {
+          method,
+          headers,
+          body,
+          signal: controller.signal,
+        });
+      } catch (e: any) {
+        throw failed(e);
+      }
+      try {
+        text = await resp.text();
+      } catch (e: any) {
+        throw failed(e);
+      }
     } finally {
       clearTimeout(timer);
     }
 
-    const text = await resp.text();
     let parsed: any = {};
     if (text) {
       try {
         parsed = JSON.parse(text);
       } catch {
+        if (resp.ok) {
+          // A 200 carrying a proxy's HTML page is not a result.
+          throw new KorelyError(
+            `The server answered ${resp.status} to ${method} ${path} with a body ` +
+              `that is not JSON: ${JSON.stringify(text.slice(0, 200))}`,
+            { status: resp.status },
+          );
+        }
         parsed = { message: text };
       }
     }
@@ -271,8 +320,8 @@ export class Korely {
       const raw = retryAfter ?? body?.retry_after ?? body?._retry_after;
       let ra: number | undefined;
       if (raw != null) {
-        const n = parseInt(String(raw), 10);
-        ra = Number.isNaN(n) ? undefined : n;
+        const n = Math.ceil(Number(raw));
+        ra = Number.isFinite(n) && n >= 0 ? n : undefined;
       }
       throw new QuotaExceededError(msg, { status, code, retryAfter: ra });
     }
@@ -281,7 +330,7 @@ export class Korely {
 
   // ── memories ────────────────────────────────────────────────────────────
   /**
-   * POST /v1/memories — store a memory; resolves to it with extracted facts.
+   * POST /v1/memories: store a memory; resolves to it with extracted facts.
    * `content` is a string, or a list of chat messages (role/content), joined
    * into one block before sending. Pass `timestamp` (ISO date/datetime) for
    * backfill: facts extracted inherit it as `valid_from`.
@@ -290,7 +339,7 @@ export class Korely {
     const text = coerceContent(content);
     if (!text.trim()) {
       throw new KorelyError(
-        "content is empty — pass a non-blank string or messages with content.",
+        "content is empty: pass a non-blank string or messages with content.",
       );
     }
     return this.request("POST", "/v1/memories", {
@@ -306,8 +355,10 @@ export class Korely {
   }
 
   /**
-   * POST /v1/memories/search — hybrid retrieval, ranked by score. `limit`
-   * defaults to the server default (15) when not passed.
+   * POST /v1/memories/search: semantic search over raw memories, ranked by
+   * score (vector similarity to the query). `run_id` scopes to one session,
+   * `metadata` filters on what you stored at write time. `limit` defaults to
+   * the server default (15), max 50.
    */
   async search(query: string, opts: SearchOptions = {}): Promise<SearchHit[]> {
     const body = await this.request("POST", "/v1/memories/search", {
@@ -315,35 +366,40 @@ export class Korely {
         query,
         user_id: opts.user_id,
         agent_id: opts.agent_id,
+        run_id: opts.run_id,
+        metadata: opts.metadata,
         limit: opts.limit,
       },
     });
     return (body.results ?? []) as SearchHit[];
   }
 
-  /** GET /v1/memories — list a scope, newest first. */
+  /** GET /v1/memories: list a scope, newest first. The page is iterable. */
   async getAll(opts: ListOptions = {}): Promise<MemoryPage> {
-    return this.request("GET", "/v1/memories", {
-      params: {
-        user_id: opts.user_id,
-        agent_id: opts.agent_id,
-        limit: opts.limit ?? 50,
-        offset: opts.offset ?? 0,
-      },
-    });
+    const page: { memories: Memory[]; total: number } = await this.request(
+      "GET", "/v1/memories", {
+        params: {
+          user_id: opts.user_id,
+          agent_id: opts.agent_id,
+          run_id: opts.run_id,
+          limit: opts.limit ?? 50,
+          offset: opts.offset ?? 0,
+        },
+      });
+    return iterableOver(page, "memories");
   }
 
-  /** GET /v1/memories/:id — full content, metadata, extracted facts. */
+  /** GET /v1/memories/:id: full content, metadata, extracted facts. */
   async get(memoryId: string): Promise<Memory> {
-    return this.request("GET", `/v1/memories/${memoryId}`);
+    return this.request("GET", `/v1/memories/${seg(memoryId, "memoryId")}`);
   }
 
   /**
-   * PATCH /v1/memories/:id — re-runs extraction. Pass `expected_updated_at`
+   * PATCH /v1/memories/:id: re-runs extraction. Pass `expected_updated_at`
    * for optimistic concurrency (throws StaleWriteError instead of clobbering).
    */
   async update(memoryId: string, opts: UpdateOptions): Promise<Memory> {
-    return this.request("PATCH", `/v1/memories/${memoryId}`, {
+    return this.request("PATCH", `/v1/memories/${seg(memoryId, "memoryId")}`, {
       body: {
         content: opts.content,
         expected_updated_at: opts.expected_updated_at,
@@ -351,32 +407,37 @@ export class Korely {
     });
   }
 
-  /** DELETE /v1/memories/:id — forget one memory (audited invalidation). */
+  /**
+   * DELETE /v1/memories/:id: forget one memory. It drops out of every default
+   * read, and the facts only it asserted are invalidated (kept as history,
+   * audited). For erasure use `deleteAll`.
+   */
   async delete(memoryId: string): Promise<DeleteReceipt> {
-    return this.request("DELETE", `/v1/memories/${memoryId}`);
+    return this.request("DELETE", `/v1/memories/${seg(memoryId, "memoryId")}`);
   }
 
   /**
-   * DELETE /v1/users/:user_id/memories — forget every memory + fact for one
-   * end user in a single call.
+   * DELETE /v1/users/:user_id/memories: ERASE every memory and fact of one end
+   * user (GDPR Art. 17). Physical deletion, not a flag: nothing is readable
+   * afterwards. The audit row (counts, never content) survives.
    */
   async deleteAll(opts: { user_id: string }): Promise<BulkReceipt> {
     return this.request(
       "DELETE",
-      `/v1/users/${opts.user_id}/memories`,
+      `/v1/users/${seg(opts.user_id, "user_id")}/memories`,
     );
   }
 
   /**
-   * GET /v1/memories/:id/history — the lifecycle timeline of a memory:
+   * GET /v1/memories/:id/history: the lifecycle timeline of a memory,
    * created / updated / deleted, plus every typed fact it produced.
    */
   async history(memoryId: string): Promise<MemoryHistory> {
-    return this.request("GET", `/v1/memories/${memoryId}/history`);
+    return this.request("GET", `/v1/memories/${seg(memoryId, "memoryId")}/history`);
   }
 
   /**
-   * GET /v1/users — the end users you've stored data for (distinct user_id
+   * GET /v1/users: the end users you've stored data for (distinct user_id
    * namespaces), each with active memory + fact counts and last-active time.
    */
   async users(opts: UsersOptions = {}): Promise<UsersPage> {
@@ -393,7 +454,7 @@ export class Korely {
 
   // ── agents ────────────────────────────────────────────────────────────────
   /**
-   * GET /v1/agents — the agent namespaces you've written under (the distinct
+   * GET /v1/agents: the agent namespaces you've written under (the distinct
    * non-null agent_id values), each with active memory + fact counts and
    * last-active time, plus the tier agent `cap` and how many slots are `used`.
    * The antidote to the agent-cap trap: when a write is rejected with
@@ -412,21 +473,22 @@ export class Korely {
   }
 
   /**
-   * DELETE /v1/agents/:agent_id — hard-delete an agent namespace: purge every
+   * DELETE /v1/agents/:agent_id: hard-delete an agent namespace, purge every
    * memory + fact written under this agent_id and FREE its cap slot
    * (soft-forgetting its data does NOT free the slot). Resolves to the purge
    * counts + an audit id.
    */
   async deleteAgent(agentId: string): Promise<AgentDeleteReceipt> {
-    return this.request("DELETE", `/v1/agents/${agentId}`);
+    return this.request("DELETE", `/v1/agents/${seg(agentId, "agentId")}`);
   }
 
   // ── facts ─────────────────────────────────────────────────────────────────
   /**
-   * GET /v1/facts — typed (subject, predicate, object) triples with bi-temporal
-   * validity. Pass `as_of` (ISO date) for a point-in-time query.
+   * GET /v1/facts: typed (subject, predicate, object) triples with bi-temporal
+   * validity. Pass `as_of` (ISO date) for a point-in-time query. Resolves to an
+   * array that also carries `total`, the matches across all pages.
    */
-  async getFacts(opts: GetFactsOptions = {}): Promise<Fact[]> {
+  async getFacts(opts: GetFactsOptions = {}): Promise<FactList> {
     const params: Params = {
       subject: opts.subject,
       entity: opts.entity,
@@ -440,14 +502,20 @@ export class Korely {
     };
     if (opts.include_invalidated) params.include_invalidated = "true";
     const body = await this.request("GET", "/v1/facts", { params });
-    return (body.facts ?? []) as Fact[];
+    const facts = [...((body.facts ?? []) as Fact[])] as FactList;
+    Object.defineProperty(facts, "total", {
+      value: typeof body.total === "number" ? body.total : facts.length,
+      enumerable: false,
+    });
+    return facts;
   }
 
   /**
-   * POST /v1/facts — write a typed (subject, predicate, object) triple directly,
+   * POST /v1/facts: write a typed (subject, predicate, object) triple directly,
    * skipping extraction. The server runs the contradiction check; the fact is
-   * bi-temporal (pass `valid_from` for a historical fact). Resolves to the
-   * written Fact, with `invalidated` listing any fact ids it superseded.
+   * bi-temporal (pass `valid_from` for a historical fact, `tense: "past"` for
+   * one that is over). Resolves to the written Fact, with `invalidated`
+   * listing any fact ids it superseded.
    */
   async addFactTriple(
     subject: string,
@@ -467,17 +535,13 @@ export class Korely {
         object_is_literal: opts.object_is_literal ?? false,
         confidence: opts.confidence ?? 0.9,
         valid_from: opts.valid_from,
+        tense: opts.tense,
       },
     });
   }
 
   /**
-   * GET /v1/profile — the assembled profile of one end user: the active typed
-   * facts known about them, the end user's own facts first, grouped by family.
-   * Pass `as_of` (ISO date) for the point-in-time profile.
-   */
-  /**
-   * POST /v1/facts/:id/forget — close a fact: it stops being current and stays
+   * POST /v1/facts/:id/forget: close a fact; it stops being current and stays
    * in history.
    *
    * `at` is the date it STOPPED being true, not the date you noticed. Reading
@@ -491,13 +555,13 @@ export class Korely {
    * knows a fact is finished says so, and nothing has to infer it.
    */
   async forgetFact(factId: string, opts: { at?: string } = {}): Promise<ForgetReceipt> {
-    return this.request("POST", `/v1/facts/${encodeURIComponent(factId)}/forget`, {
+    return this.request("POST", `/v1/facts/${seg(factId, "factId")}/forget`, {
       body: { at: opts.at },
     });
   }
 
   /**
-   * PATCH /v1/facts/:id — supersede a fact with a corrected one.
+   * PATCH /v1/facts/:id: supersede a fact with a corrected one.
    *
    * Not an edit: the old row keeps its dates and gains a pointer to the new
    * one, so `as_of` before the correction still returns what you believed then.
@@ -507,11 +571,16 @@ export class Korely {
     factId: string,
     changes: { subject?: string; predicate?: string; object?: string },
   ): Promise<Fact> {
-    return this.request("PATCH", `/v1/facts/${encodeURIComponent(factId)}`, {
+    return this.request("PATCH", `/v1/facts/${seg(factId, "factId")}`, {
       body: changes,
     });
   }
 
+  /**
+   * GET /v1/profile: the assembled profile of one end user, the active typed
+   * facts known about them, the end user's own facts first, grouped by family.
+   * Pass `as_of` (ISO date) for the point-in-time profile.
+   */
   async getProfile(opts: GetProfileOptions): Promise<Profile> {
     return this.request("GET", "/v1/profile", {
       params: {
@@ -524,7 +593,7 @@ export class Korely {
 
   // ── context ─────────────────────────────────────────────────────────────
   /**
-   * GET /v1/context — one call that assembles a prompt-ready context block
+   * GET /v1/context: one call that assembles a prompt-ready context block
    * (profile + relevant facts + memories) within a token budget.
    */
   async getContext(opts: GetContextOptions): Promise<Context> {
@@ -538,14 +607,39 @@ export class Korely {
     });
   }
 
+  // ── processing state ───────────────────────────────────────────────────────
+  /**
+   * GET /v1/events: which writes have finished being processed.
+   *
+   * `add()` resolves as soon as the memory is stored; fact extraction runs
+   * behind it. Each event carries a memory's `status` ("processing", "ready"
+   * or "error"), and `processing` counts those still in flight among your 200
+   * most recent writes. No webhook fires when extraction finishes, so this is
+   * how to know.
+   */
+  async events(opts: EventsOptions = {}): Promise<EventsResponse> {
+    return this.request("GET", "/v1/events", {
+      params: {
+        user_id: opts.user_id,
+        status: opts.status,
+        limit: opts.limit ?? 50,
+      },
+    });
+  }
+
   // ── batch ─────────────────────────────────────────────────────────────────
-  /** POST /v1/batch — bulk import (up to 500 memory objects), async. */
+  /**
+   * POST /v1/batch: bulk import, up to 500 memory objects, processed
+   * asynchronously. Each object takes `content` and optionally `user_id`,
+   * `agent_id`, `run_id` and `metadata`; any other key (`timestamp` included)
+   * is refused with a 422 for the whole batch.
+   */
   async batch(memories: Array<Record<string, unknown>>): Promise<BatchJob> {
     return this.request("POST", "/v1/batch", { body: { memories } });
   }
 
-  /** GET /v1/batch/:id — poll an import job. */
+  /** GET /v1/batch/:id: poll an import job. */
   async batchStatus(jobId: string): Promise<BatchJob> {
-    return this.request("GET", `/v1/batch/${jobId}`);
+    return this.request("GET", `/v1/batch/${seg(jobId, "jobId")}`);
   }
 }

@@ -1,15 +1,20 @@
-// SDK tests — no network. A fake fetch records the request and returns a canned
+// SDK tests, no network. A fake fetch records the request and returns a canned
 // response; we assert the SDK builds the right request and parses the right
 // shape. Runs against the built package (dist), so build first:
 //   npm run build && npm test
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   Korely,
   KorelyError,
   AuthenticationError,
+  NotFoundError,
+  NamespaceForbiddenError,
+  StaleWriteError,
   QuotaExceededError,
   APIError,
+  VERSION,
 } from "../dist/index.js";
 
 function fakeFetch(queue) {
@@ -234,4 +239,183 @@ test("l'opzione esplicita vince sulla variabile", () => {
     if (prima === undefined) delete process.env.KORELY_BASE_URL;
     else process.env.KORELY_BASE_URL = prima;
   }
+});
+
+// ── audit 2026-09-28: contract drift, error handling, hygiene ──────────────
+
+test("VERSION matches package.json, and is what goes on the wire", async () => {
+  // It said 0.1.1 from 0.1.1 to 0.1.6, so the X-Korely-Client header lied
+  // about which build was calling.
+  const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+  assert.equal(VERSION, pkg.version);
+  const { k, f } = client([{ status: 200, body: { users: [], total: 0 } }]);
+  await k.users();
+  assert.equal(f.calls[0].init.headers["X-Korely-Client"], `korely-js/${pkg.version}`);
+});
+
+test("every HTTP error is an APIError, as the public docs teach", async () => {
+  // The docs say: `if (!(err instanceof APIError)) throw err;` then branch on
+  // err.code. The typed errors were siblings of APIError, so a 401, a 404 or
+  // a 429 was rethrown by that very line.
+  const cases = [
+    [401, "invalid_key", AuthenticationError],
+    [403, "agent_cap_exceeded", NamespaceForbiddenError],
+    [404, "not_found", NotFoundError],
+    [409, "stale_write", StaleWriteError],
+    [429, "quota_exceeded", QuotaExceededError],
+    [503, "search_unavailable", APIError],
+  ];
+  for (const [status, code, cls] of cases) {
+    const { k } = client([{ status, body: { code, message: "m" } }]);
+    await assert.rejects(
+      () => k.get("mem_1"),
+      (e) => {
+        assert.ok(e instanceof APIError, `${status} is not an APIError`);
+        assert.ok(e instanceof cls, `${status} is not a ${cls.name}`);
+        assert.ok(e instanceof KorelyError);
+        assert.equal(e.code, code);
+        assert.equal(e.status, status);
+        return true;
+      },
+    );
+  }
+});
+
+test("a client-side error is a KorelyError but not an APIError", async () => {
+  const { k } = client([]);
+  await assert.rejects(() => k.add("   "), (e) => {
+    assert.ok(e instanceof KorelyError);
+    assert.ok(!(e instanceof APIError));
+    return true;
+  });
+});
+
+test("ids are one path segment", async () => {
+  // deleteAgent("bot#1") sent DELETE /v1/agents/bot: `#` starts a fragment,
+  // which the request never carries, so it purged the namespace `bot`.
+  const cases = [
+    [(k) => k.deleteAgent("bot#1"), "/v1/agents/bot%231"],
+    [(k) => k.deleteAll({ user_id: "a/b c?d" }), "/v1/users/a%2Fb%20c%3Fd/memories"],
+    [(k) => k.get("mem_1/history"), "/v1/memories/mem_1%2Fhistory"],
+    [(k) => k.update("m 1", { content: "x" }), "/v1/memories/m%201"],
+    [(k) => k.delete("m?1"), "/v1/memories/m%3F1"],
+    [(k) => k.history("m#1"), "/v1/memories/m%231/history"],
+    [(k) => k.batchStatus("job#1"), "/v1/batch/job%231"],
+  ];
+  for (const [call, path] of cases) {
+    const { k, f } = client([{ status: 200, body: {} }]);
+    await call(k);
+    assert.equal(new URL(f.calls[0].url).pathname, path);
+  }
+});
+
+test("an empty id never reaches the server", async () => {
+  for (const call of [(k) => k.get(""), (k) => k.deleteAgent(""), (k) => k.deleteAll({ user_id: "" })]) {
+    const { k, f } = client([]);
+    await assert.rejects(() => call(k), KorelyError);
+    assert.equal(f.calls.length, 0);
+  }
+});
+
+test("the timeout covers the response body, not just the headers", { timeout: 3000 }, async () => {
+  // The timer was cleared when the headers arrived, so a server that sent
+  // headers and stalled left resp.text() waiting forever.
+  const stalls = async (_url, init) => ({
+    ok: true,
+    status: 200,
+    headers: { get: () => null },
+    text: () =>
+      new Promise((_resolve, reject) => {
+        init.signal.addEventListener("abort", () => reject(new Error("This operation was aborted")));
+      }),
+  });
+  const k = new Korely({ apiKey: "kor_self_x", baseUrl: "https://api.test", fetch: stalls, timeoutMs: 50 });
+  await assert.rejects(() => k.users(), (e) => {
+    assert.ok(e instanceof KorelyError);
+    assert.match(e.message, /timed out after 50 ms/);
+    return true;
+  });
+});
+
+test("a 200 that is not JSON is an error, not a result", async () => {
+  const html = async () => ({
+    ok: true,
+    status: 200,
+    headers: { get: () => null },
+    text: async () => "<html>502 Bad Gateway</html>",
+  });
+  const k = new Korely({ apiKey: "kor_self_x", baseUrl: "https://api.test", fetch: html });
+  await assert.rejects(() => k.users(), (e) => {
+    assert.ok(e instanceof KorelyError);
+    assert.equal(e.status, 200);
+    return true;
+  });
+});
+
+test("search and getAll take the filters the API takes", async () => {
+  const { k, f } = client([
+    { status: 200, body: { results: [] } },
+    { status: 200, body: { memories: [{ id: "m1" }, { id: "m2" }], total: 9 } },
+  ]);
+  await k.search("q", { user_id: "u", run_id: "r1", metadata: { tier: "pro" } });
+  const sent = JSON.parse(f.calls[0].init.body);
+  assert.equal(sent.run_id, "r1");
+  assert.deepEqual(sent.metadata, { tier: "pro" });
+  const page = await k.getAll({ user_id: "u", run_id: "r1" });
+  assert.match(f.calls[1].url, /run_id=r1/);
+  assert.equal(page.total, 9);
+  assert.deepEqual([...page].map((m) => m.id), ["m1", "m2"]);
+});
+
+test("events() reads GET /v1/events", async () => {
+  // The Python SDK had it; the Node one did not, and the docs told Node
+  // users to call the endpoint by hand.
+  const { k, f } = client([
+    { status: 200, body: { events: [{ memory_id: "mem_1", status: "ready" }], processing: 0 } },
+  ]);
+  const out = await k.events({ user_id: "u", status: "ready", limit: 10 });
+  assert.equal(f.calls[0].init.method, "GET");
+  const url = new URL(f.calls[0].url);
+  assert.equal(url.pathname, "/v1/events");
+  assert.equal(url.searchParams.get("user_id"), "u");
+  assert.equal(url.searchParams.get("status"), "ready");
+  assert.equal(url.searchParams.get("limit"), "10");
+  assert.equal(out.processing, 0);
+  assert.equal(out.events[0].status, "ready");
+});
+
+test("getFacts keeps the total the server sends", async () => {
+  const { k } = client([{ status: 200, body: { facts: [{ id: "fct_1" }], total: 57 } }]);
+  const facts = await k.getFacts({ user_id: "u", limit: 1 });
+  assert.ok(Array.isArray(facts));
+  assert.equal(facts.length, 1);
+  assert.equal(facts.total, 57);
+  assert.deepEqual(Object.keys(facts), ["0"]); // total is not an enumerable element
+});
+
+test("addFactTriple can say the tense, and leaves it to the server otherwise", async () => {
+  const { k, f } = client([{ status: 201, body: { id: "fct_1" } }, { status: 201, body: { id: "fct_2" } }]);
+  await k.addFactTriple("u", "p", "o", { tense: "past" });
+  assert.equal(JSON.parse(f.calls[0].init.body).tense, "past");
+  await k.addFactTriple("u", "p", "o");
+  assert.ok(!("tense" in JSON.parse(f.calls[1].init.body)));
+});
+
+test("a fractional Retry-After rounds up", async () => {
+  const { k } = client([
+    { status: 429, body: { code: "rate_limit_exceeded", message: "slow" }, headers: { "retry-after": "1.5" } },
+  ]);
+  await assert.rejects(() => k.users(), (e) => {
+    assert.equal(e.retryAfter, 2);
+    return true;
+  });
+});
+
+test("a monthly quota 429 has no retryAfter", async () => {
+  const { k } = client([{ status: 429, body: { code: "quota_exceeded", message: "limit" } }]);
+  await assert.rejects(() => k.add("x", { user_id: "u" }), (e) => {
+    assert.ok(e instanceof QuotaExceededError);
+    assert.equal(e.retryAfter, undefined);
+    return true;
+  });
 });

@@ -1,6 +1,6 @@
 import { defineConfig } from "tsup";
 
-// Dual ESM + CJS build with type declarations. Zero runtime dependencies — the
+// Dual ESM + CJS build with type declarations. Zero runtime dependencies: the
 // SDK is a thin client over the native `fetch`.
 export default defineConfig({
   entry: ["src/index.ts"],

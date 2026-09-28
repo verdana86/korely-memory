@@ -1,9 +1,9 @@
 # korely-memory
 
-The JavaScript / TypeScript SDK for [Korely Agents](https://korely.ai/agents) —
-memory for AI agents, with a typed bi-temporal knowledge graph behind every
-write. A thin, **zero-dependency** client over the Korely REST API (uses the
-native `fetch`). Same package name as the Python twin on
+The JavaScript / TypeScript SDK for [Korely Agents](https://korely.ai/agents):
+memory for AI agents, with typed bi-temporal facts behind every write. A thin,
+**zero-dependency** client over the Korely REST API (uses the native `fetch`).
+Same package name as the Python twin on
 [PyPI](https://pypi.org/project/korely-memory/).
 
 ```bash
@@ -22,7 +22,7 @@ await korely.add("Maria prefers email over Slack, and her renewal is in October.
   user_id: "customer-4812",
 });
 
-// Later — even in a new session — pull a prompt-ready block back
+// Later, even in a new session, pull a prompt-ready block back
 const ctx = await korely.getContext({
   query: "how does Maria like to be contacted?",
   user_id: "customer-4812",
@@ -31,8 +31,7 @@ console.log(ctx.context); // drop straight into your system prompt
 ```
 
 That's the whole loop: `add` to remember, `getContext` (or `search`) to recall.
-Behind `add`, Korely extracts typed, bi-temporal facts and builds a graph — you
-just hand it text.
+Behind `add`, Korely extracts typed, bi-temporal facts; you just hand it text.
 
 ## Methods
 
@@ -40,21 +39,24 @@ Every method maps to one REST endpoint.
 
 | Method | Endpoint | |
 |---|---|---|
-| `add(content, opts?)` | `POST /v1/memories` | Write. `content` is a string or a list of chat messages. `opts.timestamp` (ISO) backfills the past — facts inherit it as `valid_from`. |
-| `search(query, opts?)` | `POST /v1/memories/search` | Hybrid search over memories. |
-| `getAll(opts?)` | `GET /v1/memories` | List a scope, newest first. |
+| `add(content, opts?)` | `POST /v1/memories` | Write. `content` is a string or a list of chat messages. `opts.timestamp` (ISO) backfills the past: facts inherit it as `valid_from`. |
+| `search(query, opts?)` | `POST /v1/memories/search` | Semantic search over memories; filter by `user_id`, `agent_id`, `run_id`, `metadata`. |
+| `getAll(opts?)` | `GET /v1/memories` | List a scope, newest first. The page is iterable. |
 | `get(id)` | `GET /v1/memories/:id` | One memory, with its facts. |
 | `update(id, { content })` | `PATCH /v1/memories/:id` | Re-runs extraction. |
 | `delete(id)` | `DELETE /v1/memories/:id` | Forget one (audited). |
-| `deleteAll({ user_id })` | `DELETE /v1/users/:user_id/memories` | Forget everything for a user (GDPR). |
+| `deleteAll({ user_id })` | `DELETE /v1/users/:user_id/memories` | Erase everything for a user (GDPR). |
 | `history(id)` | `GET /v1/memories/:id/history` | A memory's timeline + the facts it produced. |
 | `users(opts?)` | `GET /v1/users` | Your end users, with counts. |
 | `listAgents(opts?)` | `GET /v1/agents` | Your agent namespaces, with counts + the tier `cap`/`used`. Call after `agent_cap_exceeded` to reuse an id. |
 | `deleteAgent(agentId)` | `DELETE /v1/agents/:agent_id` | Purge an agent namespace and free its cap slot. |
-| `getFacts(opts?)` | `GET /v1/facts` | Typed facts; `as_of` for point-in-time. |
-| `addFactTriple(s, p, o, opts?)` | `POST /v1/facts` | Write a fact directly (bi-temporal). |
+| `getFacts(opts?)` | `GET /v1/facts` | Typed facts; `as_of` for point-in-time. The array also carries `total`. |
+| `addFactTriple(s, p, o, opts?)` | `POST /v1/facts` | Write a fact directly (bi-temporal; `tense: "past"` for one that is over). |
+| `correctFact(id, changes)` | `PATCH /v1/facts/:id` | Supersede a fact with a corrected one. |
+| `forgetFact(id, { at? })` | `POST /v1/facts/:id/forget` | Close a fact; it stays in history. |
 | `getProfile({ user_id, as_of? })` | `GET /v1/profile` | The assembled profile of one end user. |
-| `getContext({ query, user_id? })` | `GET /v1/context` | One call → a prompt-ready context block. |
+| `getContext({ query, user_id? })` | `GET /v1/context` | One call, a prompt-ready context block. |
+| `events(opts?)` | `GET /v1/events` | Which writes are still being extracted. |
 | `batch(memories)` | `POST /v1/batch` | Bulk import, for migrations. |
 | `batchStatus(jobId)` | `GET /v1/batch/:id` | Poll an import job. |
 
@@ -76,17 +78,20 @@ await korely.addFactTriple("Marco", "works_at", "Acme GmbH", {
 
 ## Errors
 
-Every error subclasses `KorelyError`, so one `catch` covers them all:
+Every error the server answers with is an `APIError` carrying the stable `code`
+of the REST error envelope; the common statuses also have their own subclass.
+Everything subclasses `KorelyError`, which is also what a client-side problem
+throws (no key, a connection error, a timeout).
 
 ```ts
-import { Korely, QuotaExceededError, AuthenticationError } from "korely-memory";
+import { Korely, APIError, QuotaExceededError } from "korely-memory";
 
 try {
   await korely.add("...", { user_id: "u" });
 } catch (e) {
-  if (e instanceof QuotaExceededError) {
-    console.log(`Rate limited — retry after ${e.retryAfter}s`);
-  } else if (e instanceof AuthenticationError) {
+  if (e instanceof QuotaExceededError && e.retryAfter !== undefined) {
+    console.log(`Rate limited, retry after ${e.retryAfter}s`);
+  } else if (e instanceof APIError && e.code === "invalid_key") {
     console.log("Bad or missing API key");
   } else {
     throw e;
@@ -94,17 +99,19 @@ try {
 }
 ```
 
-`AuthenticationError` (401) · `NamespaceForbiddenError` (403) · `NotFoundError`
-(404) · `StaleWriteError` (409) · `QuotaExceededError` (429, carries
-`retryAfter`) · `APIError` (everything else).
+`AuthenticationError` (401) · `NamespaceForbiddenError` (403, e.g.
+`agent_cap_exceeded`) · `NotFoundError` (404) · `StaleWriteError` (409) ·
+`QuotaExceededError` (429: `retryAfter` is set for `rate_limit_exceeded`,
+undefined for the monthly `quota_exceeded`) · `APIError` (the base of all of
+these, and everything else: 422, 503). The SDK does not retry on its own.
 
 ## Configuration
 
 ```ts
 new Korely({
   apiKey: "kor_live_...",  // or the KORELY_API_KEY env var
-  region: "eu",             // EU only — data stored and processed in the EU
-  timeoutMs: 30000,
+  region: "eu",             // EU only: data stored and processed in the EU
+  timeoutMs: 30000,         // covers the whole request, response body included
 });
 ```
 

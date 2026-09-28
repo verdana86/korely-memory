@@ -1,5 +1,5 @@
 /**
- * korely — the JavaScript / TypeScript SDK for Korely Agents.
+ * korely-memory: the JavaScript / TypeScript SDK for Korely Agents.
  *
  * A typed, dependency-free client over the Korely REST API. Every method maps
  * 1:1 onto an endpoint; the moat (typed bi-temporal facts, contradiction
@@ -27,6 +27,7 @@ export {
 export type {
   Message,
   Fact,
+  FactList,
   Memory,
   SearchHit,
   MemoryPage,
@@ -38,17 +39,21 @@ export type {
   HistoryEvent,
   HistoryEventType,
   MemoryHistory,
+  MemoryEvent,
+  EventsResponse,
   UserScope,
   UsersPage,
   AgentScope,
   AgentsPage,
   AgentDeleteReceipt,
+  ForgetReceipt,
   AddOptions,
   SearchOptions,
   ListOptions,
   UpdateOptions,
   UsersOptions,
   ListAgentsOptions,
+  EventsOptions,
   GetFactsOptions,
   AddFactTripleOptions,
   GetProfileOptions,
