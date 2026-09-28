@@ -6,11 +6,16 @@ Si versionano in modo indipendente.
 ## Prima di ogni rilascio
 
 ```bash
-# Python
-cd python && PYTHONPATH=. python3 -m unittest tests.test_client tests.test_cli tests.test_mcp_server
+# Python: `discover`, cosi' nessun file di test resta fuori (prima l'elenco a
+# mano saltava test_cli_init_saves_a_key.py). I test dell'MCP girano solo con
+# l'extra installato: `pip install 'mcp>=1.2.0,<2'` in un ambiente usa e getta.
+cd python && PYTHONPATH=. python3 -m unittest discover -s tests
 
-# Node — `npm ci`, non `npm install`
+# Node: `npm ci`, non `npm install`
 cd js && npm ci && npm run build && npm test
+
+# n8n (senza rete; test/run.mjs invece vuole un server vero)
+cd n8n && npm ci && npm run build && npm test
 ```
 
 **Usare `npm ci` e non `npm install`.** `ci` installa esattamente quello che dice

@@ -73,7 +73,9 @@ korely.events()
 # {"events": [{"memory_id": "mem_...", "status": "ready", ...}], "processing": 0}
 ```
 
-`processing: 0` means every write you sent has been extracted. Batch imports can wait on that one number instead of walking every id. If you can receive webhooks, `fact_extracted` pushes the same signal without polling.
+`processing: 0` means none of your 200 most recent writes (in the `user_id` scope, if you pass one) is still being extracted, so a script can wait on that one number instead of walking every id. After a `batch()` import, wait for `batch_status()` to finish first: memories the job has not stored yet are not counted.
+
+Polling is the only signal: no webhook fires when extraction finishes. The webhook events are `memory.created`, `fact.invalidated` and `quota.warning`.
 
 ## Install
 
@@ -130,14 +132,14 @@ korely facts --as-of 2026-03-01 --user-id maria
 - **Contradiction resolution.** A new fact that conflicts with an old one supersedes it and records which fact replaced it. Nothing is silently dropped.
 - **Point-in-time queries.** `as_of` answers what the store believed on any past date.
 - **Entity graph.** Entities and relations are extracted automatically and available on every tier, including free.
-- **Hybrid retrieval.** Keyword, vector, and graph signals fused for recall.
+- **Semantic retrieval.** Memories and facts are ranked by meaning (vector similarity), and facts also by how recently a memory confirmed them.
 - **Prompt-ready context.** `get_context()` returns a block you can paste straight into a system prompt, with the token count.
 - **EU-hosted.** Runs in Helsinki. End users can see, correct, and erase what agents remember about them.
 
 ## Async
 
 An agent in production does not make one call at a time. `AsyncKorely` mirrors
-every method of `Korely`, so nothing you learned transfers away:
+every method of `Korely`, so everything you learned carries over:
 
 ```python
 import asyncio
@@ -196,6 +198,7 @@ It checks its own claims rather than making them, erasure included.
 |---|---|
 | `python/` | [`korely-memory`](https://pypi.org/project/korely-memory/) on PyPI, includes the `korely` CLI and an MCP stdio server |
 | `js/` | [`korely-memory`](https://www.npmjs.com/package/korely-memory) on npm |
+| `n8n/` | `n8n-nodes-korely`, a community node for n8n (not on npm yet, see its README) |
 
 ## MCP
 
