@@ -187,7 +187,7 @@ The SDK does not retry on its own.
 ## MCP server
 
 ```bash
-pip install 'korely-memory[mcp]'   # Python 3.10+
+pip install 'korely-memory[mcp]'   # Python 3.9+ since 0.1.16
 ```
 
 `korely-mcp` is a stdio MCP server with four tools (`korely_get_context`,
