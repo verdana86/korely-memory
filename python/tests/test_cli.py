@@ -80,6 +80,33 @@ class TestDeleteAllGuards(unittest.TestCase):
         self.assertIn("forgot user alex", out.getvalue())
         self.assertIn("12 memory(ies)", out.getvalue())
 
+    def test_the_line_reads_the_new_names(self):
+        """A server that sends only `memories_deleted` / `facts_deleted` (the
+        deprecated names may go one day) still prints the counts, not 0."""
+        rec = _Recorder().queue(200, {
+            "user_id": "alex", "memories_deleted": 7, "facts_deleted": 3,
+            "erasure": "permanent", "audit_id": "aud_9",
+        })
+        out = io.StringIO()
+        with redirect_stdout(out):
+            rc = cli.cmd_delete_all(_client(rec), _args(["delete-all", "--user-id", "alex", "--yes"]))
+        self.assertEqual(rc, 0)
+        self.assertIn("7 memory(ies), 3 fact(s) erased", out.getvalue())
+
+    def test_json_output_carries_both_names(self):
+        rec = _Recorder().queue(200, {
+            "user_id": "alex", "memories_forgotten": 1,
+            "facts_invalidated": 0, "audit_id": "aud_1",
+        })
+        out = io.StringIO()
+        with redirect_stdout(out):
+            cli.cmd_delete_all(_client(rec), _args(["delete-all", "--user-id", "alex",
+                                                    "--yes", "--json"]))
+        import json as _json
+        data = _json.loads(out.getvalue())
+        self.assertEqual((data["memories_deleted"], data["memories_forgotten"]), (1, 1))
+        self.assertEqual((data["facts_deleted"], data["facts_invalidated"]), (0, 0))
+
     def test_json_output(self):
         rec = _Recorder().queue(200, {
             "user_id": "alex", "memories_forgotten": 1,
@@ -142,7 +169,8 @@ class TestVersionConsistency(unittest.TestCase):
         import re
         from korely_memory import __version__
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        toml = open(os.path.join(root, "pyproject.toml")).read()
+        with open(os.path.join(root, "pyproject.toml"), encoding="utf-8") as fh:
+            toml = fh.read()
         declared = re.search(r'^version\s*=\s*"([^"]+)"', toml, re.M).group(1)
         self.assertEqual(__version__, declared,
                          f"__version__={__version__} but pyproject says {declared}")
@@ -190,6 +218,72 @@ class TheTenseOfAFactThatEndsLater(unittest.TestCase):
         line = _fact_line(self._fact(None))
         self.assertNotIn("superseded", line)
         self.assertNotIn("until", line)
+
+    def test_dates_are_utc_days(self):
+        """`2026-06-01T10:00:00+14:00` is 2026-05-31 20:00 UTC. Slicing the
+        first ten characters printed the day of the offset, not the UTC day
+        the hosted MCP prints since 2026-09-28."""
+        from types import SimpleNamespace
+
+        from korely_memory.cli import _fact_line, _utc_day
+
+        self.assertEqual(_utc_day("2026-06-01T10:00:00+14:00"), "2026-05-31")
+        self.assertEqual(_utc_day("2026-06-01T10:00:00Z"), "2026-06-01")
+        self.assertEqual(_utc_day("2026-06-01"), "2026-06-01")
+        self.assertEqual(_utc_day("not-a-date-at-all"), "not-a-date")
+        self.assertEqual(_utc_day(None), "")
+        f = SimpleNamespace(subject="u1", predicate="is_on", object="Gold",
+                            valid_from="2026-03-15T02:00:00+05:00",
+                            invalid_at="2026-06-01T10:00:00+14:00")
+        line = _fact_line(f)
+        self.assertIn("[from 2026-03-14]", line)
+        self.assertIn("superseded 2026-05-31", line)
+
+
+class InitReadsEitherErrorShape(unittest.TestCase):
+    """A failed signup printed the raw JSON when the server answered with
+    FastAPI's `{"detail": ...}` instead of `{"code", "message"}`."""
+
+    def _init_against(self, status, body):
+        import tempfile
+        import urllib.request
+        from email.message import Message
+        from urllib.error import HTTPError
+
+        def refuse(req, timeout=None):
+            raise HTTPError(req.full_url, status, "err", Message(),
+                            io.BytesIO(body.encode("utf-8")))
+
+        saved = os.environ.get("KORELY_CONFIG_HOME")
+        os.environ["KORELY_CONFIG_HOME"] = tempfile.mkdtemp()
+        real, urllib.request.urlopen = urllib.request.urlopen, refuse
+        err = io.StringIO()
+        try:
+            with redirect_stderr(err), redirect_stdout(io.StringIO()):
+                rc = cli.main(["init", "--agent", "--base-url", "https://install.example"])
+        finally:
+            urllib.request.urlopen = real
+            if saved is None:
+                os.environ.pop("KORELY_CONFIG_HOME", None)
+            else:
+                os.environ["KORELY_CONFIG_HOME"] = saved
+        return rc, err.getvalue()
+
+    def test_the_hosted_envelope(self):
+        rc, err = self._init_against(429, '{"code": "rate_limit_exceeded", "message": "slow down"}')
+        self.assertEqual(rc, 1)
+        self.assertIn("signup failed (429): slow down", err)
+
+    def test_a_detail_only_answer(self):
+        rc, err = self._init_against(404, '{"detail": "Not Found"}')
+        self.assertEqual(rc, 1)
+        self.assertIn("signup failed (404): Not Found", err)
+        self.assertNotIn("{", err)
+
+    def test_a_body_that_is_not_json(self):
+        rc, err = self._init_against(502, "<html>Bad Gateway</html>")
+        self.assertEqual(rc, 1)
+        self.assertIn("Bad Gateway", err)
 
 
 class _CleanEnv(unittest.TestCase):

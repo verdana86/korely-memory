@@ -27,6 +27,7 @@ from .models import (
     AgentDeleteReceipt,
     AgentsPage,
     BatchJob,
+    BatchMemory,
     BulkReceipt,
     Context,
     DeleteReceipt,
@@ -370,11 +371,10 @@ class Korely:
     def _detail_line(body: dict) -> Optional[str]:
         """Render FastAPI's `detail` into one line.
 
-        The hosted service answers `{code, message}`. A self-hosted install
-        answers FastAPI's own `{detail: [...]}`, where each entry names the
-        exact field: on a batch load that is `memories.1.content` and the
-        reason. Reading only `message` meant every self-hosted validation error
-        arrived as the string "HTTP 422".
+        An older self-hosted install answers FastAPI's own `{detail: [...]}`,
+        where each entry names the exact field: on a batch load that is
+        `memories.1.content` and the reason. Reading only `message` meant
+        every such validation error arrived as the string "HTTP 422".
         """
         d = body.get("detail")
         if isinstance(d, str):
@@ -392,14 +392,41 @@ class Korely:
         return None
 
     @staticmethod
+    def _error_fields(status: int, body: dict) -> "tuple[Optional[str], str]":
+        """The ``(code, message)`` of an error answer, whichever server sent it.
+
+        Three shapes reach this client:
+
+        - the hosted service: ``{"code", "message"}`` (the ApiError of the
+          published contract), on every 4xx and 5xx;
+        - a self-hosted install from 2026-09-28 on: the same two keys next to
+          FastAPI's ``detail``, which it keeps as it always sent it;
+        - an older self-hosted install: ``detail`` alone, as a sentence, as a
+          ``{"code", "message"}`` pair, or as the list of fields that failed
+          validation.
+
+        The top-level keys win and ``detail`` is the fallback for each of them.
+        Without the fallback an older install's
+        ``{"detail": {"code": "stale_write", "message": "..."}}`` arrived with
+        ``code`` None and the message "HTTP 409".
+        """
+        def text(v: Any) -> Optional[str]:
+            return v if isinstance(v, str) and v.strip() else None
+
+        detail = body.get("detail")
+        pair = detail if isinstance(detail, dict) else {}
+        code = text(body.get("code")) or text(pair.get("code"))
+        message = (text(body.get("message")) or text(pair.get("message"))
+                   or Korely._detail_line(body) or code or ("HTTP " + str(status)))
+        return code, message
+
+    @staticmethod
     def _raise(status: int, body: dict) -> None:
         # `_retry_after` is the transport's note of the Retry-After header, not
         # something the server said. The exception's `body` is documented as
         # the server's response verbatim, so it leaves here.
         server_body = {k: v for k, v in body.items() if k != "_retry_after"}
-        code = body.get("code")
-        msg = (body.get("message") or Korely._detail_line(body) or code
-               or ("HTTP " + str(status)))
+        code, msg = Korely._error_fields(status, body)
         if status == 401:
             raise AuthenticationError(msg, status=status, code=code, body=server_body)
         if status == 403:
@@ -462,7 +489,9 @@ class Korely:
         """GET /v1/memories: list a scope, newest first.
 
         ``run_id`` narrows to one session. Metadata filtering lives on
-        ``search()``, which carries a body and can take a dict."""
+        ``search()``, which carries a body and can take a dict. ``limit`` goes
+        up to 200 (the server capped it at 100 before 2026-09-28, below what
+        its own contract said); ``.total`` and ``offset`` walk the rest."""
         body = self._call("GET", "/v1/memories", params=_clean({
             "user_id": user_id, "agent_id": agent_id, "run_id": run_id,
             "limit": limit, "offset": offset,
@@ -496,7 +525,12 @@ class Korely:
         """DELETE /v1/users/:user_id/memories: ERASE every memory and fact of
         one end user (GDPR Art. 17). Physical deletion, not a flag: nothing is
         readable afterwards, ``include_invalidated`` included. The audit row
-        (counts, never content) survives; ``erasure`` reads ``"permanent"``."""
+        (counts, never content) survives; ``erasure`` reads ``"permanent"``.
+
+        The receipt counts the rows in ``memories_deleted`` and
+        ``facts_deleted``. ``memories_forgotten`` and ``facts_invalidated``
+        carry the same numbers under their old names and are deprecated (see
+        ``BulkReceipt``)."""
         return BulkReceipt.from_dict(
             self._call("DELETE", "/v1/users/" + _seg(user_id, "user_id") + "/memories")
         )
@@ -522,23 +556,36 @@ class Korely:
 
     # ── agents ───────────────────────────────────────────────────────────────
     def list_agents(self, *, limit: int = 50, offset: int = 0) -> AgentsPage:
-        """GET /v1/agents: the agent namespaces you've written under (the
-        distinct non-null ``agent_id`` values), each with active memory + fact
-        counts and last-active time, plus the tier agent ``cap`` and how many
-        slots are ``used``. The antidote to the agent-cap trap: when a write is
-        rejected with ``agent_cap_exceeded``, call this to see which namespaces
-        already exist and reuse one instead of minting a new id. Returns an
-        AgentsPage: iterable like a list, with ``.total`` / ``.cap`` / ``.used``."""
+        """GET /v1/agents: the agent namespaces written under in this key's
+        project (the distinct non-null ``agent_id`` values), each with active
+        memory + fact counts and last-active time. The antidote to the
+        agent-cap trap: when a write is rejected with ``agent_cap_exceeded``,
+        call this to see which namespaces already exist and reuse one instead
+        of minting a new id.
+
+        Returns an AgentsPage: iterable like a list, with ``.total`` (this
+        project's namespaces, exactly the ones this key can delete), ``.cap``
+        (the plan's agent cap) and ``.used`` (the slots taken across the whole
+        account, by name, which is what the 403 counts). ``used`` is above
+        ``total`` when other projects of the account use names this one does
+        not. A self-hosted install sets no cap and answers ``cap == 0``."""
         body = self._call("GET", "/v1/agents", params=_clean({
             "limit": limit, "offset": offset,
         }))
         return AgentsPage.from_dict(body)
 
     def delete_agent(self, agent_id: str) -> AgentDeleteReceipt:
-        """DELETE /v1/agents/:agent_id: hard-delete an agent namespace, purge
-        every memory + fact written under this ``agent_id`` and FREE its cap slot
-        (soft-forgetting its data does NOT free the slot). Returns the purge
-        counts + an audit id."""
+        """DELETE /v1/agents/:agent_id: hard-delete an agent namespace, purging
+        every memory + fact written under this ``agent_id`` in this key's
+        project (soft-forgetting its data does NOT free its cap slot; this
+        does). Returns the purge counts, an audit id and ``slot_freed``.
+
+        The namespace must be one ``list_agents()`` shows for this key:
+        anything else raises NotFoundError, including a name that only another
+        project of the account uses (the server answered 200 with zero counts
+        for it before 2026-09-28, and freed nothing). The cap counts a name
+        across the account, so while another project still uses the same
+        ``agent_id`` its rows stay and ``slot_freed`` is False."""
         return AgentDeleteReceipt.from_dict(
             self._call("DELETE", "/v1/agents/" + _seg(agent_id, "agent_id"))
         )
@@ -614,6 +661,16 @@ class Korely:
         Not an edit: the old row keeps its dates and gains a pointer to the new
         one, so ``as_of`` before the correction still returns what you believed
         then. At least one of the three fields is required.
+
+        Returns the new Fact in the write shape. Its ``invalidated`` lists
+        every fact the correction superseded: the corrected one first, then
+        any other that the contradiction check on the new fact closed (each
+        gets its ``fact.invalidated`` webhook). It is not always one id.
+
+        A correction that names the fact as it already stands (the same
+        subject, predicate and object, still open) supersedes nothing: the
+        server reconfirms the fact and returns it, same ``id``, with
+        ``invalidated == []``.
         """
         body = self._call("PATCH", "/v1/facts/" + _seg(fact_id, "fact_id"),
                           json_body=_clean({
@@ -651,13 +708,16 @@ class Korely:
         ``add()`` returns as soon as the memory is stored, then fact extraction
         runs behind it, so a read taken immediately can legitimately find no
         facts. This tells you which is which: each event carries a memory's
-        ``status`` (``processing``, ``ready`` or ``error``), newest first, and
-        ``status=`` filters to one of them.
+        ``status`` (``processing``, ``ready`` or ``error``), newest first.
+        ``status=`` filters before ``limit`` is applied, so ``status="error"``
+        returns the latest errors however many ready writes came after them.
+        ``limit`` goes up to 200.
 
-        ``processing`` in the answer counts the memories still being extracted
-        among your 200 most recent (in the ``user_id`` scope, when given). It
-        does not see a ``batch()`` job that has not stored its memories yet:
-        wait for ``batch_status()`` to finish first.
+        ``processing`` in the answer counts every write of this key's project
+        still being extracted (of ``user_id``, when given), whatever ``status``
+        and ``limit`` say, so a script can wait on that one number. It does not
+        see a ``batch()`` job that has not stored its memories yet: wait for
+        ``batch_status()`` to finish first.
 
         This is the only way to learn that extraction finished. No webhook
         fires for it: the webhook events are ``memory.created``,
@@ -669,12 +729,20 @@ class Korely:
         }))
 
     # ── batch ────────────────────────────────────────────────────────────────
-    def batch(self, memories: List[dict]) -> BatchJob:
+    def batch(self, memories: "List[BatchMemory | dict]") -> BatchJob:
         """POST /v1/batch: bulk import, up to 500 memory objects, processed
-        asynchronously. Each object takes ``content`` and optionally
-        ``user_id``, ``agent_id``, ``run_id`` and ``metadata``; any other key
-        (``timestamp`` included) is refused with a 422 for the whole batch. To
-        backfill history with its real dates, use ``add(..., timestamp=)``."""
+        asynchronously. Each object is the body of one ``add()`` (see
+        ``BatchMemory``): ``content`` and optionally ``user_id``,
+        ``agent_id``, ``run_id``, ``metadata`` and ``timestamp``.
+
+        ``timestamp`` means what it means on ``add()``: when the events
+        happened. The facts extracted from the item inherit it as
+        ``valid_from``, so a migration keeps its real dates; without it an item
+        is dated when it is imported. A value that is not an ISO 8601 date or
+        datetime refuses the whole batch before anything is queued: a 422
+        (APIError, ``code == "invalid_request"``) whose message names the item,
+        e.g. ``memories[3].timestamp``. Any key not listed above is refused the
+        same way. Servers older than 2026-09-28 refuse ``timestamp`` itself."""
         body = self._call("POST", "/v1/batch", json_body={"memories": list(memories)})
         return BatchJob.from_dict(body)
 

@@ -882,13 +882,233 @@ class WhatTheServerSendsToday(unittest.TestCase):
         self.assertNotIn("tense", rec.last["json"])
 
 
+# ── the contract as deployed on 2026-09-28 evening (GordonPro d46ab5e, c7cf69c,
+#    7d7f0eb; korely-agent 6699c14, ac3a2da, ef44feb) ──────────────────────────
+
+class ErrorsFromEitherServer(unittest.TestCase):
+    """The hosted /v1 answers `{code, message}` on every 4xx and 5xx. A
+    self-hosted install answers the same two keys next to FastAPI's `detail`
+    (since 2026-09-28), an older one `detail` alone. Every shape ends in the
+    same exception with a code and a message."""
+
+    def _err(self, status, body):
+        with self.assertRaises(APIError) as caught:
+            Korely._raise(status, body)
+        return caught.exception
+
+    def test_the_hosted_envelope(self):
+        e = self._err(404, {"code": "not_found", "message": "No memory with that id."})
+        self.assertIsInstance(e, NotFoundError)
+        self.assertEqual((e.code, e.message), ("not_found", "No memory with that id."))
+
+    def test_a_self_hosted_envelope_reads_the_top_level_and_keeps_detail(self):
+        body = {"detail": [{"type": "missing", "loc": ["body", "content"],
+                            "msg": "Field required"}],
+                "code": "invalid_request", "message": "content: Field required"}
+        e = self._err(422, body)
+        self.assertEqual((e.code, e.message), ("invalid_request", "content: Field required"))
+        self.assertEqual(e.body, body)
+
+    def test_an_older_install_with_a_code_pair_in_detail(self):
+        """It came back with code None and the message "HTTP 409"."""
+        e = self._err(409, {"detail": {"code": "stale_write",
+                                       "message": "expected_updated_at does not match"}})
+        self.assertIsInstance(e, StaleWriteError)
+        self.assertEqual(e.code, "stale_write")
+        self.assertEqual(e.message, "expected_updated_at does not match")
+        self.assertEqual(str(e), "expected_updated_at does not match")
+
+    def test_an_older_install_with_a_sentence(self):
+        e = self._err(403, {"detail": "API key missing required scope(s): memories:write"})
+        self.assertIsInstance(e, NamespaceForbiddenError)
+        self.assertIsNone(e.code)
+        self.assertEqual(e.message, "API key missing required scope(s): memories:write")
+
+    def test_the_top_level_wins_over_detail(self):
+        e = self._err(422, {"detail": "old words", "code": "invalid_request",
+                            "message": "new words"})
+        self.assertEqual(e.message, "new words")
+
+    def test_a_blank_message_falls_back_to_detail(self):
+        e = self._err(400, {"code": "bad_request", "message": "", "detail": "why"})
+        self.assertEqual((e.code, e.message), ("bad_request", "why"))
+
+    def test_through_the_real_transport(self):
+        import io
+        from email.message import Message
+        from unittest import mock
+        from urllib.error import HTTPError
+
+        def boom(req, timeout):
+            raise HTTPError(req.full_url, 404, "Not Found", Message(), io.BytesIO(
+                b'{"detail": {"code": "not_found", '
+                b'"message": "No agent namespace \'bot\' in this project."}}'))
+
+        os.environ.pop("KORELY_BASE_URL", None)
+        with mock.patch("korely_memory.client._urlrequest.urlopen", boom):
+            with self.assertRaises(NotFoundError) as caught:
+                Korely(api_key="kor_live_transport").delete_agent("bot")
+        self.assertEqual(caught.exception.code, "not_found")
+        self.assertIn("in this project", caught.exception.message)
+
+
+class TheErasureReceiptSaysDeleted(unittest.TestCase):
+    """DELETE /v1/users/{id}/memories deletes rows physically, and since
+    2026-09-28 says so: `memories_deleted` / `facts_deleted`, with the old
+    `memories_forgotten` / `facts_invalidated` kept as deprecated aliases."""
+
+    def _receipt(self, body):
+        rec = _Recorder().queue(200, dict({"user_id": "c1", "erasure": "permanent",
+                                           "audit_id": "aud_1"}, **body))
+        return _client(rec).delete_all(user_id="c1")
+
+    def test_the_new_names_are_read(self):
+        r = self._receipt({"memories_deleted": 5, "facts_deleted": 3,
+                           "memories_forgotten": 5, "facts_invalidated": 3})
+        self.assertEqual((r.memories_deleted, r.facts_deleted), (5, 3))
+        self.assertEqual((r.memories_forgotten, r.facts_invalidated), (5, 3))
+
+    def test_an_older_server_fills_the_new_names(self):
+        r = self._receipt({"memories_forgotten": 2, "facts_invalidated": 1})
+        self.assertEqual((r.memories_deleted, r.facts_deleted), (2, 1))
+
+    def test_a_server_without_the_old_names_still_fills_them(self):
+        """Zero is a count, not an absence: it must travel too."""
+        r = self._receipt({"memories_deleted": 4, "facts_deleted": 0})
+        self.assertEqual((r.memories_forgotten, r.facts_invalidated), (4, 0))
+
+    def test_positional_construction_means_what_it_meant(self):
+        from korely_memory import BulkReceipt
+
+        r = BulkReceipt("c1", 2, 1, "permanent", "aud_1")
+        self.assertEqual((r.memories_forgotten, r.facts_invalidated, r.audit_id),
+                         (2, 1, "aud_1"))
+
+    def test_the_old_names_are_documented_as_deprecated(self):
+        from korely_memory import BulkReceipt
+
+        self.assertIn("deprecated", BulkReceipt.__doc__.lower())
+
+
+class AgentsBelongToAProject(unittest.TestCase):
+    """GET /v1/agents: `total` counts this key's project, `used` the account.
+    DELETE /v1/agents/{id}: 404 outside the project, and `slot_freed`."""
+
+    def test_used_can_be_above_total(self):
+        rec = _Recorder().queue(200, {
+            "agents": [{"agent_id": "bot", "memories": 1, "facts": 0, "last_active": None}],
+            "total": 1, "cap": 2, "used": 2,
+        })
+        page = _client(rec).list_agents()
+        self.assertEqual((page.total, page.used, page.cap), (1, 2, 2))
+        self.assertEqual([a.agent_id for a in page], ["bot"])
+
+    def test_delete_agent_says_whether_the_slot_is_free(self):
+        rec = _Recorder().queue(200, {"agent_id": "bot", "memories_deleted": 3,
+                                      "facts_deleted": 1, "audit_id": "aud_1",
+                                      "slot_freed": False})
+        r = _client(rec).delete_agent("bot")
+        self.assertIs(r.slot_freed, False)
+        self.assertEqual((r.memories_deleted, r.facts_deleted), (3, 1))
+
+    def test_a_server_that_does_not_say_leaves_it_none(self):
+        """A self-hosted install has no cap and sends no slot_freed."""
+        rec = _Recorder().queue(200, {"agent_id": "bot", "memories_deleted": 0,
+                                      "facts_deleted": 0, "audit_id": "aud_1"})
+        self.assertIsNone(_client(rec).delete_agent("bot").slot_freed)
+
+    def test_a_name_outside_the_project_is_not_found(self):
+        rec = _Recorder().queue(404, {"code": "not_found",
+                                      "message": "No agent namespace 'bot' in this project."})
+        with self.assertRaises(NotFoundError):
+            _client(rec).delete_agent("bot")
+
+
+class BatchItemsTakeATimestamp(unittest.TestCase):
+    """POST /v1/batch accepts `timestamp` per item, with the meaning it has on
+    a single add(); an unreadable one is a 422 naming `memories[i].timestamp`."""
+
+    _MSG = ("memories[1].timestamp 'yesterday' is not an ISO 8601 date or datetime "
+            "(e.g. '2026-03-01' or '2026-03-01T14:30:00Z')")
+
+    def test_each_item_carries_its_timestamp(self):
+        items = [{"content": "Franco signed up on Pro.", "user_id": "franco",
+                  "timestamp": "2026-01-15"},
+                 {"content": "Franco downgraded to Free.", "user_id": "franco",
+                  "timestamp": "2026-06-20T09:00:00Z"}]
+        rec = _Recorder().queue(202, {"id": "job_1", "status": "processing", "received": 2})
+        _client(rec).batch(items)
+        self.assertEqual(rec.last["json"], {"memories": items})
+
+    def test_an_unreadable_timestamp_names_the_item_on_either_server(self):
+        for body in ({"code": "invalid_request", "message": self._MSG},            # hosted
+                     {"detail": self._MSG, "code": "invalid_request",
+                      "message": self._MSG},                                       # self-hosted
+                     {"detail": self._MSG}):                                       # older install
+            with self.subTest(keys=sorted(body)):
+                rec = _Recorder().queue(422, body)
+                with self.assertRaises(APIError) as caught:
+                    _client(rec).batch([{"content": "a"}, {"content": "b",
+                                                           "timestamp": "yesterday"}])
+                self.assertIn("memories[1].timestamp", str(caught.exception))
+
+    def test_batch_memory_declares_the_keys(self):
+        from korely_memory import BatchMemory
+
+        self.assertEqual(BatchMemory.__required_keys__, frozenset({"content"}))
+        self.assertEqual(BatchMemory.__optional_keys__,
+                         frozenset({"user_id", "agent_id", "run_id", "metadata", "timestamp"}))
+
+
+class CorrectionsSayWhatTheyClosed(unittest.TestCase):
+    """PATCH /v1/facts/{id} answered `invalidated: []` although it had just
+    closed the fact it corrected. It now lists every id it superseded, and a
+    correction that restates the fact reconfirms it instead."""
+
+    def test_invalidated_lists_every_superseded_id(self):
+        rec = _Recorder().queue(200, {
+            "id": "fct_new", "subject": "maria", "predicate": "lives_in", "object": "Rome",
+            "invalidated": ["fct_old", "fct_other"], "tense": "current",
+            "observation_count": 1,
+        })
+        f = _client(rec).correct_fact("fct_old", object="Rome")
+        self.assertEqual(rec.last["method"], "PATCH")
+        self.assertEqual(rec.last["json"], {"object": "Rome"})
+        self.assertEqual(f.id, "fct_new")
+        self.assertEqual(f.invalidated, ["fct_old", "fct_other"])
+
+    def test_a_correction_that_changes_nothing_reconfirms(self):
+        rec = _Recorder().queue(200, {
+            "id": "fct_1", "subject": "maria", "predicate": "lives_in", "object": "Milan",
+            "invalidated": [], "observation_count": 2,
+        })
+        f = _client(rec).correct_fact("fct_1", object="Milan")
+        self.assertEqual(f.id, "fct_1")
+        self.assertEqual(f.invalidated, [])
+        self.assertEqual(f.observation_count, 2)
+
+
+class PagesGoTo200(unittest.TestCase):
+    """/v1/memories and /v1/events honour `limit` up to 200 (get_all was cut at
+    100 server-side until 2026-09-28). The SDK passes it through untouched."""
+
+    def test_get_all_and_events_send_200(self):
+        rec = (_Recorder().queue(200, {"memories": [], "total": 0})
+               .queue(200, {"events": [], "processing": 0}))
+        k = _client(rec)
+        k.get_all(user_id="u", limit=200)
+        k.events(status="error", limit=200)
+        self.assertEqual(rec.calls[0]["params"]["limit"], 200)
+        self.assertEqual(rec.calls[1]["params"], {"status": "error", "limit": 200})
+
+
 def _published_text_files():
     """The files a reader sees on PyPI, npm and GitHub, plus the shipped code."""
     out = []
     for root, _dirs, files in os.walk(_PKG):
         out += [os.path.join(root, f) for f in files if f.endswith(".py")]
-    for rel in ("README.md", "python/README.md", "python/pyproject.toml", "js/README.md",
-                "js/package.json", "n8n/README.md", "RELEASING.md"):
+    for rel in ("README.md", "CHANGELOG.md", "python/README.md", "python/pyproject.toml",
+                "js/README.md", "js/package.json", "n8n/README.md", "RELEASING.md"):
         p = os.path.join(_REPO, rel)
         if os.path.exists(p):
             out.append(p)
@@ -914,6 +1134,27 @@ class NoFalsePromises(unittest.TestCase):
                     re.search(r"webhook[^.]{0,120}fact_extracted"
                               r"|fact_extracted[^.]{0,60}webhook", text, re.I),
                     "promises a fact_extracted webhook")
+
+    def test_no_text_says_batch_refuses_timestamp(self):
+        """POST /v1/batch takes `timestamp` per item since 2026-09-28. The
+        docstrings of both clients and the README said it was refused."""
+        import re
+
+        for path in _published_text_files():
+            with open(path, encoding="utf-8") as fh:
+                text = fh.read()
+            with self.subTest(path=os.path.relpath(path, _REPO)):
+                self.assertIsNone(
+                    re.search(r"`+timestamp`+ included|not take a `+timestamp", text),
+                    "says batch() refuses timestamp")
+
+    def test_no_text_says_processing_counts_only_the_latest_200(self):
+        """`processing` counts every write still in flight since 2026-09-28."""
+        for path in _published_text_files():
+            with open(path, encoding="utf-8") as fh:
+                text = " ".join(fh.read().split())
+            with self.subTest(path=os.path.relpath(path, _REPO)):
+                self.assertNotIn("200 most recent", text)
 
     def test_no_em_dash_in_published_text(self):
         for path in _published_text_files():

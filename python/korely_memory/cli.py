@@ -104,6 +104,28 @@ def _has_ended(invalid_at: Optional[str]) -> bool:
         return True
 
 
+def _utc_day(value: Optional[str]) -> str:
+    """The UTC calendar day of an ISO moment, `YYYY-MM-DD` ("" when absent).
+
+    `value[:10]` printed the day in whatever offset the server wrote: a fact
+    that ended at 2026-05-31T20:00Z, sent as `2026-06-01T10:00:00+14:00`, read
+    "2026-06-01". The hosted MCP prints the UTC day since 2026-09-28
+    (memoria_core `_data`), and so does this. A value with no offset is UTC; a
+    string that is not ISO keeps its first ten characters.
+    """
+    from datetime import datetime, timezone
+
+    if not value:
+        return ""
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return str(value)[:10]
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc)
+    return dt.date().isoformat()
+
+
 def _fact_line(f) -> str:
     """One fact, and the right tense for its dates.
 
@@ -112,10 +134,10 @@ def _fact_line(f) -> str:
     somebody distrust the rest of the line.
     """
     base = f"{f.subject} · {f.predicate} · {f.object}"
-    when = f" [from {f.valid_from[:10]}]" if f.valid_from else ""
+    when = f" [from {_utc_day(f.valid_from)}]" if f.valid_from else ""
     if f.invalid_at:
-        when += (f" (superseded {f.invalid_at[:10]})" if _has_ended(f.invalid_at)
-                 else f" (until {f.invalid_at[:10]})")
+        when += (f" (superseded {_utc_day(f.invalid_at)})" if _has_ended(f.invalid_at)
+                 else f" (until {_utc_day(f.invalid_at)})")
     return base + when
 
 
@@ -261,10 +283,11 @@ def cmd_delete_all(k: Korely, a) -> int:
     if a.json:
         _emit_json(r)
     else:
-        # The server erases these rows physically; the response field is still
-        # called facts_invalidated, the line says what happened to them.
-        print(f"forgot user {r.user_id}  ({r.memories_forgotten or 0} memory(ies), "
-              f"{r.facts_invalidated or 0} fact(s) erased, audit {r.audit_id})")
+        # The rows are physically deleted, and since 2026-09-28 the receipt
+        # says so (memories_deleted, facts_deleted). BulkReceipt fills them
+        # from the old names when an older server sends only those.
+        print(f"forgot user {r.user_id}  ({r.memories_deleted or 0} memory(ies), "
+              f"{r.facts_deleted or 0} fact(s) erased, audit {r.audit_id})")
     return 0
 
 
@@ -325,10 +348,15 @@ def cmd_init(args) -> int:
         with urllib.request.urlopen(req, timeout=30) as r:
             data = json.loads(r.read().decode("utf-8"))
     except urllib.error.HTTPError as e:
+        # The same reading of the error envelope as every other command
+        # (Korely._error_fields): `message`, else what `detail` says, so an
+        # install that answers `{"detail": ...}` is not printed as raw JSON.
         detail = e.read().decode("utf-8", "replace")
         try:
-            detail = json.loads(detail).get("message", detail)
-        except Exception:
+            parsed = json.loads(detail)
+            if isinstance(parsed, dict):
+                detail = Korely._error_fields(e.code, parsed)[1]
+        except ValueError:
             pass
         print(f"error: signup failed ({e.code}): {detail}", file=sys.stderr)
         return 1

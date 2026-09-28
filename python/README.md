@@ -75,15 +75,41 @@ Every method wraps exactly one REST endpoint.
 
 `add(..., timestamp="2026-01-15")` backfills the past: facts extracted inherit
 the timestamp as their `valid_from`, so `as_of` point-in-time queries reflect
-when things were true, not when they were ingested. `batch()` does not take a
-`timestamp` (the server refuses the key), so backfill history with `add()`.
+when things were true, not when they were ingested. Each item of `batch()` takes
+the same `timestamp` key, so a migration keeps its real dates:
+
+```python
+korely.batch([
+    {"content": "Franco signed up on the Pro plan.", "user_id": "franco", "timestamp": "2026-01-15"},
+    {"content": "Franco downgraded to Free.", "user_id": "franco", "timestamp": "2026-06-20"},
+])
+```
+
+A timestamp that is not an ISO 8601 date or datetime refuses the whole batch
+with a 422 naming the item (`memories[1].timestamp`), before anything is queued.
 
 `list_agents()` / `delete_agent(agent_id)` manage your agent namespaces: call
 `list_agents()` after an `agent_cap_exceeded` error to reuse an existing
-`agent_id`, or `delete_agent()` to purge a throwaway one and free its cap slot.
+`agent_id`, or `delete_agent()` to purge a throwaway one. The page's `total`
+counts the namespaces of this key's project; `used` counts the cap slots taken
+across the account, which is what the 403 compares with `cap`. `delete_agent()`
+raises `NotFoundError` for a name this project does not use, and its receipt's
+`slot_freed` says whether the slot is free now (it is not while another project
+of the account still uses the name).
+
+`delete_all(user_id=)` answers with `memories_deleted` and `facts_deleted`, the
+rows physically erased. `memories_forgotten` and `facts_invalidated` carry the
+same numbers under their old names and are deprecated.
+
+`correct_fact()` returns the new fact, whose `invalidated` lists every fact the
+correction superseded (the corrected one, plus any the contradiction check
+closed). A correction that restates the fact as it already stands supersedes
+nothing: the same fact comes back, reconfirmed, with `invalidated == []`.
 
 `get_facts()` returns a list of `Fact` that also carries `.total`, the number of
 facts matching the filters across all pages, so `offset` knows when to stop.
+`get_all()`, `get_facts()`, `users()`, `list_agents()` and `events()` take a
+`limit` up to 200.
 
 ## Bi-temporal facts
 
@@ -120,10 +146,12 @@ results = korely.search("contact preference", user_id="customer-4812")
 ## Error handling
 
 Every error the server answers with is an `APIError` carrying the stable `code`
-and the `message` of the REST error envelope, so you can branch on `err.code`.
-The common statuses also have their own subclass. Everything subclasses
-`KorelyError`, which is also what a client-side problem raises (no key, a
-connection error, a timeout).
+and the `message` of the REST error envelope (`{"code", "message"}`), so you can
+branch on `err.code`; a self-hosted install that answers FastAPI's `detail` is
+read the same way, and `err.body` keeps the response as it came. The common
+statuses also have their own subclass. Everything subclasses `KorelyError`,
+which is also what a client-side problem raises (no key, a connection error, a
+timeout).
 
 ```python
 import time
@@ -162,8 +190,11 @@ pip install 'korely-memory[mcp]'   # Python 3.10+
 
 `korely-mcp` is a stdio MCP server with four tools (`korely_get_context`,
 `korely_add`, `korely_search`, `korely_get_facts`), the same four the hosted
-server at `https://api.korely.ai/agent/mcp` offers. It reads the key from
-`KORELY_API_KEY` or from the file `korely init` saved.
+server at `https://api.korely.ai/agent/mcp` offers, with the same arguments
+(`korely_add` takes `timestamp`) and the same fact lines: a fact whose end date
+is still to come reads `[until 2027-01-01]`, not `[superseded ...]`, and dates
+are UTC days. It reads the key from `KORELY_API_KEY` or from the file
+`korely init` saved.
 
 ## Links
 

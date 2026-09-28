@@ -4,7 +4,7 @@ anything new, so a server that returns a superset never breaks an old SDK."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field, fields
-from typing import Any, List, Optional
+from typing import Any, List, Optional, TypedDict
 
 
 def _take(cls, d: Optional[dict]) -> dict:
@@ -29,7 +29,10 @@ class Fact:
     valid_from: Optional[str] = None
     invalid_at: Optional[str] = None
     invalidated_by: Optional[str] = None
-    # write-shape only: ids this fact superseded (from add()/update())
+    # Write shape only (add(), update(), add_fact_triple(), correct_fact()):
+    # the ids this write superseded. On correct_fact() that is the corrected
+    # fact plus any other the contradiction check closed; empty when the
+    # correction restated the fact as it stands, which reconfirms it.
     invalidated: List[str] = field(default_factory=list)
     source_memory_id: Optional[str] = None
     created_at: Optional[str] = None
@@ -147,18 +150,44 @@ class DeleteReceipt:
 
 @dataclass
 class BulkReceipt:
-    """What ``delete_all`` erased. Despite the names, ``memories_forgotten``
-    and ``facts_invalidated`` count rows physically deleted; ``erasure`` is
-    ``"permanent"``."""
+    """What ``delete_all`` erased. Every row is physically deleted, and
+    ``erasure`` is ``"permanent"``.
+
+    ``memories_deleted`` and ``facts_deleted`` count the rows. Read these.
+
+    ``memories_forgotten`` and ``facts_invalidated`` are **deprecated
+    aliases** carrying the same two numbers. They were the only names the
+    server sent until 2026-09-28, and they describe something that did not
+    happen: nothing was forgotten or invalidated, it was deleted. They stay so
+    that code written against 0.1.14 and earlier keeps working.
+
+    Whichever pair the server sends fills both, so the new names work against
+    an install that predates them, and the old ones keep working against a
+    server that stops sending them. The new fields come last so a positional
+    ``BulkReceipt(...)`` built by older code means what it meant.
+    """
     user_id: Optional[str] = None
+    #: Deprecated alias of ``memories_deleted``.
     memories_forgotten: Optional[int] = None
+    #: Deprecated alias of ``facts_deleted``.
     facts_invalidated: Optional[int] = None
     erasure: Optional[str] = None
     audit_id: Optional[str] = None
+    memories_deleted: Optional[int] = None
+    facts_deleted: Optional[int] = None
 
     @classmethod
     def from_dict(cls, d: dict) -> "BulkReceipt":
-        return cls(**_take(cls, d))
+        obj = cls(**_take(cls, d))
+        if obj.memories_deleted is None:
+            obj.memories_deleted = obj.memories_forgotten
+        if obj.memories_forgotten is None:
+            obj.memories_forgotten = obj.memories_deleted
+        if obj.facts_deleted is None:
+            obj.facts_deleted = obj.facts_invalidated
+        if obj.facts_invalidated is None:
+            obj.facts_invalidated = obj.facts_deleted
+        return obj
 
 
 @dataclass
@@ -170,6 +199,26 @@ class Context:
     @classmethod
     def from_dict(cls, d: dict) -> "Context":
         return cls(**_take(cls, d))
+
+
+class _BatchMemoryRequired(TypedDict):
+    content: str
+
+
+class BatchMemory(_BatchMemoryRequired, total=False):
+    """One item of ``batch()``: the body of a single ``add()``, as a plain
+    dict. ``content`` is required, every other key optional, and a key not
+    listed here refuses the whole batch with a 422.
+
+    ``timestamp`` (ISO 8601 date or datetime) is when the item's events
+    happened; its facts inherit it as ``valid_from``, exactly as on ``add()``.
+    An unreadable value refuses the whole batch with a 422 naming
+    ``memories[i].timestamp``, before anything is queued."""
+    user_id: str
+    agent_id: str
+    run_id: str
+    metadata: dict
+    timestamp: str
 
 
 @dataclass
@@ -293,9 +342,18 @@ class AgentScope:
 
 @dataclass
 class AgentsPage:
-    """Iterable page of agent namespaces. ``total`` == distinct namespaces ==
-    ``used`` slots; ``cap`` is the tier agent cap (reconciles with the
-    ``agent_cap_exceeded`` 403)."""
+    """Iterable page of agent namespaces.
+
+    - ``total``: the namespaces in this key's project, before pagination,
+      which are exactly the ones this key can delete.
+    - ``used``: the agent slots taken across the whole account, counted by
+      name. It reconciles with the ``agent_cap_exceeded`` 403, and is above
+      ``total`` when other projects use names this project does not.
+    - ``cap``: the plan's agent cap; 0 on a self-hosted install, which sets
+      no ceiling.
+
+    Until 2026-09-28 the server counted both over the account, so ``total``
+    and ``used`` were the same number and this docstring said so."""
     agents: List[AgentScope] = field(default_factory=list)
     total: int = 0
     cap: int = 0
@@ -323,11 +381,19 @@ class AgentsPage:
 
 @dataclass
 class AgentDeleteReceipt:
-    """The purge counts from hard-deleting an agent namespace (frees its cap slot)."""
+    """The purge counts from hard-deleting an agent namespace.
+
+    ``slot_freed`` says whether the agent cap slot is free now. The cap counts
+    a name across the account, so it stays taken (False) while another
+    project of the account still uses the same ``agent_id``; this key can
+    neither see nor delete that project's rows. None when the server does not
+    say: a self-hosted install has no cap, and servers before 2026-09-28 did
+    not send it."""
     agent_id: Optional[str] = None
     memories_deleted: Optional[int] = None
     facts_deleted: Optional[int] = None
     audit_id: Optional[str] = None
+    slot_freed: Optional[bool] = None
 
     @classmethod
     def from_dict(cls, d: dict) -> "AgentDeleteReceipt":

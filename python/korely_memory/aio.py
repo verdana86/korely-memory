@@ -42,6 +42,7 @@ from .models import (
     AgentDeleteReceipt,
     AgentsPage,
     BatchJob,
+    BatchMemory,
     BulkReceipt,
     Context,
     DeleteReceipt,
@@ -107,7 +108,7 @@ class AsyncKorely:
     async def correct_fact(self, fact_id: str, **kw) -> Fact:
         return await self._run(lambda: self._sync.correct_fact(fact_id, **kw))
 
-    async def batch(self, memories: List[dict]) -> BatchJob:
+    async def batch(self, memories: "List[BatchMemory | dict]") -> BatchJob:
         return await self._run(self._sync.batch, memories)
 
     # ── read ──────────────────────────────────────────────────────────────

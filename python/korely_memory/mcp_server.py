@@ -81,28 +81,60 @@ def _client() -> Korely:
     return Korely(api_key=key, base_url=base)
 
 
+def _name(label: Optional[str], canonical: Optional[str]) -> str:
+    """An entity under its current name, with the one it was written with:
+    "Korely (then: Gordon)". The hosted line does the same."""
+    lab = (label or "").strip()
+    can = (canonical or "").strip()
+    if not can or can.lower() == lab.lower():
+        return lab
+    return f"{can} (then: {lab})"
+
+
 def _fact_line(f) -> str:
-    """One fact as the tools print it, in the tense its dates call for.
+    """One fact as the tools print it: the line the hosted MCP prints for it.
 
-    In 0.1.14 and earlier a fact closed on a future date read `[superseded 2027-01-01]`,
-    the defect the CLI stopped making in 52e29b7 and this copy kept. It now
-    also says what `tense` says, as the hosted MCP does: `past` is history,
-    `planned` is an intention, not a fact that happened.
+    The same four tools, on two servers, should read the same. Since
+    2026-09-28 the hosted line (memoria_core `riga_mcp`) says:
+
+    - the entity under its current name, with the one it was written with;
+    - when the fact began, when a memory last restated it and how many did:
+      `(since 2026-03-15, confirmed 2026-09-01, seen 3x)`;
+    - `[until DATE]` for an end still to come (a contract that ends on 31
+      December is true until then), `[past, ended by DATE]` for history,
+      `[superseded DATE]` for a fact a newer one replaced, and
+      `[planned, not done]` for an intention, next to `until` when it has an
+      end date;
+    - every date as its UTC day.
+
+    In 0.1.14 and earlier this copy said `[superseded 2027-01-01]` for a date
+    still to come, as the hosted server did until the same day.
     """
-    from .cli import _has_ended
+    from .cli import _has_ended, _utc_day
 
-    line = f"{f.subject} · {f.predicate} · {f.object}"
-    if getattr(f, "valid_from", None):
-        line += f"  (since {f.valid_from[:10]})"
+    line = (f"{_name(f.subject, getattr(f, 'subject_canonical', None))} · "
+            f"{f.predicate} · "
+            f"{_name(f.object, getattr(f, 'object_canonical', None))}")
+    vf = getattr(f, "valid_from", None)
+    if vf:
+        line += f"  (since {_utc_day(vf)}"
+        lc = getattr(f, "last_confirmed_at", None)
+        n = getattr(f, "observation_count", None) or 1
+        if lc and _utc_day(lc) != _utc_day(vf):
+            line += f", confirmed {_utc_day(lc)}"
+        if int(n) > 1:
+            line += f", seen {int(n)}x"
+        line += ")"
     tense = getattr(f, "tense", None) or "current"
     ia = getattr(f, "invalid_at", None)
-    if ia:
-        if not _has_ended(ia):
-            line += f"  [until {ia[:10]}]"
-        elif tense == "past":
-            line += f"  [past, ended by {ia[:10]}]"
-        else:
-            line += f"  [superseded {ia[:10]}]"
+    if ia and not _has_ended(ia):
+        line += f"  [until {_utc_day(ia)}]"
+        if tense == "planned":
+            line += "  [planned, not done]"
+    elif ia and tense == "past":
+        line += f"  [past, ended by {_utc_day(ia)}]"
+    elif ia:
+        line += f"  [superseded {_utc_day(ia)}]"
     elif tense == "planned":
         line += "  [planned, not done]"
     return line
@@ -126,14 +158,19 @@ def korely_get_context(query: str, user_id: Optional[str] = None,
 
 @mcp.tool()
 def korely_add(content: str, user_id: Optional[str] = None,
-               agent_id: Optional[str] = None, run_id: Optional[str] = None) -> str:
+               agent_id: Optional[str] = None, run_id: Optional[str] = None,
+               timestamp: Optional[str] = None) -> str:
     """Remember something. Stores a memory and extracts typed bi-temporal facts.
 
     Call this after the user states a durable preference, decision, or fact so it
     persists across sessions. `user_id` scopes the memory to one end user.
+    `timestamp` (ISO date or datetime, optional) is when the memory's events
+    occurred; its facts inherit it as valid_from, so as_of reads answer what
+    was true then. Omitted: now.
     """
     try:
-        m = _client().add(content, user_id=user_id, agent_id=agent_id, run_id=run_id)
+        m = _client().add(content, user_id=user_id, agent_id=agent_id, run_id=run_id,
+                          timestamp=timestamp)
     except KorelyError as e:
         return f"error: {e}"
     out = [f"Stored {m.id}."]
