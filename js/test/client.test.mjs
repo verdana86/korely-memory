@@ -174,10 +174,10 @@ test("422 maps to generic APIError", async () => {
 // fatto che i dati restano sulla tua macchina, non e' una scomodita'.
 test("KORELY_BASE_URL viene rispettato", () => {
   const prima = process.env.KORELY_BASE_URL;
-  process.env.KORELY_BASE_URL = "https://2-29-27-64.nip.io";
+  process.env.KORELY_BASE_URL = "https://203-0-113-64.nip.io";
   try {
     const k = new Korely({ apiKey: "kor_self_x", fetch: async () => ({}) });
-    assert.equal(k.baseUrl, "https://2-29-27-64.nip.io");
+    assert.equal(k.baseUrl, "https://203-0-113-64.nip.io");
   } finally {
     if (prima === undefined) delete process.env.KORELY_BASE_URL;
     else process.env.KORELY_BASE_URL = prima;
