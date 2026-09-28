@@ -140,7 +140,7 @@ def _base_from_config() -> Optional[str]:
 def _sni_hint(base_url: str, reason: object) -> str:
     """Explain the one TLS failure whose message explains nothing.
 
-    A server named after its own IP address, `2.29.27.64.nip.io`, is what the
+    A server named after its own IP address, `203.0.113.64.nip.io`, is what the
     install instructions suggest when a machine has no DNS name yet. It works in
     every browser. From the Python that ships with macOS it fails with
     `TLSV1_ALERT_INTERNAL_ERROR` and nothing else, on both ends: the server sees
@@ -151,8 +151,8 @@ def _sni_hint(base_url: str, reason: object) -> str:
     name beginning with four numbers as an IP address. RFC 6066 forbids sending
     an IP address as the server name, so it sends no name at all, and a server
     holding one certificate cannot tell which one was wanted. Measured against a
-    server that logs what it receives: `2.29.27.64.nip.io` arrives empty,
-    `2-29-27-64.nip.io` arrives intact, and a current Python sends both.
+    server that logs what it receives: `203.0.113.64.nip.io` arrives empty,
+    `203-0-113-64.nip.io` arrives intact, and a current Python sends both.
 
     Nothing here can fix it. What it can do is stop the next person spending an
     afternoon on it, which is what happened to the person this was written for.

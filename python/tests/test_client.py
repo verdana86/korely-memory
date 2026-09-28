@@ -421,10 +421,10 @@ class TheSniTrap(unittest.TestCase):
             return _sni_hint(url, ssl.SSLError("tlsv1 alert internal error"))
 
     def test_it_offers_the_dashed_name(self):
-        self.assertIn('https://2-29-27-64.nip.io', self._hint("https://2.29.27.64.nip.io"))
+        self.assertIn('https://203-0-113-64.nip.io', self._hint("https://203.0.113.64.nip.io"))
 
     def test_it_says_the_server_is_not_at_fault(self):
-        self.assertIn("not your server", self._hint("https://2.29.27.64.nip.io"))
+        self.assertIn("not your server", self._hint("https://203.0.113.64.nip.io"))
 
     def test_an_ordinary_name_gets_nothing(self):
         self.assertEqual("", self._hint("https://api.korely.ai"))
@@ -436,11 +436,11 @@ class TheSniTrap(unittest.TestCase):
     def test_a_modern_python_gets_nothing(self):
         """It sends the name correctly, so the failure is something else and
         guessing would send the reader down the wrong path."""
-        self.assertEqual("", self._hint("https://2.29.27.64.nip.io", libressl=False))
+        self.assertEqual("", self._hint("https://203.0.113.64.nip.io", libressl=False))
 
     def test_a_failure_that_is_not_tls_gets_nothing(self):
         from korely_memory.client import _sni_hint
-        self.assertEqual("", _sni_hint("https://2.29.27.64.nip.io", OSError("refused")))
+        self.assertEqual("", _sni_hint("https://203.0.113.64.nip.io", OSError("refused")))
 
 
 class TheServerItTalksTo(unittest.TestCase):
@@ -468,8 +468,8 @@ class TheServerItTalksTo(unittest.TestCase):
                 os.environ[k] = v
 
     def test_la_variabile_e_rispettata(self):
-        os.environ["KORELY_BASE_URL"] = "https://2-29-27-64.nip.io"
-        self.assertEqual(Korely().base_url, "https://2-29-27-64.nip.io")
+        os.environ["KORELY_BASE_URL"] = "https://203-0-113-64.nip.io"
+        self.assertEqual(Korely().base_url, "https://203-0-113-64.nip.io")
 
     def test_senza_variabile_resta_il_servizio_ospitato(self):
         """Con una chiave del servizio ospitato, si intende: una `kor_self_`
