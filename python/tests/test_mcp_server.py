@@ -1,9 +1,8 @@
-"""korely-mcp stdio server: tool registration, key resolution, the extra's pin.
+"""korely-mcp stdio server: tool registration, key resolution, the protocol.
 
-Tests that need the optional `mcp` extra skip when it is not installed (the
-base SDK is zero-dep, so the default test env has no `mcp`). The full agentic
-path (a real MCP client spawning the server and calling tools) is exercised
-separately against a live backend.
+Since 0.1.16 the server needs no dependency (the MCP stdio protocol is in
+korely_memory/_mcp_stdio.py), so every test runs, on Python 3.9 too. The full
+agentic path against a live backend is exercised separately.
 """
 import importlib
 import os
@@ -13,17 +12,10 @@ import types
 import unittest
 from unittest import mock
 
-try:
-    import mcp  # noqa: F401
-    HAS_MCP = True
-except Exception:
-    HAS_MCP = False
-
 _PYPROJECT = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                           "pyproject.toml")
 
 
-@unittest.skipUnless(HAS_MCP, "mcp extra not installed (pip install korely-memory[mcp])")
 class TestKorelyMcpServer(unittest.TestCase):
     def test_four_tools_registered(self):
         from korely_memory import mcp_server as m
@@ -46,7 +38,6 @@ class TestKorelyMcpServer(unittest.TestCase):
             os.environ.pop("KORELY_CONFIG_HOME", None)
 
 
-@unittest.skipUnless(HAS_MCP, "mcp extra not installed (pip install korely-memory[mcp])")
 class TheToolsSayTheRightTense(unittest.TestCase):
     """The CLI stopped printing `superseded 3026-01-01` for a fact that ends in
     the future (52e29b7); the MCP server kept its own copy of the line and the
@@ -84,7 +75,6 @@ class TheToolsSayTheRightTense(unittest.TestCase):
         self.assertIn("planned, not done", _fact_line(self._fact(tense="planned")))
 
 
-@unittest.skipUnless(HAS_MCP, "mcp extra not installed (pip install korely-memory[mcp])")
 class TheSameToolsAsTheHostedServer(unittest.TestCase):
     """The stdio server promises the four tools of the hosted /agent/mcp. On
     2026-09-28 the hosted `korely_add` gained `timestamp`, and its fact line
@@ -100,14 +90,13 @@ class TheSameToolsAsTheHostedServer(unittest.TestCase):
         return Fact(**base)
 
     def test_korely_add_declares_timestamp(self):
-        import asyncio
-
         from korely_memory import mcp_server as m
 
-        tools = {t.name: t for t in asyncio.run(m.mcp.list_tools())}
-        props = tools["korely_add"].inputSchema["properties"]
+        listed = m.mcp.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})["result"]["tools"]
+        tools = {t["name"]: t for t in listed}
+        props = tools["korely_add"]["inputSchema"]["properties"]
         self.assertIn("timestamp", props)
-        self.assertNotIn("timestamp", tools["korely_add"].inputSchema.get("required", []))
+        self.assertNotIn("timestamp", tools["korely_add"]["inputSchema"].get("required", []))
 
     def test_korely_add_sends_the_timestamp(self):
         from korely_memory import Korely
@@ -178,44 +167,103 @@ class TheSameToolsAsTheHostedServer(unittest.TestCase):
                 self.assertEqual(_fact_line(self._fact(**kw)), expected)
 
 
-class TheExtraInstallsAWorkingServer(unittest.TestCase):
-    """mcp 2.0 removed `mcp.server.fastmcp`. The extra said `mcp>=1.2.0` with
-    no upper bound, so `pip install 'korely-memory[mcp]'` resolved mcp 2.x and
-    korely-mcp exited telling the user to install the extra they had just
-    installed. Measured 2026-09-28 in a clean python:3.11 container with
-    mcp 2.2.0."""
+class TheServerNeedsNothing(unittest.TestCase):
+    """Until 0.1.15 korely-mcp imported `mcp.server.fastmcp`: the `mcp` package
+    needs Python 3.10, so it could not start on the Python 3.9 macOS ships
+    (blind installs of korely-agent 0.1.13, 2026-09-28), and mcp 2.0 removed
+    the module. Now the protocol is ours, standard library only."""
 
-    def test_the_extra_stays_on_mcp_1(self):
+    def test_the_extra_is_empty(self):
         with open(_PYPROJECT, encoding="utf-8") as fh:
             text = fh.read()
-        m = re.search(r'^mcp\s*=\s*\[\s*"([^"]+)"', text, re.M)
-        self.assertIsNotNone(m, "no mcp extra in pyproject")
-        self.assertIn("<2", m.group(1).replace(" ", ""))
+        self.assertRegex(text, r"(?m)^mcp\s*=\s*\[\s*\]", "the mcp extra must stay, empty")
 
-    def _import_with(self, modules):
-        # patch.dict restores the whole of sys.modules on exit, so the real mcp
-        # (when installed) and its submodules come back untouched.
-        with mock.patch.dict(sys.modules, modules):
-            for k in [k for k in sys.modules if k.startswith("mcp.") and k not in modules]:
-                del sys.modules[k]
+    def test_it_imports_without_the_mcp_package(self):
+        with mock.patch.dict(sys.modules, {"mcp": None}):
             sys.modules.pop("korely_memory.mcp_server", None)
-            with self.assertRaises(SystemExit) as caught:
-                importlib.import_module("korely_memory.mcp_server")
-        return str(caught.exception.code)
+            m = importlib.import_module("korely_memory.mcp_server")
+        self.assertTrue(hasattr(m, "korely_add"))
 
-    def test_mcp_2_is_named_as_the_problem(self):
-        fake_mcp = types.ModuleType("mcp")
-        fake_mcp.__path__ = []
-        fake_server = types.ModuleType("mcp.server")
-        fake_server.__path__ = []
-        msg = self._import_with({"mcp": fake_mcp, "mcp.server": fake_server,
-                                 "mcp.server.fastmcp": None})
-        self.assertIn("mcp>=1.2.0,<2", msg)
-        self.assertNotIn("needs the MCP extra", msg)
 
-    def test_a_missing_mcp_asks_for_the_extra(self):
-        msg = self._import_with({"mcp": None})
-        self.assertIn("korely-memory[mcp]", msg)
+class TheProtocol(unittest.TestCase):
+    """MCP 2025-06-18: lifecycle, stdio transport, tools."""
+
+    def setUp(self):
+        from korely_memory import mcp_server
+        self.m = mcp_server
+
+    def _call(self, method, params=None, mid=1):
+        msg = {"jsonrpc": "2.0", "id": mid, "method": method}
+        if params is not None:
+            msg["params"] = params
+        return self.m.mcp.handle(msg)
+
+    def test_initialize_answers_the_version_the_client_asked_for(self):
+        r = self._call("initialize", {"protocolVersion": "2025-03-26", "capabilities": {},
+                                      "clientInfo": {"name": "t", "version": "1"}})["result"]
+        self.assertEqual(r["protocolVersion"], "2025-03-26")
+        self.assertIn("tools", r["capabilities"])
+        self.assertEqual(r["serverInfo"]["name"], "korely")
+
+    def test_an_unknown_version_gets_the_latest(self):
+        r = self._call("initialize", {"protocolVersion": "1999-01-01"})["result"]
+        self.assertEqual(r["protocolVersion"], "2025-06-18")
+
+    def test_notifications_get_no_answer_and_ping_does(self):
+        self.assertIsNone(self.m.mcp.handle({"jsonrpc": "2.0", "method": "notifications/initialized"}))
+        self.assertEqual(self._call("ping")["result"], {})
+
+    def test_the_four_tools_with_their_schemas(self):
+        tools = {t["name"]: t for t in self._call("tools/list")["result"]["tools"]}
+        self.assertEqual(set(tools), {"korely_add", "korely_search", "korely_get_context", "korely_get_facts"})
+        facts = tools["korely_get_facts"]["inputSchema"]
+        self.assertEqual(facts["properties"]["include_invalidated"]["type"], "boolean")
+        self.assertEqual(facts["properties"]["limit"], {"type": "integer", "default": 50})
+        self.assertEqual(facts["properties"]["as_of"]["type"], ["string", "null"])
+        self.assertEqual(tools["korely_search"]["inputSchema"]["required"], ["query"])
+        self.assertTrue(tools["korely_get_context"]["description"])
+
+    def test_a_call_answers_text(self):
+        with mock.patch.object(self.m, "korely_search", lambda **kw: "hits"), \
+                mock.patch.dict(self.m.mcp._tools, {"korely_search": lambda query, user_id=None, limit=15: "hits"}):
+            r = self._call("tools/call", {"name": "korely_search", "arguments": {"query": "tea"}})["result"]
+        self.assertEqual(r, {"content": [{"type": "text", "text": "hits"}], "isError": False})
+
+    def test_a_tool_that_raises_is_a_tool_error_not_a_protocol_error(self):
+        def boom(query):
+            raise RuntimeError("down")
+        with mock.patch.dict(self.m.mcp._tools, {"korely_search": boom}):
+            r = self._call("tools/call", {"name": "korely_search", "arguments": {"query": "x"}})["result"]
+        self.assertTrue(r["isError"])
+        self.assertIn("down", r["content"][0]["text"])
+
+    def test_unknown_tool_bad_arguments_unknown_method(self):
+        self.assertEqual(self._call("tools/call", {"name": "nope"})["error"]["code"], -32602)
+        bad = self._call("tools/call", {"name": "korely_search", "arguments": {"nope": 1}})
+        self.assertEqual(bad["error"]["code"], -32602)
+        self.assertEqual(self._call("resources/list")["error"]["code"], -32601)
+
+    def test_a_real_process_over_stdio(self):
+        """The server as a client starts it: one JSON message per line, with
+        this interpreter (the Python 3.9 of macOS when the tests run on it)."""
+        import json
+        import subprocess
+
+        lines = [
+            {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+             "params": {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "t", "version": "1"}}},
+            {"jsonrpc": "2.0", "method": "notifications/initialized"},
+            {"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
+        ]
+        env = dict(os.environ, PYTHONPATH=os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        out = subprocess.run(
+            [sys.executable, "-m", "korely_memory.mcp_server"],
+            input="\n".join(json.dumps(x) for x in lines) + "\n",
+            capture_output=True, text=True, timeout=30, env=env,
+        )
+        answers = [json.loads(line) for line in out.stdout.splitlines() if line.strip()]
+        self.assertEqual([a["id"] for a in answers], [1, 2], out.stderr)
+        self.assertEqual(len(answers[1]["result"]["tools"]), 4)
 
 
 if __name__ == "__main__":

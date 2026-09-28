@@ -235,6 +235,15 @@ export class Korely {
   private readonly fetchImpl: typeof fetch;
 
   constructor(opts: KorelyOptions = {}) {
+    // `base_url` is the Python spelling. In TypeScript it does not compile; in
+    // plain JavaScript it would be ignored, and the requests would go to the
+    // hosted service instead of the server the caller meant.
+    if (opts && Object.prototype.hasOwnProperty.call(opts, "base_url")) {
+      throw new KorelyError(
+        "Unknown option base_url: the JavaScript SDK takes baseUrl " +
+          "(new Korely({ baseUrl: 'https://...' })) or the KORELY_BASE_URL env var.",
+      );
+    }
     const envKey =
       typeof process !== "undefined" ? process.env?.KORELY_API_KEY : undefined;
     const key = opts.apiKey ?? envKey;

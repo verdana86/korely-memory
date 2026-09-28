@@ -1,7 +1,9 @@
 """korely-mcp: a stdio MCP server that gives a coding assistant Korely memory.
 
-`pip install 'korely-memory[mcp]'` adds this server (the `mcp` package it needs
-runs on Python 3.10 or later). Point Claude Code / Cursor / Windsurf at it and
+It comes with `pip install korely-memory` and runs on Python 3.9 or later, with
+no dependency: the MCP stdio protocol is implemented in `_mcp_stdio.py`
+(`korely-memory[mcp]` still installs, and adds nothing). Point Claude Code /
+Cursor / Windsurf at it and
 your assistant gains four memory tools over your Korely agent store: remember,
 recall (the moat), search, and read typed facts, persistent across sessions.
 They are the same four tools the hosted server at /agent/mcp offers, for
@@ -33,38 +35,12 @@ from typing import Optional
 from .client import Korely
 from .exceptions import KorelyError
 
-try:
-    from mcp.server.fastmcp import FastMCP
-except ModuleNotFoundError as e:  # pragma: no cover - import-time guard
-    # Two different problems raise the same exception here. Telling everybody
-    # to install the extra was right when `mcp` was missing, and wrong for
-    # anyone who had installed it: mcp 2.0 removed `mcp.server.fastmcp`, the
-    # extra had no upper bound, so a fresh install got 2.x and was told to
-    # install what it had just installed.
-    import importlib.util
+# The protocol, standard library only (_mcp_stdio.py): the `mcp` package needs
+# Python 3.10, and mcp 2.0 removed the module this server imported.
+from ._mcp_stdio import Server
+from .client import __version__
 
-    try:
-        _installed = importlib.util.find_spec("mcp") is not None
-    except (ValueError, ImportError):
-        _installed = True
-    if not _installed:
-        raise SystemExit(
-            "korely-mcp needs the MCP extra (Python 3.10 or later). Install it with:\n"
-            "    pip install 'korely-memory[mcp]'"
-        ) from e
-    try:
-        from importlib.metadata import version as _version
-        _found = _version("mcp")
-    except Exception:
-        _found = "unknown"
-    raise SystemExit(
-        f"korely-mcp runs on mcp 1.x, and the installed mcp is {_found}, which "
-        f"no longer has {e.name or 'mcp.server.fastmcp'}. Install a 1.x release:\n"
-        "    pip install 'mcp>=1.2.0,<2'"
-    ) from e
-
-
-mcp = FastMCP("korely")
+mcp = Server("korely", __version__)
 
 
 def _client() -> Korely:

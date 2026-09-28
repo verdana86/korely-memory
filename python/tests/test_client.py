@@ -1182,3 +1182,82 @@ class RunsOnThePythonItDeclares(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestTheCertificateAuthority(unittest.TestCase):
+    """A server whose certificate a private CA signed (Caddy's local CA on a
+    laptop install): the Python 3.9 of macOS does not read SSL_CERT_FILE, so
+    the client takes the CA file itself (found by the blind installs of
+    korely-agent 0.1.13, 2026-09-28)."""
+
+    def setUp(self):
+        self._env = dict(os.environ)
+        os.environ.pop("KORELY_CA_FILE", None)
+        fd, self.ca = tempfile.mkstemp(suffix=".pem")
+        os.close(fd)
+
+    def tearDown(self):
+        os.environ.clear()
+        os.environ.update(self._env)
+        os.unlink(self.ca)
+
+    def _request_context(self, **kw):
+        from unittest import mock
+
+        seen = {}
+
+        class _Resp:
+            status = 200
+            headers = {}
+
+            def read(self):
+                return b"{}"
+
+            def getcode(self):
+                return 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        def fake_urlopen(req, timeout=None, context=None):
+            seen["context"] = context
+            return _Resp()
+
+        with mock.patch("ssl.create_default_context") as cdc, \
+                mock.patch("korely_memory.client._urlrequest.urlopen", side_effect=fake_urlopen):
+            cdc.return_value = "ctx-with-ca"
+            k = Korely(api_key="kor_self_x", base_url="https://korely.localhost", **kw)
+            k._send("GET", "/v1/memories")
+        return seen["context"], cdc
+
+    def test_default_uses_python_s_trust_store(self):
+        ctx, cdc = self._request_context()
+        self.assertIsNone(ctx)
+        cdc.assert_not_called()
+
+    def test_ca_file_argument(self):
+        ctx, cdc = self._request_context(ca_file=self.ca)
+        self.assertEqual(ctx, "ctx-with-ca")
+        cdc.assert_called_once_with(cafile=self.ca)
+
+    def test_ca_file_from_the_environment(self):
+        os.environ["KORELY_CA_FILE"] = self.ca
+        ctx, cdc = self._request_context()
+        cdc.assert_called_once_with(cafile=self.ca)
+
+    def test_a_missing_ca_file_is_an_error_not_a_silent_default(self):
+        with self.assertRaises(KorelyError):
+            Korely(api_key="kor_self_x", base_url="https://korely.localhost", ca_file="/nope.pem")
+
+    def test_verify_false_warns_and_skips_the_check(self):
+        import ssl
+        import warnings
+
+        with warnings.catch_warnings(record=True) as w:
+            warnings.simplefilter("always")
+            k = Korely(api_key="kor_self_x", base_url="https://korely.localhost", verify=False)
+        self.assertEqual(k._ssl_context.verify_mode, ssl.CERT_NONE)
+        self.assertTrue(any("not checked" in str(x.message) for x in w))

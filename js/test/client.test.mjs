@@ -536,3 +536,14 @@ test("no shipped text says batch refuses timestamp or that processing counts 200
     assert.doesNotMatch(text.replace(/\s+/g, " "), /200 most recent/, rel);
   }
 });
+
+test("base_url (the Python spelling) is refused, not ignored", () => {
+  // Ignored, the requests would go to the hosted service instead of the
+  // caller's own server (found by the blind installs of korely-agent 0.1.13).
+  assert.throws(
+    () => new Korely({ apiKey: "kor_self_x", base_url: "https://memory.example.com" }),
+    (e) => e instanceof KorelyError && /baseUrl/.test(e.message),
+  );
+  const k = new Korely({ apiKey: "kor_self_x", baseUrl: "https://memory.example.com/" });
+  assert.equal(k.baseUrl, "https://memory.example.com");
+});

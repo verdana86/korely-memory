@@ -8,6 +8,27 @@ The server side of the entries marked "API" shipped on 2026-09-28. Against an
 older server these clients keep working: the old field names are still read,
 and a batch `timestamp` is refused there with a 422.
 
+## Unreleased
+
+Python:
+
+- `Korely(ca_file=...)` (or `KORELY_CA_FILE`): the certificate authority to
+  trust for https, for a server whose certificate a private CA signed, like
+  Caddy's local CA on a laptop install. The Python 3.9 of macOS does not read
+  `SSL_CERT_FILE`. `verify=False` turns the check off, with a warning, only as
+  an argument. `AsyncKorely` takes both.
+- `korely-mcp` needs nothing and runs on Python 3.9: the MCP stdio protocol is
+  implemented with the standard library. It used to import `mcp`, which needs
+  Python 3.10 and whose 2.0 removed the module the server used. The `[mcp]`
+  extra stays, empty.
+
+npm:
+
+- The README documents `baseUrl` and `KORELY_BASE_URL` for a self-hosted
+  install, and `NODE_EXTRA_CA_CERTS` for a private CA.
+- `new Korely({ base_url })` (the Python spelling) throws instead of being
+  ignored, which sent the requests to the hosted service.
+
 ## Python 0.1.15 (2026-09-28)
 
 API:

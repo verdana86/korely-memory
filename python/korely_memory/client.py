@@ -189,6 +189,27 @@ def _sni_hint(base_url: str, reason: object) -> str:
 _OUR_HOSTS = ("korely.ai",)
 
 
+def _ssl_context(ca_file: Optional[str], verify: bool):
+    """The TLS context of the requests: None (Python's default) unless a CA
+    file is given or verification is turned off."""
+    import ssl
+
+    if not verify:
+        import warnings
+
+        warnings.warn(
+            "Korely(verify=False): TLS certificates are not checked; anyone on the "
+            "network path can read the API key and the memories.",
+            stacklevel=3,
+        )
+        return ssl._create_unverified_context()
+    if ca_file:
+        if not os.path.isfile(ca_file):
+            raise KorelyError(f"ca_file {ca_file!r} does not exist")
+        return ssl.create_default_context(cafile=ca_file)
+    return None
+
+
 def _is_ours(base_url: str) -> bool:
     host = (_urlparse.urlsplit(base_url).hostname or "").lower()
     return any(host == h or host.endswith("." + h) for h in _OUR_HOSTS)
@@ -256,7 +277,16 @@ class Korely:
         region: str = "eu",
         base_url: Optional[str] = None,
         timeout: float = 30.0,
+        ca_file: Optional[str] = None,
+        verify: bool = True,
     ):
+        """`ca_file`: a PEM file with the certificate authority to trust for
+        https (argument, else KORELY_CA_FILE), for a server whose certificate
+        a private CA signed: Caddy's local CA on a laptop install, a company
+        CA. Needed on the Python 3.9 macOS ships with, whose LibreSSL does not
+        read SSL_CERT_FILE. `verify=False` turns certificate checks off: only
+        as an argument, never from the environment, because it lets anyone on
+        the path read the key and the memories."""
         self.api_key = api_key or os.environ.get("KORELY_API_KEY") or _key_from_config()
         if not self.api_key:
             raise KorelyError(
@@ -288,6 +318,7 @@ class Korely:
         ).rstrip("/")
         _refuse_a_mismatched_pair(self.api_key, self.base_url)
         self.timeout = timeout
+        self._ssl_context = _ssl_context(ca_file or os.environ.get("KORELY_CA_FILE") or None, verify)
 
     # ── low-level transport (the one seam tests override) ──────────────────
     def _send(self, method: str, path: str, *, params: Optional[dict] = None,
@@ -319,7 +350,10 @@ class Korely:
             headers["Content-Type"] = "application/json"
         req = _urlrequest.Request(url, data=data, method=method, headers=headers)
         try:
-            with _urlrequest.urlopen(req, timeout=self.timeout) as resp:
+            # The TLS context only when one was asked for: by default the call
+            # is the one it always was, with Python's own trust store.
+            extra = {"context": self._ssl_context} if self._ssl_context is not None else {}
+            with _urlrequest.urlopen(req, timeout=self.timeout, **extra) as resp:
                 raw = resp.read()
                 status = getattr(resp, "status", resp.getcode())
         except _urlerror.HTTPError as e:

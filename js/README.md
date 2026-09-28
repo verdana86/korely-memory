@@ -117,6 +117,30 @@ new Korely({
 });
 ```
 
+### Your own server (korely-agent)
+
+Point the client at your install with `baseUrl`, or with the `KORELY_BASE_URL`
+env var, and use the key your install issued (`kor_self_...`):
+
+```ts
+const korely = new Korely({
+  apiKey: "kor_self_...",                  // or KORELY_API_KEY
+  baseUrl: "https://memory.example.com",   // or KORELY_BASE_URL
+});
+```
+
+The option is `baseUrl`, in camelCase. `base_url` is the Python spelling and
+this SDK refuses it, rather than ignore it and send your memories to the hosted
+service. A `kor_self_` key is never sent to the hosted service, and a
+`kor_live_` key is never sent anywhere else.
+
+For a server whose certificate a private CA signed (Caddy's local CA on a
+laptop install), Node reads the CA from `NODE_EXTRA_CA_CERTS`:
+
+```sh
+NODE_EXTRA_CA_CERTS=/path/to/root.crt node agent.js
+```
+
 Requires Node 18+ (native `fetch`), or any runtime with a global `fetch`. On
 older runtimes, pass one via `{ fetch }`.
 

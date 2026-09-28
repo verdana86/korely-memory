@@ -26,13 +26,12 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
-# `pip install korely-memory[mcp]` adds the stdio MCP server (`korely-mcp`) so a
-# coding assistant (Claude Code, Cursor, Windsurf, …) gets Korely memory as MCP
-# tools. The base SDK stays zero-dependency; only this extra pulls `mcp`.
-# `mcp` itself needs Python 3.10+, so the extra does too.
-# `<2`: mcp 2.0 removed `mcp.server.fastmcp`, which the server imports. Without
-# the bound a fresh install resolved mcp 2.x and korely-mcp could not start.
-mcp = ["mcp>=1.2.0,<2"]
+# The stdio MCP server (`korely-mcp`) needs nothing since 0.1.16: the protocol
+# is implemented with the standard library (korely_memory/_mcp_stdio.py), so it
+# runs on the Python 3.9 macOS ships. It used to pull `mcp`, which needs 3.10,
+# and whose 2.0 removed the module the server imported. The extra stays, empty,
+# so `pip install 'korely-memory[mcp]'` in existing docs keeps working.
+mcp = []
 
 [project.scripts]
 korely = "korely_memory.cli:main"
