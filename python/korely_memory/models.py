@@ -1,5 +1,5 @@
 """Response models. The JSON shapes from the REST API reference are the
-attribute shapes here — each ``from_dict`` keeps documented fields and ignores
+attribute shapes here. Each ``from_dict`` keeps documented fields and ignores
 anything new, so a server that returns a superset never breaks an old SDK."""
 from __future__ import annotations
 
@@ -33,10 +33,36 @@ class Fact:
     invalidated: List[str] = field(default_factory=list)
     source_memory_id: Optional[str] = None
     created_at: Optional[str] = None
+    # Sent by the server since 2026-09-27 and dropped here in 0.1.14 and earlier, because
+    # `_take` keeps only declared fields. `tense` is what the text said
+    # (current | past | planned); `observation_count` > 1 and
+    # `last_confirmed_at` mean other memories restated the fact;
+    # `subject_canonical` / `object_canonical` are the entities' current names
+    # after aliases, while `subject` / `object` keep the words as written.
+    tense: Optional[str] = None
+    observation_count: Optional[int] = None
+    last_confirmed_at: Optional[str] = None
+    subject_canonical: Optional[str] = None
+    object_canonical: Optional[str] = None
+    source_memory_ids: List[str] = field(default_factory=list)
 
     @classmethod
     def from_dict(cls, d: dict) -> "Fact":
         return cls(**_take(cls, d))
+
+
+class FactList(list):
+    """The facts of one ``get_facts()`` page: a plain list of Fact that also
+    carries ``total``, how many facts match the filters across every page.
+
+    ``GET /v1/facts`` has always answered with ``total``; ``get_facts()``
+    returned a bare list and dropped it, so ``limit``/``offset`` could page but
+    nothing said when to stop. A list subclass keeps every existing caller
+    working."""
+
+    def __init__(self, facts=(), total: Optional[int] = None):
+        super().__init__(facts)
+        self.total = int(total) if isinstance(total, (int, float)) else len(self)
 
 
 @dataclass
@@ -121,9 +147,13 @@ class DeleteReceipt:
 
 @dataclass
 class BulkReceipt:
+    """What ``delete_all`` erased. Despite the names, ``memories_forgotten``
+    and ``facts_invalidated`` count rows physically deleted; ``erasure`` is
+    ``"permanent"``."""
     user_id: Optional[str] = None
     memories_forgotten: Optional[int] = None
     facts_invalidated: Optional[int] = None
+    erasure: Optional[str] = None
     audit_id: Optional[str] = None
 
     @classmethod

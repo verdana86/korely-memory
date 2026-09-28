@@ -1,8 +1,8 @@
-"""SDK tests — no network. We replace the one transport seam (Korely._send)
+"""SDK tests, no network. We replace the one transport seam (Korely._send)
 with a recorder that captures the request and returns a canned response, then
 assert the SDK builds the right request and parses the right model. Run with:
 
-    cd sdk/python && python3 -m unittest discover -s tests -v
+    cd python && python3 -m unittest discover -s tests -v
 """
 import json
 import os
@@ -25,6 +25,7 @@ from korely_memory import (  # noqa: E402
     MemoryPage,
     Context,
 )
+from korely_memory.exceptions import NamespaceForbiddenError  # noqa: E402,F401
 
 
 class _Recorder:
@@ -194,14 +195,14 @@ class TestErrorMapping(unittest.TestCase):
 
     def test_422_is_generic_api_error(self):
         # non-empty content so the request actually reaches the server (empty
-        # content now raises KorelyError client-side — see TestMethodParity).
+        # content now raises KorelyError client-side, see TestMethodParity).
         rec = _Recorder().queue(422, {"detail": "bad"})
         with self.assertRaises(APIError):
             _client(rec).add("x")
 
 
 class TestMethodParity(unittest.TestCase):
-    """Sprint 18 Method Parity — add(messages), add_fact_triple, get_profile,
+    """Sprint 18 Method Parity: add(messages), add_fact_triple, get_profile,
     history, users."""
 
     def test_add_accepts_message_list(self):
@@ -284,7 +285,7 @@ class TestMethodParity(unittest.TestCase):
         self.assertEqual(us[0].memories, 2)
 
     def test_add_empty_messages_raises_client_side(self):
-        rec = _Recorder()  # no response queued — must raise before sending
+        rec = _Recorder()  # no response queued: must raise before sending
         with self.assertRaises(KorelyError):
             _client(rec).add([{"role": "user", "content": "   "}])
         self.assertEqual(rec.calls, [])  # never hit the network
@@ -300,7 +301,7 @@ class TestMethodParity(unittest.TestCase):
 class TestKeyResolution(unittest.TestCase):
     """`korely init` saves the key to ~/.korely/config.json and the docs tell
     people to run it first. The SDK must find it, otherwise the documented path
-    (init, then import the SDK) dies on "No API key" — which is exactly what a
+    (init, then import the SDK) dies on "No API key", which is exactly what a
     new user hits first. Found walking the product from outside, 2026-09-08."""
 
     def setUp(self):
@@ -339,9 +340,6 @@ class TestKeyResolution(unittest.TestCase):
             Korely()
         self.assertIn("korely init", str(ctx.exception))
 
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class TestAsyncClient(unittest.TestCase):
@@ -639,3 +637,307 @@ class ErrorsCarryWhatTheServerSaid(unittest.TestCase):
         with self.assertRaises(APIError) as caught:
             Korely._raise(500, {})
         self.assertIn("500", str(caught.exception))
+
+
+# ── audit 2026-09-28: contract drift, error handling, hygiene ──────────────
+
+_REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_PKG = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "korely_memory")
+
+
+class EveryHttpErrorIsAnAPIError(unittest.TestCase):
+    """The public SDK docs teach one pattern: `except APIError as err` and branch
+    on `err.code` ("invalid_key", "not_found", "quota_exceeded"). The typed
+    errors were siblings of APIError, so that except let a 401, a 404 and a 429
+    straight through. Both styles must work."""
+
+    CASES = [
+        (401, "invalid_key", AuthenticationError),
+        (403, "agent_cap_exceeded", None),
+        (404, "not_found", NotFoundError),
+        (409, "stale_write", StaleWriteError),
+        (429, "quota_exceeded", QuotaExceededError),
+        (422, "invalid_request", None),
+        (503, "search_unavailable", None),
+    ]
+
+    def test_the_documented_pattern_catches_every_status(self):
+        for status, code, typed in self.CASES:
+            with self.subTest(status=status):
+                rec = _Recorder().queue(status, {"code": code, "message": "m"})
+                try:
+                    _client(rec).get("mem_1")
+                except APIError as err:
+                    self.assertEqual(err.code, code)
+                    self.assertEqual(err.status, status)
+                    if typed is not None:
+                        self.assertIsInstance(err, typed)
+                else:
+                    self.fail("no exception raised")
+
+    def test_client_side_errors_are_not_api_errors(self):
+        """No key, a mismatched pair, a connection error: nothing the server
+        said, so not an APIError, but still a KorelyError."""
+        os.environ.pop("KORELY_API_KEY", None)
+        with self.assertRaises(KorelyError) as caught:
+            Korely(api_key="kor_self_x", base_url="https://api.korely.ai")
+        self.assertNotIsInstance(caught.exception, APIError)
+
+
+class TheBodyIsWhatTheServerSaid(unittest.TestCase):
+    def test_the_retry_after_note_does_not_leak_into_the_body(self):
+        """`.body` is documented as the server's response verbatim; the
+        transport's `_retry_after` note used to be in it, as `None` on every
+        error."""
+        body = {"code": "rate_limit_exceeded", "message": "slow down", "_retry_after": "12"}
+        with self.assertRaises(QuotaExceededError) as caught:
+            Korely._raise(429, body)
+        self.assertEqual(caught.exception.retry_after, 12)
+        self.assertEqual(caught.exception.body,
+                         {"code": "rate_limit_exceeded", "message": "slow down"})
+
+    def test_a_monthly_quota_429_has_no_retry_after(self):
+        """The monthly quota 429 carries no Retry-After: there is nothing to
+        wait for this month, and `retry_after` must say so with None."""
+        with self.assertRaises(QuotaExceededError) as caught:
+            Korely._raise(429, {"code": "quota_exceeded", "message": "limit"})
+        self.assertIsNone(caught.exception.retry_after)
+
+    def test_a_fractional_retry_after_rounds_up(self):
+        with self.assertRaises(QuotaExceededError) as caught:
+            Korely._raise(429, {"code": "rate_limit_exceeded", "_retry_after": "1.5"})
+        self.assertEqual(caught.exception.retry_after, 2)
+
+
+class IdsAreOnePathSegment(unittest.TestCase):
+    """An id went into the URL as it came. `delete_agent("bot#1")` sent
+    `DELETE /v1/agents/bot`: urllib drops everything after `#`, so the call
+    purged a different namespace instead of failing."""
+
+    def test_ids_are_percent_encoded(self):
+        cases = [
+            (lambda k: k.delete_agent("bot#1"), "/v1/agents/bot%231"),
+            (lambda k: k.delete_all(user_id="a/b c?d"), "/v1/users/a%2Fb%20c%3Fd/memories"),
+            (lambda k: k.get("mem_1/history"), "/v1/memories/mem_1%2Fhistory"),
+            (lambda k: k.update("m 1", content="x"), "/v1/memories/m%201"),
+            (lambda k: k.delete("m?1"), "/v1/memories/m%3F1"),
+            (lambda k: k.history("m#1"), "/v1/memories/m%231/history"),
+            (lambda k: k.forget_fact("fct/1"), "/v1/facts/fct%2F1/forget"),
+            (lambda k: k.correct_fact("fct 1", object="x"), "/v1/facts/fct%201"),
+            (lambda k: k.batch_status("job#1"), "/v1/batch/job%231"),
+        ]
+        for call, path in cases:
+            with self.subTest(path=path):
+                rec = _Recorder()
+                call(_client(rec))
+                self.assertEqual(rec.last["path"], path)
+
+    def test_an_email_is_encoded_and_the_server_decodes_it_back(self):
+        rec = _Recorder()
+        _client(rec).delete_all(user_id="maria@example.com")
+        self.assertEqual(rec.last["path"], "/v1/users/maria%40example.com/memories")
+
+    def test_an_empty_id_never_reaches_the_server(self):
+        for call in (lambda k: k.get(""), lambda k: k.delete_agent(""),
+                     lambda k: k.delete_all(user_id=""), lambda k: k.forget_fact("")):
+            rec = _Recorder()
+            with self.assertRaises(KorelyError):
+                call(_client(rec))
+            self.assertEqual(rec.calls, [])
+
+
+class _FakeResponse:
+    def __init__(self, status=200, body=b"{}", read_error=None):
+        self.status, self._body, self._err = status, body, read_error
+
+    def read(self):
+        if self._err is not None:
+            raise self._err
+        return self._body
+
+    def getcode(self):
+        return self.status
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+
+class TheTransportOnlyRaisesKorelyErrors(unittest.TestCase):
+    """Only URLError was caught, which covers failures while connecting. A
+    timeout while READING the answer, a reset mid-body or a 200 carrying a
+    proxy's HTML page escaped as TimeoutError, ConnectionResetError or
+    JSONDecodeError, past the `except KorelyError` in the CLI and the MCP tools."""
+
+    def _korely(self):
+        os.environ.pop("KORELY_BASE_URL", None)
+        return Korely(api_key="kor_live_transport")
+
+    def _with(self, fake):
+        from unittest import mock
+        return mock.patch("korely_memory.client._urlrequest.urlopen", fake)
+
+    def test_a_read_timeout(self):
+        with self._with(lambda req, timeout: _FakeResponse(read_error=TimeoutError("timed out"))):
+            with self.assertRaises(KorelyError) as caught:
+                self._korely().get("mem_1")
+        self.assertIn("timed out", str(caught.exception))
+
+    def test_a_connection_reset_mid_body(self):
+        with self._with(lambda req, timeout: _FakeResponse(read_error=ConnectionResetError("reset"))):
+            with self.assertRaises(KorelyError):
+                self._korely().users()
+
+    def test_a_200_that_is_not_json(self):
+        with self._with(lambda req, timeout: _FakeResponse(body=b"<html>502 Bad Gateway</html>")):
+            with self.assertRaises(KorelyError) as caught:
+                self._korely().users()
+        self.assertEqual(caught.exception.status, 200)
+        self.assertIn("not JSON", str(caught.exception))
+
+    def test_an_http_error_is_mapped_and_its_response_closed(self):
+        import io
+        from email.message import Message
+        from urllib.error import HTTPError
+
+        headers = Message()
+        headers["Retry-After"] = "7"
+        closed = []
+
+        class _Err(HTTPError):
+            def close(self):
+                closed.append(True)
+                super().close()
+
+        def boom(req, timeout):
+            raise _Err(req.full_url, 429, "Too Many Requests", headers,
+                       io.BytesIO(b'{"code": "rate_limit_exceeded", "message": "slow"}'))
+
+        with self._with(boom):
+            with self.assertRaises(QuotaExceededError) as caught:
+                self._korely().users()
+        self.assertEqual(caught.exception.retry_after, 7)
+        self.assertEqual(caught.exception.body,
+                         {"code": "rate_limit_exceeded", "message": "slow"})
+        self.assertTrue(closed, "the HTTPError response was never closed")
+
+    def test_the_id_reaches_the_wire_encoded(self):
+        seen = []
+
+        def capture(req, timeout):
+            seen.append(req.full_url)
+            return _FakeResponse(body=b'{"agent_id": "bot#1"}')
+
+        with self._with(capture):
+            self._korely().delete_agent("bot#1")
+        self.assertTrue(seen[0].endswith("/v1/agents/bot%231"), seen[0])
+
+
+class WhatTheServerSendsToday(unittest.TestCase):
+    """Fields the contract carries that the models dropped on the floor."""
+
+    def test_get_facts_carries_the_total(self):
+        rec = _Recorder().queue(200, {"facts": [{"id": "fct_1"}, {"id": "fct_2"}], "total": 57})
+        facts = _client(rec).get_facts(user_id="u", limit=2)
+        self.assertIsInstance(facts, list)
+        self.assertEqual(len(facts), 2)
+        self.assertEqual(facts.total, 57)
+        self.assertEqual([f.id for f in facts], ["fct_1", "fct_2"])
+
+    def test_a_fact_keeps_tense_confirmations_and_canonical_names(self):
+        from korely_memory import Fact
+
+        f = Fact.from_dict({
+            "id": "fct_1", "subject": "Acme", "predicate": "uses", "object": "Groq",
+            "tense": "past", "observation_count": 3,
+            "last_confirmed_at": "2026-09-27T10:00:00+00:00",
+            "subject_canonical": "Globex", "object_canonical": "Groq",
+            "source_memory_ids": ["mem_1", "mem_2", "mem_3"],
+        })
+        self.assertEqual(f.tense, "past")
+        self.assertEqual(f.observation_count, 3)
+        self.assertEqual(f.last_confirmed_at, "2026-09-27T10:00:00+00:00")
+        self.assertEqual(f.subject_canonical, "Globex")
+        self.assertEqual(f.object_canonical, "Groq")
+        self.assertEqual(f.source_memory_ids, ["mem_1", "mem_2", "mem_3"])
+
+    def test_delete_all_says_the_erasure_is_permanent(self):
+        rec = _Recorder().queue(200, {"user_id": "c1", "memories_forgotten": 2,
+                                      "facts_invalidated": 1, "erasure": "permanent",
+                                      "audit_id": "aud_1"})
+        self.assertEqual(_client(rec).delete_all(user_id="c1").erasure, "permanent")
+
+    def test_add_fact_triple_can_say_the_tense(self):
+        rec = _Recorder().queue(201, {"id": "fct_1", "subject": "u", "predicate": "p",
+                                      "object": "o", "tense": "past"})
+        f = _client(rec).add_fact_triple("u", "p", "o", tense="past")
+        self.assertEqual(rec.last["json"]["tense"], "past")
+        self.assertEqual(f.tense, "past")
+
+    def test_add_fact_triple_leaves_the_tense_to_the_server_by_default(self):
+        rec = _Recorder().queue(201, {"id": "fct_1"})
+        _client(rec).add_fact_triple("u", "p", "o")
+        self.assertNotIn("tense", rec.last["json"])
+
+
+def _published_text_files():
+    """The files a reader sees on PyPI, npm and GitHub, plus the shipped code."""
+    out = []
+    for root, _dirs, files in os.walk(_PKG):
+        out += [os.path.join(root, f) for f in files if f.endswith(".py")]
+    for rel in ("README.md", "python/README.md", "python/pyproject.toml", "js/README.md",
+                "js/package.json", "n8n/README.md", "RELEASING.md"):
+        p = os.path.join(_REPO, rel)
+        if os.path.exists(p):
+            out.append(p)
+    js_src = os.path.join(_REPO, "js", "src")
+    if os.path.isdir(js_src):
+        out += [os.path.join(js_src, f) for f in os.listdir(js_src)]
+    return out
+
+
+class NoFalsePromises(unittest.TestCase):
+    def test_no_fact_extracted_webhook_is_promised(self):
+        """The webhook events are memory.created, fact.invalidated and
+        quota.warning. `fact_extracted` is a history() entry; the README and
+        the events() docstring sent people to a webhook that never fires."""
+        import re
+
+        for path in _published_text_files():
+            with open(path, encoding="utf-8") as fh:
+                text = fh.read()
+            with self.subTest(path=os.path.relpath(path, _REPO)):
+                # `fact_extracted` and "webhook" in one sentence, either order.
+                self.assertIsNone(
+                    re.search(r"webhook[^.]{0,120}fact_extracted"
+                              r"|fact_extracted[^.]{0,60}webhook", text, re.I),
+                    "promises a fact_extracted webhook")
+
+    def test_no_em_dash_in_published_text(self):
+        for path in _published_text_files():
+            with open(path, encoding="utf-8") as fh:
+                text = fh.read()
+            with self.subTest(path=os.path.relpath(path, _REPO)):
+                self.assertNotIn("\u2014", text)
+                self.assertNotIn("\\u2014", text)
+
+
+class RunsOnThePythonItDeclares(unittest.TestCase):
+    """pyproject says >=3.9. Syntax from a later Python would install fine and
+    break at import on 3.9, where no test here runs."""
+
+    def test_every_module_parses_as_python_3_9(self):
+        import ast
+
+        for name in sorted(os.listdir(_PKG)):
+            if not name.endswith(".py"):
+                continue
+            with self.subTest(module=name):
+                with open(os.path.join(_PKG, name), encoding="utf-8") as fh:
+                    ast.parse(fh.read(), filename=name, feature_version=(3, 9))
+
+
+if __name__ == "__main__":
+    unittest.main()

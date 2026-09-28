@@ -46,6 +46,7 @@ from .models import (
     Context,
     DeleteReceipt,
     Fact,
+    FactList,
     Memory,
     MemoryHistory,
     MemoryPage,
@@ -62,8 +63,9 @@ class AsyncKorely:
 
     Construction takes the same arguments, including the key resolution order:
     explicit argument, then ``KORELY_API_KEY``, then the key ``korely init``
-    saved. Building one is cheap and does no I/O, so it is fine to create it at
-    startup and share it.
+    saved. Building one is cheap and makes no network call (at most it reads
+    ``~/.korely/config.json``), and it holds no per-request state, so it is fine
+    to create it at startup and share it across tasks.
     """
 
     def __init__(self, api_key: Optional[str] = None, region: str = "eu",
@@ -121,7 +123,7 @@ class AsyncKorely:
     async def get_context(self, **kw) -> Context:
         return await self._run(lambda: self._sync.get_context(**kw))
 
-    async def get_facts(self, **kw) -> List[Fact]:
+    async def get_facts(self, **kw) -> FactList:
         return await self._run(lambda: self._sync.get_facts(**kw))
 
     async def get_profile(self, **kw) -> Profile:

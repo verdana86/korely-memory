@@ -1,4 +1,4 @@
-"""korely-memory — the Python SDK for Korely Agents.
+"""korely-memory: the Python SDK for Korely Agents.
 
 A typed, dependency-free client over the Korely REST API. Every method maps
 1:1 onto an endpoint; the moat (typed bi-temporal facts, contradiction
@@ -30,6 +30,7 @@ from .models import (
     Context,
     DeleteReceipt,
     Fact,
+    FactList,
     HistoryEvent,
     Memory,
     MemoryHistory,
@@ -55,6 +56,7 @@ __all__ = [
     # models
     "Memory",
     "Fact",
+    "FactList",
     "SearchHit",
     "MemoryPage",
     "DeleteReceipt",

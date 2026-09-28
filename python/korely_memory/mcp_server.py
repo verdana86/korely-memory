@@ -1,13 +1,15 @@
-"""korely-mcp — a stdio MCP server that gives a coding assistant Korely memory.
+"""korely-mcp: a stdio MCP server that gives a coding assistant Korely memory.
 
-`pip install korely-memory[mcp]` adds this server. Point Claude Code / Cursor /
-Windsurf at it and your assistant gains four memory tools over your Korely agent
-store: remember, recall (the moat), search, and read typed facts — persistent
-across sessions.
+`pip install 'korely-memory[mcp]'` adds this server (the `mcp` package it needs
+runs on Python 3.10 or later). Point Claude Code / Cursor / Windsurf at it and
+your assistant gains four memory tools over your Korely agent store: remember,
+recall (the moat), search, and read typed facts, persistent across sessions.
+They are the same four tools the hosted server at /agent/mcp offers, for
+clients that prefer a local process.
 
 It authenticates with your `kor_live_` key, resolved from KORELY_API_KEY or the
 key `korely init --agent` saved to ~/.korely/config.json. Nothing here talks to
-the OAuth vault MCP — this is the agent memory API (/v1), keyed, not the personal
+the OAuth vault MCP: this is the agent memory API (/v1), keyed, not the personal
 vault.
 
 Claude Code / Cursor config:
@@ -34,9 +36,31 @@ from .exceptions import KorelyError
 try:
     from mcp.server.fastmcp import FastMCP
 except ModuleNotFoundError as e:  # pragma: no cover - import-time guard
+    # Two different problems raise the same exception here. Telling everybody
+    # to install the extra was right when `mcp` was missing, and wrong for
+    # anyone who had installed it: mcp 2.0 removed `mcp.server.fastmcp`, the
+    # extra had no upper bound, so a fresh install got 2.x and was told to
+    # install what it had just installed.
+    import importlib.util
+
+    try:
+        _installed = importlib.util.find_spec("mcp") is not None
+    except (ValueError, ImportError):
+        _installed = True
+    if not _installed:
+        raise SystemExit(
+            "korely-mcp needs the MCP extra (Python 3.10 or later). Install it with:\n"
+            "    pip install 'korely-memory[mcp]'"
+        ) from e
+    try:
+        from importlib.metadata import version as _version
+        _found = _version("mcp")
+    except Exception:
+        _found = "unknown"
     raise SystemExit(
-        "korely-mcp needs the MCP extra. Install it with:\n"
-        "    pip install 'korely-memory[mcp]'"
+        f"korely-mcp runs on mcp 1.x, and the installed mcp is {_found}, which "
+        f"no longer has {e.name or 'mcp.server.fastmcp'}. Install a 1.x release:\n"
+        "    pip install 'mcp>=1.2.0,<2'"
     ) from e
 
 
@@ -58,11 +82,29 @@ def _client() -> Korely:
 
 
 def _fact_line(f) -> str:
+    """One fact as the tools print it, in the tense its dates call for.
+
+    In 0.1.14 and earlier a fact closed on a future date read `[superseded 2027-01-01]`,
+    the defect the CLI stopped making in 52e29b7 and this copy kept. It now
+    also says what `tense` says, as the hosted MCP does: `past` is history,
+    `planned` is an intention, not a fact that happened.
+    """
+    from .cli import _has_ended
+
     line = f"{f.subject} · {f.predicate} · {f.object}"
     if getattr(f, "valid_from", None):
         line += f"  (since {f.valid_from[:10]})"
-    if getattr(f, "invalid_at", None):
-        line += f"  [superseded {f.invalid_at[:10]}]"
+    tense = getattr(f, "tense", None) or "current"
+    ia = getattr(f, "invalid_at", None)
+    if ia:
+        if not _has_ended(ia):
+            line += f"  [until {ia[:10]}]"
+        elif tense == "past":
+            line += f"  [past, ended by {ia[:10]}]"
+        else:
+            line += f"  [superseded {ia[:10]}]"
+    elif tense == "planned":
+        line += "  [planned, not done]"
     return line
 
 
@@ -71,7 +113,7 @@ def korely_get_context(query: str, user_id: Optional[str] = None,
                        token_budget: int = 800) -> str:
     """Recall what Korely knows for one end user, assembled into a prompt-ready block.
 
-    THE primary recall path — call this before answering so the assistant has the
+    THE primary recall path: call this before answering so the assistant has the
     user's currently-valid typed facts plus the most relevant memories. `user_id`
     scopes to one end user (omit for the account-wide default).
     """
@@ -103,7 +145,7 @@ def korely_add(content: str, user_id: Optional[str] = None,
 
 @mcp.tool()
 def korely_search(query: str, user_id: Optional[str] = None, limit: int = 15) -> str:
-    """Semantic vector search over raw memories — ranked hits with a relevance score.
+    """Semantic (vector) search over raw memories: ranked hits with a relevance score.
 
     Use when you want the underlying memories rather than the assembled context
     block (for that, use korely_get_context).
@@ -116,7 +158,7 @@ def korely_search(query: str, user_id: Optional[str] = None, limit: int = 15) ->
         return "no matches."
     lines = []
     for h in hits:
-        score = f"{h.score:.3f}" if isinstance(h.score, (int, float)) else "—"
+        score = f"{h.score:.3f}" if isinstance(h.score, (int, float)) else "n/a"
         lines.append(f"[{score}] {h.snippet or ''}".rstrip() + f"  ({h.id})")
     return "\n".join(lines)
 
@@ -126,11 +168,11 @@ def korely_get_facts(user_id: Optional[str] = None, entity: Optional[str] = None
                      subject: Optional[str] = None, predicate_family: Optional[str] = None,
                      as_of: Optional[str] = None, include_invalidated: bool = False,
                      limit: int = 50) -> str:
-    """Read typed (subject, predicate, object) facts — the bi-temporal core.
+    """Read typed (subject, predicate, object) facts, the bi-temporal core.
 
     `entity` matches subject OR object; `as_of` (ISO date) reconstructs what was
     true on that day (time-travel); `include_invalidated` also shows superseded
-    facts. Deterministic — no model runs.
+    facts. Deterministic: no model runs.
     """
     try:
         facts = _client().get_facts(

@@ -1,8 +1,8 @@
-"""CLI tests — drive the `korely` command surface without network. We reuse the
+"""CLI tests: drive the `korely` command surface without network. We reuse the
 same transport seam (Korely._send) the SDK tests use, and assert the argparse
 wiring + per-command guards. Run with:
 
-    cd sdk/python && python3 -m unittest discover -s tests -v
+    cd python && python3 -m unittest discover -s tests -v
 """
 import io
 import os
@@ -148,9 +148,6 @@ class TestVersionConsistency(unittest.TestCase):
                          f"__version__={__version__} but pyproject says {declared}")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class TheTenseOfAFactThatEndsLater(unittest.TestCase):
     """`superseded 3026-01-01` reads as a thing that has happened, for a date a
@@ -193,3 +190,94 @@ class TheTenseOfAFactThatEndsLater(unittest.TestCase):
         line = _fact_line(self._fact(None))
         self.assertNotIn("superseded", line)
         self.assertNotIn("until", line)
+
+
+class _CleanEnv(unittest.TestCase):
+    """No key, no address and an empty config directory, whatever the machine
+    running the tests has set."""
+
+    def setUp(self):
+        import tempfile
+
+        self._saved = {k: os.environ.get(k) for k in
+                       ("KORELY_API_KEY", "KORELY_BASE_URL", "KORELY_CONFIG_HOME")}
+        for k in ("KORELY_API_KEY", "KORELY_BASE_URL"):
+            os.environ.pop(k, None)
+        self.cfg_dir = tempfile.mkdtemp()
+        os.environ["KORELY_CONFIG_HOME"] = self.cfg_dir
+
+    def tearDown(self):
+        import shutil
+
+        shutil.rmtree(self.cfg_dir, ignore_errors=True)
+        for k, v in self._saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+
+class TheCliSaysWhatIsWrongWithTheKey(_CleanEnv):
+    """Every constructor refusal printed "no API key", including the one the
+    constructor exists for: a self-hosted key with no address. The key was
+    there, and the explanation of what was wrong with it was thrown away."""
+
+    def _run(self, argv):
+        err = io.StringIO()
+        with redirect_stderr(err), redirect_stdout(io.StringIO()):
+            rc = cli.main(argv)
+        return rc, err.getvalue()
+
+    def test_a_self_hosted_key_without_an_address_is_named(self):
+        rc, err = self._run(["users", "--api-key", "kor_self_x"])
+        self.assertEqual(rc, 2)
+        self.assertIn("kor_self_", err)
+        self.assertNotIn("no API key", err)
+
+    def test_a_missing_key_still_says_so(self):
+        rc, err = self._run(["users"])
+        self.assertEqual(rc, 2)
+        self.assertIn("no API key", err)
+
+
+class InitRefusesAPairThatCannotWork(_CleanEnv):
+    """`korely init --api-key kor_self_...` without --base-url wrote the hosted
+    address next to a self-hosted key, printed "Saved", and every command after
+    it failed."""
+
+    def _init(self, argv):
+        import urllib.request
+
+        def explode(*a, **k):
+            raise AssertionError("--api-key must not touch the network")
+
+        real, urllib.request.urlopen = urllib.request.urlopen, explode
+        err = io.StringIO()
+        try:
+            with redirect_stderr(err), redirect_stdout(io.StringIO()):
+                rc = cli.main(argv)
+        finally:
+            urllib.request.urlopen = real
+        return rc, err.getvalue()
+
+    def test_a_self_hosted_key_with_no_address_is_not_saved(self):
+        rc, err = self._init(["init", "--api-key", "kor_self_mine"])
+        self.assertEqual(rc, 2)
+        self.assertIn("kor_self_", err)
+        self.assertFalse(os.path.exists(os.path.join(self.cfg_dir, "config.json")))
+
+    def test_a_hosted_key_for_somebody_elses_server_is_not_saved(self):
+        rc, _ = self._init(["init", "--api-key", "kor_live_mine",
+                            "--base-url", "https://mine.example"])
+        self.assertEqual(rc, 2)
+        self.assertFalse(os.path.exists(os.path.join(self.cfg_dir, "config.json")))
+
+    def test_a_matching_pair_is_saved(self):
+        rc, _ = self._init(["init", "--api-key", "kor_self_mine",
+                            "--base-url", "https://mine.example"])
+        self.assertEqual(rc, 0)
+        self.assertTrue(os.path.exists(os.path.join(self.cfg_dir, "config.json")))
+
+
+if __name__ == "__main__":
+    unittest.main()

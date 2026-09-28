@@ -1,10 +1,12 @@
 """The Korely client. A thin, dependency-free HTTP wrapper: every method maps
 1:1 onto a REST endpoint (see /agents/docs/surfaces/sdk). All the intelligence
-— embeddings, entity + typed-fact extraction, contradiction checking — runs
+(embeddings, entity and typed-fact extraction, contradiction checking) runs
 server-side, so this stays a small client over stdlib urllib."""
 from __future__ import annotations
 
+import http.client as _httpclient
 import json
+import math
 import os
 import re
 from typing import Any, List, Optional
@@ -23,19 +25,18 @@ from .exceptions import (
 )
 from .models import (
     AgentDeleteReceipt,
-    AgentScope,
     AgentsPage,
     BatchJob,
     BulkReceipt,
     Context,
     DeleteReceipt,
     Fact,
+    FactList,
     Memory,
     MemoryHistory,
     MemoryPage,
     Profile,
     SearchHit,
-    UserScope,
     UsersPage,
 )
 
@@ -50,12 +51,32 @@ def _clean(d: dict) -> dict:
     return {k: v for k, v in d.items() if v is not None}
 
 
+def _seg(value: Any, what: str) -> str:
+    """One id as a URL path segment, percent-encoded.
+
+    Ids went into the path as they came. An end user id is usually somebody
+    else's string (an email, a handle, a customer number), and one carrying
+    `/`, `?` or `#` changed which endpoint was called: `delete_agent("bot#1")`
+    sent `DELETE /v1/agents/bot`, because urllib drops everything after `#`,
+    and purged the namespace `bot` instead of refusing. A space made http.client
+    raise before sending, outside every error this client documents.
+
+    An empty id is refused here: `get("")` asked for `/v1/memories/`, which is
+    the list endpoint behind a redirect, and came back as a Memory with nothing
+    in it.
+    """
+    s = "" if value is None else str(value)
+    if not s:
+        raise KorelyError(f"{what} is empty.")
+    return _urlparse.quote(s, safe="")
+
+
 def _coerce_content(content: Any) -> str:
     """add() accepts a string OR a list of chat messages
     [{"role": ..., "content": ...}] (Mem0/Supermemory shape). A message list is
-    joined into one text block (``role: content`` per line) before sending —
-    the server stores and mines the resulting text. Empty or role-only messages
-    are dropped (no dangling ``role:`` lines)."""
+    joined into one text block (``role: content`` per line) before sending,
+    and the server stores and mines the resulting text. Empty or role-only
+    messages are dropped (no dangling ``role:`` lines)."""
     if isinstance(content, str):
         return content
     if isinstance(content, (list, tuple)):
@@ -69,7 +90,7 @@ def _coerce_content(content: Any) -> str:
                     parts.append(f"{role}: {body}")
                 elif body:
                     parts.append(body)
-                # role-only / empty message → dropped
+                # role-only / empty message: dropped
             else:
                 s = str(m).strip()
                 if s:
@@ -114,8 +135,6 @@ def _base_from_config() -> Optional[str]:
         return base if isinstance(base, str) and base else None
     except Exception:
         return None
-
-
 
 
 def _sni_hint(base_url: str, reason: object) -> str:
@@ -213,6 +232,16 @@ def _refuse_a_mismatched_pair(api_key: str, base_url: str) -> None:
         )
 
 
+def _retry_after_seconds(raw: Any) -> Optional[int]:
+    """Retry-After in whole seconds, rounded up, or None if absent/unreadable."""
+    if raw is None:
+        return None
+    try:
+        return max(0, math.ceil(float(raw)))
+    except (TypeError, ValueError):
+        return None
+
+
 class Korely:
     """Typed client over the Korely REST API.
 
@@ -262,6 +291,18 @@ class Korely:
     # ── low-level transport (the one seam tests override) ──────────────────
     def _send(self, method: str, path: str, *, params: Optional[dict] = None,
               json_body: Optional[Any] = None) -> "tuple[int, dict]":
+        """One HTTP exchange. Returns (status, parsed body); a Retry-After
+        header travels in the body under ``_retry_after``, which ``_raise``
+        takes out again before the body reaches an exception.
+
+        Every way the exchange can fail without an HTTP status becomes a
+        KorelyError. Only URLError used to be caught, and that covers failures
+        while connecting: a timeout while READING the answer, a connection
+        reset halfway through the body, or a 200 whose body is not JSON (a
+        proxy's HTML page) arrived as a bare TimeoutError, ConnectionResetError
+        or JSONDecodeError. The CLI and the MCP tools catch KorelyError, so
+        those printed a traceback instead of an error.
+        """
         url = self.base_url + path
         if params:
             qs = _urlparse.urlencode(_clean(params), doseq=True)
@@ -280,9 +321,13 @@ class Korely:
             with _urlrequest.urlopen(req, timeout=self.timeout) as resp:
                 raw = resp.read()
                 status = getattr(resp, "status", resp.getcode())
-                return status, (json.loads(raw) if raw else {})
         except _urlerror.HTTPError as e:
-            raw = e.read()
+            try:
+                raw = e.read()
+            except (OSError, _httpclient.HTTPException):
+                raw = b""
+            finally:
+                e.close()
             try:
                 parsed = json.loads(raw) if raw else {}
             except ValueError:
@@ -290,11 +335,28 @@ class Korely:
             if not isinstance(parsed, dict):
                 parsed = {"message": str(parsed)}
             retry_after = e.headers.get("Retry-After") if e.headers else None
-            parsed.setdefault("_retry_after", retry_after)
+            if retry_after is not None:
+                parsed["_retry_after"] = retry_after
             return e.code, parsed
         except _urlerror.URLError as e:
             raise KorelyError(
                 "Connection error: " + str(e.reason) + _sni_hint(self.base_url, e.reason)
+            )
+        except (OSError, _httpclient.HTTPException) as e:
+            raise KorelyError(
+                f"Connection error: {type(e).__name__}: {e} "
+                f"({method} {path}, timeout {self.timeout}s)"
+            )
+        if not raw:
+            return status, {}
+        try:
+            return status, json.loads(raw)
+        except ValueError:
+            snippet = raw[:200].decode("utf-8", "replace")
+            raise KorelyError(
+                f"The server answered {status} to {method} {path} with a body "
+                f"that is not JSON: {snippet!r}",
+                status=status,
             )
 
     def _call(self, method: str, path: str, *, params: Optional[dict] = None,
@@ -331,32 +393,33 @@ class Korely:
 
     @staticmethod
     def _raise(status: int, body: dict) -> None:
+        # `_retry_after` is the transport's note of the Retry-After header, not
+        # something the server said. The exception's `body` is documented as
+        # the server's response verbatim, so it leaves here.
+        server_body = {k: v for k, v in body.items() if k != "_retry_after"}
         code = body.get("code")
         msg = (body.get("message") or Korely._detail_line(body) or code
                or ("HTTP " + str(status)))
         if status == 401:
-            raise AuthenticationError(msg, status=status, code=code, body=body)
+            raise AuthenticationError(msg, status=status, code=code, body=server_body)
         if status == 403:
-            raise NamespaceForbiddenError(msg, status=status, code=code, body=body)
+            raise NamespaceForbiddenError(msg, status=status, code=code, body=server_body)
         if status == 404:
-            raise NotFoundError(msg, status=status, code=code, body=body)
+            raise NotFoundError(msg, status=status, code=code, body=server_body)
         if status == 409:
-            raise StaleWriteError(msg, status=status, code=code, body=body)
+            raise StaleWriteError(msg, status=status, code=code, body=server_body)
         if status == 429:
-            ra = body.get("_retry_after") or body.get("retry_after")
-            try:
-                ra = int(ra) if ra is not None else None
-            except (ValueError, TypeError):
-                ra = None
-            raise QuotaExceededError(msg, status=status, code=code, retry_after=ra, body=body)
-        raise APIError(msg, status=status, code=code, body=body)
+            ra = _retry_after_seconds(body.get("_retry_after") or body.get("retry_after"))
+            raise QuotaExceededError(msg, status=status, code=code, retry_after=ra,
+                                     body=server_body)
+        raise APIError(msg, status=status, code=code, body=server_body)
 
     # ── memories ───────────────────────────────────────────────────────────
     def add(self, content: "str | list", *, agent_id: Optional[str] = None,
             user_id: Optional[str] = None, run_id: Optional[str] = None,
             metadata: Optional[dict] = None,
             timestamp: Optional[str] = None) -> Memory:
-        """POST /v1/memories — store a memory; returns it with extracted facts.
+        """POST /v1/memories: store a memory; returns it with extracted facts.
 
         ``content`` is a string, or a list of chat messages
         ``[{"role": ..., "content": ...}]`` (Mem0/Supermemory shape), which is
@@ -368,7 +431,7 @@ class Korely:
         they were ingested. Defaults to now."""
         text = _coerce_content(content)
         if not text.strip():
-            raise KorelyError("content is empty — pass a non-blank string or messages with content.")
+            raise KorelyError("content is empty: pass a non-blank string or messages with content.")
         body = self._call("POST", "/v1/memories", json_body=_clean({
             "content": text, "agent_id": agent_id, "user_id": user_id,
             "run_id": run_id, "metadata": metadata, "timestamp": timestamp,
@@ -379,13 +442,14 @@ class Korely:
                agent_id: Optional[str] = None, run_id: Optional[str] = None,
                metadata: Optional[dict] = None,
                limit: Optional[int] = None) -> List[SearchHit]:
-        """POST /v1/memories/search — hybrid retrieval, ranked by score.
+        """POST /v1/memories/search: semantic search over raw memories, ranked
+        by score (vector similarity to the query).
 
         ``run_id`` scopes to one session and ``metadata`` filters on what you
         stored at write time (keys ANDed, compared as strings). Both mirror the
         arguments ``add()`` accepts, so anything you can write you can query.
 
-        ``limit`` defaults to the server default (15) when not passed."""
+        ``limit`` defaults to the server default (15) when not passed, max 50."""
         body = self._call("POST", "/v1/memories/search", json_body=_clean({
             "query": query, "user_id": user_id, "agent_id": agent_id,
             "run_id": run_id, "metadata": metadata, "limit": limit,
@@ -395,7 +459,7 @@ class Korely:
     def get_all(self, *, user_id: Optional[str] = None, agent_id: Optional[str] = None,
                 run_id: Optional[str] = None,
                 limit: int = 50, offset: int = 0) -> MemoryPage:
-        """GET /v1/memories — list a scope, newest first.
+        """GET /v1/memories: list a scope, newest first.
 
         ``run_id`` narrows to one session. Metadata filtering lives on
         ``search()``, which carries a body and can take a dict."""
@@ -406,41 +470,48 @@ class Korely:
         return MemoryPage.from_dict(body)
 
     def get(self, memory_id: str) -> Memory:
-        """GET /v1/memories/:id — full content, metadata, extracted facts."""
-        return Memory.from_dict(self._call("GET", "/v1/memories/" + memory_id))
+        """GET /v1/memories/:id: full content, metadata, extracted facts."""
+        return Memory.from_dict(
+            self._call("GET", "/v1/memories/" + _seg(memory_id, "memory_id")))
 
     def update(self, memory_id: str, *, content: str,
                expected_updated_at: Optional[str] = None) -> Memory:
-        """PATCH /v1/memories/:id — re-runs extraction. Pass
+        """PATCH /v1/memories/:id: re-runs extraction. Pass
         ``expected_updated_at`` for optimistic concurrency (raises
         StaleWriteError instead of clobbering)."""
-        body = self._call("PATCH", "/v1/memories/" + memory_id, json_body=_clean({
-            "content": content, "expected_updated_at": expected_updated_at,
-        }))
+        body = self._call("PATCH", "/v1/memories/" + _seg(memory_id, "memory_id"),
+                          json_body=_clean({
+                              "content": content, "expected_updated_at": expected_updated_at,
+                          }))
         return Memory.from_dict(body)
 
     def delete(self, memory_id: str) -> DeleteReceipt:
-        """DELETE /v1/memories/:id — forget one memory (audited invalidation)."""
-        return DeleteReceipt.from_dict(self._call("DELETE", "/v1/memories/" + memory_id))
+        """DELETE /v1/memories/:id: forget one memory. It drops out of every
+        default read, and the facts only it asserted are invalidated (kept as
+        history, audited). For erasure use ``delete_all``."""
+        return DeleteReceipt.from_dict(
+            self._call("DELETE", "/v1/memories/" + _seg(memory_id, "memory_id")))
 
     def delete_all(self, *, user_id: str) -> BulkReceipt:
-        """DELETE /v1/users/:user_id/memories — forget every memory + fact for
-        one end user in a single call."""
+        """DELETE /v1/users/:user_id/memories: ERASE every memory and fact of
+        one end user (GDPR Art. 17). Physical deletion, not a flag: nothing is
+        readable afterwards, ``include_invalidated`` included. The audit row
+        (counts, never content) survives; ``erasure`` reads ``"permanent"``."""
         return BulkReceipt.from_dict(
-            self._call("DELETE", "/v1/users/" + user_id + "/memories")
+            self._call("DELETE", "/v1/users/" + _seg(user_id, "user_id") + "/memories")
         )
 
     def history(self, memory_id: str) -> MemoryHistory:
-        """GET /v1/memories/:id/history — the lifecycle timeline of a memory:
+        """GET /v1/memories/:id/history: the lifecycle timeline of a memory:
         created / updated / deleted, plus every typed fact it produced (and the
         moment each was learned or superseded)."""
         return MemoryHistory.from_dict(
-            self._call("GET", "/v1/memories/" + memory_id + "/history")
+            self._call("GET", "/v1/memories/" + _seg(memory_id, "memory_id") + "/history")
         )
 
     def users(self, *, agent_id: Optional[str] = None, limit: int = 50,
               offset: int = 0) -> UsersPage:
-        """GET /v1/users — the end users you've stored data for (the distinct
+        """GET /v1/users: the end users you've stored data for (the distinct
         ``user_id`` namespaces), each with active memory + fact counts and
         last-active time. The default (null) namespace is omitted. Returns a
         UsersPage: iterable like a list, with ``.total`` for pagination."""
@@ -451,7 +522,7 @@ class Korely:
 
     # ── agents ───────────────────────────────────────────────────────────────
     def list_agents(self, *, limit: int = 50, offset: int = 0) -> AgentsPage:
-        """GET /v1/agents — the agent namespaces you've written under (the
+        """GET /v1/agents: the agent namespaces you've written under (the
         distinct non-null ``agent_id`` values), each with active memory + fact
         counts and last-active time, plus the tier agent ``cap`` and how many
         slots are ``used``. The antidote to the agent-cap trap: when a write is
@@ -464,12 +535,12 @@ class Korely:
         return AgentsPage.from_dict(body)
 
     def delete_agent(self, agent_id: str) -> AgentDeleteReceipt:
-        """DELETE /v1/agents/:agent_id — hard-delete an agent namespace: purge
+        """DELETE /v1/agents/:agent_id: hard-delete an agent namespace, purge
         every memory + fact written under this ``agent_id`` and FREE its cap slot
         (soft-forgetting its data does NOT free the slot). Returns the purge
         counts + an audit id."""
         return AgentDeleteReceipt.from_dict(
-            self._call("DELETE", "/v1/agents/" + agent_id)
+            self._call("DELETE", "/v1/agents/" + _seg(agent_id, "agent_id"))
         )
 
     # ── facts ────────────────────────────────────────────────────────────────
@@ -477,10 +548,13 @@ class Korely:
                   predicate: Optional[str] = None, predicate_family: Optional[str] = None,
                   include_invalidated: bool = False, as_of: Optional[str] = None,
                   user_id: Optional[str] = None, agent_id: Optional[str] = None,
-                  limit: int = 50, offset: int = 0) -> List[Fact]:
-        """GET /v1/facts — typed (subject, predicate, object) triples with
+                  limit: int = 50, offset: int = 0) -> FactList:
+        """GET /v1/facts: typed (subject, predicate, object) triples with
         bi-temporal validity. Pass ``as_of`` (ISO date) for a point-in-time
-        query: what was true on that date."""
+        query: what was true on that date.
+
+        Returns a list of Fact. It also carries ``.total``, how many facts
+        match the filters across all pages, so ``offset`` can walk them."""
         params = _clean({
             "subject": subject, "entity": entity, "predicate": predicate,
             "predicate_family": predicate_family, "as_of": as_of,
@@ -489,28 +563,32 @@ class Korely:
         if include_invalidated:
             params["include_invalidated"] = "true"
         body = self._call("GET", "/v1/facts", params=params)
-        return [Fact.from_dict(f) for f in body.get("facts", [])]
+        return FactList([Fact.from_dict(f) for f in body.get("facts", [])],
+                        total=body.get("total"))
 
     def add_fact_triple(self, subject: str, predicate: str, object: str, *,
                         user_id: Optional[str] = None, agent_id: Optional[str] = None,
                         run_id: Optional[str] = None, subject_type: str = "unknown",
                         object_is_literal: bool = False, confidence: float = 0.9,
-                        valid_from: Optional[str] = None) -> Fact:
-        """POST /v1/facts — write a typed (subject, predicate, object) triple
+                        valid_from: Optional[str] = None,
+                        tense: Optional[str] = None) -> Fact:
+        """POST /v1/facts: write a typed (subject, predicate, object) triple
         directly, skipping extraction. The server runs the contradiction check
         and the fact is bi-temporal: pass ``valid_from`` (ISO date) for a
-        historical fact. Returns the written Fact, with ``invalidated`` listing
+        historical fact. ``tense`` is ``"current"`` (the server default),
+        ``"past"`` (the fact is over, and closes the open fact it restates) or
+        ``"planned"``. Returns the written Fact, with ``invalidated`` listing
         any fact ids it superseded."""
         body = self._call("POST", "/v1/facts", json_body=_clean({
             "subject": subject, "predicate": predicate, "object": object,
             "user_id": user_id, "agent_id": agent_id, "run_id": run_id,
             "subject_type": subject_type, "object_is_literal": object_is_literal,
-            "confidence": confidence, "valid_from": valid_from,
+            "confidence": confidence, "valid_from": valid_from, "tense": tense,
         }))
         return Fact.from_dict(body)
 
     def forget_fact(self, fact_id: str, *, at: Optional[str] = None) -> dict:
-        """POST /v1/facts/{id}/forget — close a fact: it stops being current and
+        """POST /v1/facts/{id}/forget: close a fact; it stops being current and
         stays in history.
 
         ``at`` is the date it STOPPED being true, not the date you noticed.
@@ -518,32 +596,34 @@ class Korely:
         reason history is kept rather than rows deleted.
 
         Idempotent: closing an already-closed fact changes nothing and comes
-        back with ``status == "already_forgotten"``.
+        back with ``status == "already_forgotten"``. Returns a dict with
+        ``id``, ``status``, ``invalid_at`` and ``audit_id``.
 
         This is the half that makes a no-model write path possible. An agent
         that knows a fact is finished says so, and nothing has to infer it from
         a later sentence.
         """
-        return self._call("POST", f"/v1/facts/{fact_id}/forget",
+        return self._call("POST", "/v1/facts/" + _seg(fact_id, "fact_id") + "/forget",
                           json_body=_clean({"at": at}))
 
     def correct_fact(self, fact_id: str, *, subject: Optional[str] = None,
                      predicate: Optional[str] = None,
                      object: Optional[str] = None) -> Fact:
-        """PATCH /v1/facts/{id} — supersede a fact with a corrected one.
+        """PATCH /v1/facts/{id}: supersede a fact with a corrected one.
 
         Not an edit: the old row keeps its dates and gains a pointer to the new
         one, so ``as_of`` before the correction still returns what you believed
         then. At least one of the three fields is required.
         """
-        body = self._call("PATCH", f"/v1/facts/{fact_id}", json_body=_clean({
-            "subject": subject, "predicate": predicate, "object": object,
-        }))
+        body = self._call("PATCH", "/v1/facts/" + _seg(fact_id, "fact_id"),
+                          json_body=_clean({
+                              "subject": subject, "predicate": predicate, "object": object,
+                          }))
         return Fact.from_dict(body)
 
     def get_profile(self, *, user_id: str, agent_id: Optional[str] = None,
                     as_of: Optional[str] = None) -> Profile:
-        """GET /v1/profile — the assembled profile of one end user: the active
+        """GET /v1/profile: the assembled profile of one end user, the active
         typed facts known about them, the end user's own facts first, grouped by
         predicate family. ``user_id`` is required. Pass ``as_of`` (ISO date) for
         the point-in-time profile ("what we knew on 2026-03-01")."""
@@ -555,7 +635,7 @@ class Korely:
     # ── context ──────────────────────────────────────────────────────────────
     def get_context(self, *, query: str, user_id: Optional[str] = None,
                     agent_id: Optional[str] = None, token_budget: int = 800) -> Context:
-        """GET /v1/context — one call that assembles a prompt-ready context
+        """GET /v1/context: one call that assembles a prompt-ready context
         block (profile + relevant facts + memories) within a token budget."""
         body = self._call("GET", "/v1/context", params=_clean({
             "query": query, "user_id": user_id, "agent_id": agent_id,
@@ -563,29 +643,41 @@ class Korely:
         }))
         return Context.from_dict(body)
 
-    # ── batch ────────────────────────────────────────────────────────────────
+    # ── processing state ─────────────────────────────────────────────────────
     def events(self, *, user_id: Optional[str] = None, status: Optional[str] = None,
                limit: int = 50) -> dict:
-        """GET /v1/events — which writes have finished being processed.
+        """GET /v1/events: which writes have finished being processed.
 
         ``add()`` returns as soon as the memory is stored, then fact extraction
         runs behind it, so a read taken immediately can legitimately find no
-        facts. This tells you which is which. The ``processing`` count is how
-        many are still in flight for your account, so a batch import can wait on
-        one number instead of walking every id.
+        facts. This tells you which is which: each event carries a memory's
+        ``status`` (``processing``, ``ready`` or ``error``), newest first, and
+        ``status=`` filters to one of them.
 
-        Prefer the ``fact_extracted`` webhook when you can receive one. This is
-        the pull equivalent for local development, serverless, and scripts.
+        ``processing`` in the answer counts the memories still being extracted
+        among your 200 most recent (in the ``user_id`` scope, when given). It
+        does not see a ``batch()`` job that has not stored its memories yet:
+        wait for ``batch_status()`` to finish first.
+
+        This is the only way to learn that extraction finished. No webhook
+        fires for it: the webhook events are ``memory.created``,
+        ``fact.invalidated`` and ``quota.warning``. The name
+        ``fact_extracted`` exists only as an event type inside ``history()``.
         """
         return self._call("GET", "/v1/events", params=_clean({
             "user_id": user_id, "status": status, "limit": limit,
         }))
 
+    # ── batch ────────────────────────────────────────────────────────────────
     def batch(self, memories: List[dict]) -> BatchJob:
-        """POST /v1/batch — bulk import (up to 500 memory objects), async."""
+        """POST /v1/batch: bulk import, up to 500 memory objects, processed
+        asynchronously. Each object takes ``content`` and optionally
+        ``user_id``, ``agent_id``, ``run_id`` and ``metadata``; any other key
+        (``timestamp`` included) is refused with a 422 for the whole batch. To
+        backfill history with its real dates, use ``add(..., timestamp=)``."""
         body = self._call("POST", "/v1/batch", json_body={"memories": list(memories)})
         return BatchJob.from_dict(body)
 
     def batch_status(self, job_id: str) -> BatchJob:
-        """GET /v1/batch/:id — poll an import job."""
-        return BatchJob.from_dict(self._call("GET", "/v1/batch/" + job_id))
+        """GET /v1/batch/:id: poll an import job."""
+        return BatchJob.from_dict(self._call("GET", "/v1/batch/" + _seg(job_id, "job_id")))

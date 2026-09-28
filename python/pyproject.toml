@@ -5,7 +5,7 @@ build-backend = "hatchling.build"
 [project]
 name = "korely-memory"
 version = "0.1.14"
-description = "Python SDK for Korely Agents — memory for AI agents with bi-temporal typed facts."
+description = "Python SDK for Korely Agents: memory for AI agents with bi-temporal typed facts."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
@@ -22,14 +22,17 @@ classifiers = [
   "Programming Language :: Python :: 3.12",
   "Topic :: Software Development :: Libraries :: Python Modules",
 ]
-# Zero runtime dependencies — a thin client over stdlib urllib.
+# Zero runtime dependencies: a thin client over stdlib urllib.
 dependencies = []
 
 [project.optional-dependencies]
 # `pip install korely-memory[mcp]` adds the stdio MCP server (`korely-mcp`) so a
 # coding assistant (Claude Code, Cursor, Windsurf, …) gets Korely memory as MCP
 # tools. The base SDK stays zero-dependency; only this extra pulls `mcp`.
-mcp = ["mcp>=1.2.0"]
+# `mcp` itself needs Python 3.10+, so the extra does too.
+# `<2`: mcp 2.0 removed `mcp.server.fastmcp`, which the server imports. Without
+# the bound a fresh install resolved mcp 2.x and korely-mcp could not start.
+mcp = ["mcp>=1.2.0,<2"]
 
 [project.scripts]
 korely = "korely_memory.cli:main"

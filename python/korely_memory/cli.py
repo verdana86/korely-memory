@@ -1,4 +1,4 @@
-"""`korely` — the command-line front to Korely Agents memory.
+"""`korely`: the command-line front to Korely Agents memory.
 
 A thin wrapper over the same client the SDK exposes: every command is one API
 call. Zero extra dependencies (argparse + stdlib), so `pip install korely-memory`
@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from . import __version__
-from .client import Korely
+from .client import Korely, _refuse_a_mismatched_pair
 from .exceptions import KorelyError
 
 _DEFAULT_BASE = "https://api.korely.ai"
@@ -47,7 +47,7 @@ def _save_config(data: dict) -> Path:
     p.parent.mkdir(parents=True, exist_ok=True)
     p.write_text(json.dumps(data, indent=2), encoding="utf-8")
     try:
-        os.chmod(p, 0o600)  # the key is a secret — owner read/write only
+        os.chmod(p, 0o600)  # the key is a secret: owner read/write only
     except OSError:
         pass
     return p
@@ -83,29 +83,38 @@ def _mask(key: str) -> str:
     return key[:9] + "…" + key[-4:] if key and len(key) > 14 else "set"
 
 
+def _has_ended(invalid_at: Optional[str]) -> bool:
+    """Whether a fact's end date is already behind us.
+
+    A fact can be closed on a future date (a contract that ends on 31 December,
+    a subscription with a known last day), and until then it is still true.
+    An unreadable date counts as ended, the safe half of the guess: it is
+    closed for every date we can read.
+    """
+    from datetime import datetime, timezone
+
+    if not invalid_at:
+        return False
+    try:
+        end = datetime.fromisoformat(invalid_at.replace("Z", "+00:00"))
+        if end.tzinfo is None:
+            end = end.replace(tzinfo=timezone.utc)
+        return end <= datetime.now(timezone.utc)
+    except (ValueError, AttributeError):
+        return True
+
+
 def _fact_line(f) -> str:
     """One fact, and the right tense for its dates.
 
     `superseded 3026-01-01` reads as a thing that has happened, for a date a
-    thousand years away. A fact can be closed on a future date — a contract
-    that ends on 31 December, a subscription with a known last day — and until
-    then it is still true. Saying so in the past tense is a small lie that
-    makes somebody distrust the rest of the line.
+    thousand years away. Saying so in the past tense is a small lie that makes
+    somebody distrust the rest of the line.
     """
-    from datetime import datetime, timezone
-
     base = f"{f.subject} · {f.predicate} · {f.object}"
     when = f" [from {f.valid_from[:10]}]" if f.valid_from else ""
     if f.invalid_at:
-        finito = True
-        try:
-            end = datetime.fromisoformat(f.invalid_at.replace("Z", "+00:00"))
-            if end.tzinfo is None:
-                end = end.replace(tzinfo=timezone.utc)
-            finito = end <= datetime.now(timezone.utc)
-        except (ValueError, AttributeError):
-            pass
-        when += (f" (superseded {f.invalid_at[:10]})" if finito
+        when += (f" (superseded {f.invalid_at[:10]})" if _has_ended(f.invalid_at)
                  else f" (until {f.invalid_at[:10]})")
     return base + when
 
@@ -150,7 +159,7 @@ def cmd_search(k: Korely, a) -> int:
         print("no matches.")
         return 0
     for h in hits:
-        score = f"{h.score:.3f}" if isinstance(h.score, (int, float)) else "—"
+        score = f"{h.score:.3f}" if isinstance(h.score, (int, float)) else "n/a"
         print(f"[{score}] {h.snippet or ''}".rstrip())
         print(f"        {h.id}")
     return 0
@@ -163,7 +172,7 @@ def cmd_context(k: Korely, a) -> int:
         _emit_json(ctx)
         return 0
     print(ctx.context or "(empty)")
-    print(f"\n— {ctx.tokens} tokens, {len(ctx.sources)} source(s)", file=sys.stderr)
+    print(f"\n({ctx.tokens} tokens, {len(ctx.sources)} source(s))", file=sys.stderr)
     return 0
 
 
@@ -252,15 +261,17 @@ def cmd_delete_all(k: Korely, a) -> int:
     if a.json:
         _emit_json(r)
     else:
+        # The server erases these rows physically; the response field is still
+        # called facts_invalidated, the line says what happened to them.
         print(f"forgot user {r.user_id}  ({r.memories_forgotten or 0} memory(ies), "
-              f"{r.facts_invalidated or 0} fact(s) invalidated, audit {r.audit_id})")
+              f"{r.facts_invalidated or 0} fact(s) erased, audit {r.audit_id})")
     return 0
 
 
 def cmd_init(args) -> int:
     """Self-serve signup: mint a hobby key with no Firebase, save it locally.
 
-    The one command that runs WITHOUT a key — it is how you get one. Calls
+    The one command that runs WITHOUT a key: it is how you get one. Calls
     POST /v1/agents/init, writes the key to ~/.korely/config.json (chmod 600),
     and from then on every other `korely` command (and the SDK, if you export
     the key) just works.
@@ -280,6 +291,15 @@ def cmd_init(args) -> int:
     # command: it did not exist, and the error was an unrecognized argument.
     given = (getattr(args, "api_key", None) or "").strip()
     if given:
+        # A pair the client will refuse on every later command must not be
+        # saved with "Saved" printed over it. `korely init --api-key kor_self_...`
+        # without --base-url used to write the hosted address next to a
+        # self-hosted key and report success; every command after it failed.
+        try:
+            _refuse_a_mismatched_pair(given, base)
+        except KorelyError as e:
+            print(f"error: nothing saved. {e}", file=sys.stderr)
+            return 2
         cfg = _load_config()
         cfg["api_key"] = given
         cfg["base_url"] = base
@@ -315,6 +335,11 @@ def cmd_init(args) -> int:
     except urllib.error.URLError as e:
         print(f"error: could not reach {base}: {e.reason}", file=sys.stderr)
         return 1
+    except (OSError, ValueError) as e:
+        # A timeout while reading the answer is not a URLError, and a body that
+        # is not JSON is a ValueError: both used to end in a traceback.
+        print(f"error: signup at {base} failed: {type(e).__name__}: {e}", file=sys.stderr)
+        return 1
 
     key = data.get("api_key")
     if not key:
@@ -332,7 +357,7 @@ def cmd_init(args) -> int:
         return 0
 
     q = data.get("quotas") or {}
-    print(f"You're set — a free hobby key was minted and saved to {path} (chmod 600).")
+    print(f"You're set: a free hobby key was minted and saved to {path} (chmod 600).")
     print(f"  key     {_mask(key)}")
     print(f"  tier    {data.get('tier')}    region {data.get('region')}")
     if q:
@@ -349,7 +374,7 @@ def cmd_init(args) -> int:
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="korely",
-        description="Memory for AI agents — bi-temporal typed facts, hybrid retrieval.",
+        description="Memory for AI agents: bi-temporal typed facts, semantic retrieval.",
         epilog="Set KORELY_API_KEY (kor_live_...). Docs: https://korely.ai/agents/docs",
     )
     p.add_argument("--version", action="version", version=f"korely {__version__}")
@@ -365,7 +390,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser(
         "init",
-        help="save a key to ~/.korely/config.json — or sign up for a free one")
+        help="save a key to ~/.korely/config.json, or sign up for a free one")
     sp.add_argument("--api-key",
                     help="save this key instead of signing up (self-hosted: the "
                          "key your own dashboard minted)")
@@ -384,7 +409,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--run-id", help="optional run/session id")
     sp.set_defaults(func=cmd_add)
 
-    sp = sub.add_parser("search", parents=[common], help="hybrid search over memories")
+    sp = sub.add_parser("search", parents=[common], help="semantic search over memories")
     sp.add_argument("query")
     sp.add_argument("--run-id", help="scope to one run/session")
     sp.add_argument("--limit", type=int, default=10)
@@ -434,14 +459,22 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
-    # `init` is the one command that runs WITHOUT a key — it mints one.
+    # `init` is the one command that runs WITHOUT a key: it mints one.
     if getattr(args, "command", None) == "init":
         return cmd_init(args)
-    try:
-        client = Korely(api_key=_resolve_key(args), base_url=_resolve_base_url(args))
-    except KorelyError:
+    key = _resolve_key(args)
+    if not key:
         print("error: no API key. Run `korely init --agent` to get one free, "
               "or set KORELY_API_KEY (kor_live_...).", file=sys.stderr)
+        return 2
+    try:
+        client = Korely(api_key=key, base_url=_resolve_base_url(args))
+    except KorelyError as e:
+        # Every refusal here used to print "no API key", including the one the
+        # constructor exists for: a kor_self_ key with no address, or a
+        # kor_live_ key pointed at somebody else's server. The key was there;
+        # the explanation of what was wrong with it was thrown away.
+        print(f"error: {e}", file=sys.stderr)
         return 2
     try:
         return args.func(client, args)
