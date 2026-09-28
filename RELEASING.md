@@ -18,6 +18,11 @@ cd js && npm ci && npm run build && npm test
 cd n8n && npm ci && npm run build && npm test
 ```
 
+Su Alpine (`node:20-alpine`) `npm ci` in `n8n/` fallisce: `isolated-vm`, che
+arriva con `n8n-workflow` tramite `@n8n/expression-runtime`, compila con
+node-gyp e cerca Python. I test offline non lo caricano, quindi basta
+`npm ci --ignore-scripts`.
+
 **Usare `npm ci` e non `npm install`.** `ci` installa esattamente quello che dice
 il lockfile e fallisce se lockfile e `package.json` divergono, che è proprio il
 controllo che serve. `install` invece riscrive il lockfile in silenzio, quindi
@@ -30,12 +35,19 @@ sarebbe stata una build non riproducibile.
 
 ## Alzare la versione
 
-Modificare **entrambi** i file quando si tocca il pacchetto Node:
+Node, **tre** posti insieme (un test li lega):
 
 - `js/package.json` campo `version`
-- `js/package-lock.json` si aggiorna da solo con `npm install`, e va committato
+- `js/package-lock.json`, con `npm install --package-lock-only`, e va committato
+- `VERSION` in `js/src/client.ts`, che va sul filo nell'header `X-Korely-Client`
 
-Per Python basta `python/pyproject.toml` campo `version`.
+Python, **due** posti insieme (un test li lega):
+
+- `python/pyproject.toml` campo `version`
+- `__version__` in `python/korely_memory/client.py`, che va nello User-Agent e
+  in `korely --version`
+
+E una voce in `CHANGELOG.md`.
 
 ## Pubblicare
 
