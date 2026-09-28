@@ -419,3 +419,120 @@ test("a monthly quota 429 has no retryAfter", async () => {
     return true;
   });
 });
+
+// ── the contract as deployed on 2026-09-28 evening (GordonPro d46ab5e, c7cf69c,
+//    7d7f0eb; korely-agent 6699c14, ac3a2da, ef44feb) ──────────────────────────
+
+test("errors read the hosted envelope and a self-hosted detail alike", async () => {
+  // Hosted: {code, message}. Self-hosted since 2026-09-28: the same two keys
+  // next to FastAPI's `detail`. Older self-hosted: `detail` alone, which
+  // used to arrive as "HTTP 409" with no code.
+  const cases = [
+    [404, { code: "not_found", message: "No memory with that id." }, NotFoundError, "not_found", "No memory with that id."],
+    [422, { detail: [{ type: "missing", loc: ["body", "content"], msg: "Field required" }], code: "invalid_request", message: "content: Field required" }, APIError, "invalid_request", "content: Field required"],
+    [409, { detail: { code: "stale_write", message: "expected_updated_at does not match" } }, StaleWriteError, "stale_write", "expected_updated_at does not match"],
+    [403, { detail: "API key missing required scope(s): memories:write" }, NamespaceForbiddenError, undefined, "API key missing required scope(s): memories:write"],
+    [422, { detail: [{ loc: ["body", "memories", 1, "content"], msg: "String should have at least 1 character" }] }, APIError, undefined, "memories.1.content: String should have at least 1 character"],
+    [422, { detail: "old words", code: "invalid_request", message: "new words" }, APIError, "invalid_request", "new words"],
+    [500, {}, APIError, undefined, "HTTP 500"],
+  ];
+  for (const [status, body, cls, code, message] of cases) {
+    const { k } = client([{ status, body }]);
+    await assert.rejects(() => k.get("mem_1"), (e) => {
+      assert.ok(e instanceof cls, `${status} ${JSON.stringify(body)} is not a ${cls.name}`);
+      assert.equal(e.code, code);
+      assert.equal(e.message, message);
+      return true;
+    });
+  }
+});
+
+test("deleteAll reads memories_deleted / facts_deleted, and fills the deprecated names", async () => {
+  const base = { user_id: "c1", erasure: "permanent", audit_id: "aud_1" };
+  const both = client([{ status: 200, body: { ...base, memories_deleted: 5, facts_deleted: 3, memories_forgotten: 5, facts_invalidated: 3 } }]);
+  let r = await both.k.deleteAll({ user_id: "c1" });
+  assert.deepEqual([r.memories_deleted, r.facts_deleted], [5, 3]);
+
+  // An install older than the new names: they are filled from the old ones.
+  const old = client([{ status: 200, body: { ...base, memories_forgotten: 2, facts_invalidated: 1 } }]);
+  r = await old.k.deleteAll({ user_id: "c1" });
+  assert.deepEqual([r.memories_deleted, r.facts_deleted], [2, 1]);
+
+  // A server that stops sending the deprecated names: zero is a count too.
+  const next = client([{ status: 200, body: { ...base, memories_deleted: 4, facts_deleted: 0 } }]);
+  r = await next.k.deleteAll({ user_id: "c1" });
+  assert.deepEqual([r.memories_forgotten, r.facts_invalidated], [4, 0]);
+});
+
+test("listAgents: total is this project, used is the account", async () => {
+  const { k } = client([{ status: 200, body: { agents: [{ agent_id: "bot", memories: 1, facts: 0, last_active: null }], total: 1, cap: 2, used: 2 } }]);
+  const page = await k.listAgents();
+  assert.deepEqual([page.total, page.used, page.cap], [1, 2, 2]);
+  assert.deepEqual([...page].map((a) => a.agent_id), ["bot"]);
+});
+
+test("deleteAgent: slot_freed, and a 404 for a name outside the project", async () => {
+  const ok = client([{ status: 200, body: { agent_id: "bot", memories_deleted: 3, facts_deleted: 1, audit_id: "aud_1", slot_freed: false } }]);
+  const r = await ok.k.deleteAgent("bot");
+  assert.equal(r.slot_freed, false);
+  const missing = client([{ status: 404, body: { code: "not_found", message: "No agent namespace 'bot' in this project." } }]);
+  await assert.rejects(() => missing.k.deleteAgent("bot"), NotFoundError);
+});
+
+test("batch items carry a timestamp, and an unreadable one names the item", async () => {
+  const items = [
+    { content: "Franco signed up on Pro.", user_id: "franco", timestamp: "2026-01-15" },
+    { content: "Franco downgraded to Free.", user_id: "franco", timestamp: "2026-06-20T09:00:00Z" },
+  ];
+  const { k, f } = client([{ status: 202, body: { id: "job_1", status: "processing", received: 2 } }]);
+  await k.batch(items);
+  assert.deepEqual(JSON.parse(f.calls[0].init.body), { memories: items });
+
+  const msg = "memories[1].timestamp 'yesterday' is not an ISO 8601 date or datetime (e.g. '2026-03-01' or '2026-03-01T14:30:00Z')";
+  for (const body of [{ code: "invalid_request", message: msg }, { detail: msg, code: "invalid_request", message: msg }, { detail: msg }]) {
+    const bad = client([{ status: 422, body }]);
+    await assert.rejects(
+      () => bad.k.batch([{ content: "a" }, { content: "b", timestamp: "yesterday" }]),
+      (e) => {
+        assert.ok(e instanceof APIError);
+        assert.match(e.message, /memories\[1\]\.timestamp/);
+        return true;
+      },
+    );
+  }
+});
+
+test("correctFact returns what it superseded, and a no-op correction reconfirms", async () => {
+  const { k, f } = client([
+    { status: 200, body: { id: "fct_new", subject: "maria", predicate: "lives_in", object: "Rome", invalidated: ["fct_old", "fct_other"] } },
+    { status: 200, body: { id: "fct_1", subject: "maria", predicate: "lives_in", object: "Milan", invalidated: [], observation_count: 2 } },
+  ]);
+  const fixed = await k.correctFact("fct_old", { object: "Rome" });
+  assert.equal(f.calls[0].init.method, "PATCH");
+  assert.deepEqual(JSON.parse(f.calls[0].init.body), { object: "Rome" });
+  assert.deepEqual(fixed.invalidated, ["fct_old", "fct_other"]);
+  const same = await k.correctFact("fct_1", { object: "Milan" });
+  assert.equal(same.id, "fct_1");
+  assert.deepEqual(same.invalidated, []);
+});
+
+test("getAll and events pass a limit of 200 through", async () => {
+  const { k, f } = client([
+    { status: 200, body: { memories: [], total: 0 } },
+    { status: 200, body: { events: [], processing: 0 } },
+  ]);
+  await k.getAll({ user_id: "u", limit: 200 });
+  await k.events({ status: "error", limit: 200 });
+  assert.equal(new URL(f.calls[0].url).searchParams.get("limit"), "200");
+  assert.equal(new URL(f.calls[1].url).searchParams.get("limit"), "200");
+  assert.equal(new URL(f.calls[1].url).searchParams.get("status"), "error");
+});
+
+test("no shipped text says batch refuses timestamp or that processing counts 200", () => {
+  // Both were true until 2026-09-28 and were written in the JSDoc.
+  for (const rel of ["../src/client.ts", "../src/types.ts", "../README.md"]) {
+    const text = readFileSync(new URL(rel, import.meta.url), "utf8");
+    assert.doesNotMatch(text, /`timestamp` included/, rel);
+    assert.doesNotMatch(text.replace(/\s+/g, " "), /200 most recent/, rel);
+  }
+});

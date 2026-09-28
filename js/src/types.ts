@@ -26,7 +26,12 @@ export interface Fact {
   valid_from?: string;
   invalid_at?: string;
   invalidated_by?: string;
-  /** Write-shape only: ids this fact superseded (from add()/addFactTriple()). */
+  /**
+   * Write shape only (add(), update(), addFactTriple(), correctFact()): the ids
+   * this write superseded. On correctFact() that is the corrected fact plus any
+   * other the contradiction check closed; empty when the correction restated
+   * the fact as it stands, which reconfirms it.
+   */
   invalidated?: string[];
   source_memory_id?: string;
   created_at?: string;
@@ -94,11 +99,27 @@ export interface DeleteReceipt {
   audit_id?: string;
 }
 
-/** What `deleteAll` erased. Despite the names, `memories_forgotten` and
- *  `facts_invalidated` count rows physically deleted; `erasure` is "permanent". */
+/**
+ * What `deleteAll` erased. Every row is physically deleted, and `erasure` is
+ * "permanent". `memories_deleted` and `facts_deleted` count the rows: read
+ * these. `deleteAll()` fills both names from whichever pair the server sends,
+ * so they work against an install that predates them too.
+ */
 export interface BulkReceipt {
   user_id?: string;
+  /** Memories physically deleted. */
+  memories_deleted?: number;
+  /** Facts physically deleted. */
+  facts_deleted?: number;
+  /**
+   * @deprecated Use `memories_deleted`, same number. The only name the server
+   * sent until 2026-09-28: nothing was forgotten, it was deleted.
+   */
   memories_forgotten?: number;
+  /**
+   * @deprecated Use `facts_deleted`, same number. The only name the server
+   * sent until 2026-09-28: nothing was invalidated, it was deleted.
+   */
   facts_invalidated?: number;
   erasure?: string;
   audit_id?: string;
@@ -108,6 +129,26 @@ export interface Context {
   context: string;
   tokens: number;
   sources: string[];
+}
+
+/**
+ * One item of `batch()`: the body of a single `add()`. `content` is required,
+ * every other key optional, and a key not listed here refuses the whole batch
+ * with a 422.
+ */
+export interface BatchMemory {
+  content: string;
+  user_id?: string;
+  agent_id?: string;
+  run_id?: string;
+  metadata?: Record<string, unknown>;
+  /**
+   * ISO 8601 date or datetime the item's events happened. Its facts inherit it
+   * as `valid_from`, exactly as on `add()`. An unreadable value refuses the
+   * whole batch with a 422 naming `memories[i].timestamp`, before anything is
+   * queued.
+   */
+  timestamp?: string;
 }
 
 export interface BatchJob {
@@ -165,9 +206,10 @@ export interface EventsResponse {
   /** Newest first. */
   events: MemoryEvent[];
   /**
-   * Memories still being extracted among the 200 most recent (in the
-   * `user_id` scope, when given). A `batch()` job that has not stored its
-   * memories yet is not counted: wait for `batchStatus()` first.
+   * Every write of this key's project still being extracted (in the `user_id`
+   * scope, when given), whatever `status` and `limit` say. A `batch()` job that
+   * has not stored its memories yet is not counted: wait for `batchStatus()`
+   * first.
    */
   processing: number;
 }
@@ -198,11 +240,19 @@ export interface AgentScope {
 
 export interface AgentsPage extends Iterable<AgentScope> {
   agents: AgentScope[];
-  /** Distinct agent namespaces == `used` slots. */
+  /**
+   * The agent namespaces in this key's project, before pagination: exactly
+   * the ones this key can delete. (Until 2026-09-28 the server counted the
+   * whole account here, so it always equalled `used`.)
+   */
   total: number;
-  /** The tier agent cap. */
+  /** The plan's agent cap; 0 on a self-hosted install, which sets no ceiling. */
   cap: number;
-  /** Agent slots consumed; reconciles with the `agent_cap_exceeded` 403. */
+  /**
+   * Agent slots taken across the whole account, by name; reconciles with the
+   * `agent_cap_exceeded` 403. Above `total` when other projects use names this
+   * project does not.
+   */
   used: number;
 }
 
@@ -211,6 +261,14 @@ export interface AgentDeleteReceipt {
   memories_deleted?: number;
   facts_deleted?: number;
   audit_id?: string;
+  /**
+   * Whether the agent cap slot is free now. The cap counts a name across the
+   * account, so it stays taken (false) while another project of the account
+   * still uses the same agent_id. Undefined when the server does not say: a
+   * self-hosted install has no cap, and servers before 2026-09-28 did not send
+   * it.
+   */
+  slot_freed?: boolean;
 }
 
 // ── method option types (snake_case keys mirror the REST params) ────────────
@@ -244,6 +302,7 @@ export interface ListOptions {
   agent_id?: string;
   /** Narrow to one run/session. */
   run_id?: string;
+  /** Default 50, up to 200. */
   limit?: number;
   offset?: number;
 }
@@ -267,7 +326,9 @@ export interface ListAgentsOptions {
 
 export interface EventsOptions {
   user_id?: string;
+  /** Applied before `limit`: the latest events in that state. */
   status?: "processing" | "ready" | "error";
+  /** Default 50, up to 200. */
   limit?: number;
 }
 

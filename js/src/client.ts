@@ -24,6 +24,7 @@ import type {
   AgentScope,
   AgentsPage,
   BatchJob,
+  BatchMemory,
   BulkReceipt,
   Context,
   DeleteReceipt,
@@ -108,6 +109,53 @@ function seg(value: unknown, what: string): string {
 }
 
 type Params = Record<string, string | number | boolean | undefined | null>;
+
+/** FastAPI's `detail` as one line: a sentence as it is, a validation list as
+ *  `field: reason` for the first three entries. */
+function detailLine(detail: unknown): string | undefined {
+  if (typeof detail === "string") return detail.trim() ? detail : undefined;
+  if (Array.isArray(detail) && detail.length) {
+    const parts = detail.slice(0, 3).map((e: any) => {
+      if (!e || typeof e !== "object") return String(e);
+      const loc: unknown[] = Array.isArray(e.loc) ? e.loc : [];
+      const where = loc.filter((x) => x !== "body").map(String).join(".");
+      const msg = String(e.msg ?? "invalid");
+      return where ? `${where}: ${msg}` : msg;
+    });
+    const more = detail.length - 3;
+    return parts.join("; ") + (more > 0 ? ` (and ${more} more)` : "");
+  }
+  return undefined;
+}
+
+/**
+ * The `code` and `message` of an error answer, whichever server sent it.
+ *
+ * The hosted service answers `{code, message}` on every 4xx and 5xx. A
+ * self-hosted install answers the same two keys next to FastAPI's `detail`
+ * (from 2026-09-28 on), and an older one `detail` alone: a sentence, a
+ * `{code, message}` pair, or the list of fields that failed validation.
+ * The top-level keys win and `detail` is the fallback for each. Reading only
+ * the top level turned every older self-hosted error into "HTTP 422" with no
+ * code.
+ */
+function errorFields(status: number, body: any): { code?: string; message: string } {
+  const text = (v: unknown): string | undefined =>
+    typeof v === "string" && v.trim() ? v : undefined;
+  const b = body && typeof body === "object" ? body : {};
+  const pair = b.detail && typeof b.detail === "object" && !Array.isArray(b.detail) ? b.detail : {};
+  const code = text(b.code) ?? text(pair.code);
+  const message =
+    text(b.message) ?? text(pair.message) ?? detailLine(b.detail) ?? code ?? `HTTP ${status}`;
+  return { code, message };
+}
+
+/** Fill a renamed field from its deprecated twin, and the twin from it, so
+ *  either name reads the number whichever of the two the server sent. */
+function fillPair(obj: Record<string, unknown>, current: string, deprecated: string): void {
+  if (obj[current] == null && obj[deprecated] != null) obj[current] = obj[deprecated];
+  if (obj[deprecated] == null && obj[current] != null) obj[deprecated] = obj[current];
+}
 
 
 /** Give a `{items: T[], …}` response an iterator over its items.
@@ -310,8 +358,7 @@ export class Korely {
   }
 
   private raise(status: number, body: any, retryAfter: string | null): never {
-    const code: string | undefined = body?.code;
-    const msg: string = body?.message || code || `HTTP ${status}`;
+    const { code, message: msg } = errorFields(status, body);
     if (status === 401) throw new AuthenticationError(msg, { status, code });
     if (status === 403) throw new NamespaceForbiddenError(msg, { status, code });
     if (status === 404) throw new NotFoundError(msg, { status, code });
@@ -374,7 +421,11 @@ export class Korely {
     return (body.results ?? []) as SearchHit[];
   }
 
-  /** GET /v1/memories: list a scope, newest first. The page is iterable. */
+  /**
+   * GET /v1/memories: list a scope, newest first. The page is iterable.
+   * `limit` goes up to 200 (the server capped it at 100 before 2026-09-28);
+   * `total` and `offset` walk the rest.
+   */
   async getAll(opts: ListOptions = {}): Promise<MemoryPage> {
     const page: { memories: Memory[]; total: number } = await this.request(
       "GET", "/v1/memories", {
@@ -420,12 +471,20 @@ export class Korely {
    * DELETE /v1/users/:user_id/memories: ERASE every memory and fact of one end
    * user (GDPR Art. 17). Physical deletion, not a flag: nothing is readable
    * afterwards. The audit row (counts, never content) survives.
+   *
+   * The receipt counts the rows in `memories_deleted` and `facts_deleted`.
+   * `memories_forgotten` and `facts_invalidated` are deprecated aliases with
+   * the same numbers; whichever pair the server sends fills both.
    */
   async deleteAll(opts: { user_id: string }): Promise<BulkReceipt> {
-    return this.request(
+    const r: BulkReceipt = await this.request(
       "DELETE",
       `/v1/users/${seg(opts.user_id, "user_id")}/memories`,
     );
+    const fields = r as unknown as Record<string, unknown>;
+    fillPair(fields, "memories_deleted", "memories_forgotten");
+    fillPair(fields, "facts_deleted", "facts_invalidated");
+    return r;
   }
 
   /**
@@ -454,12 +513,17 @@ export class Korely {
 
   // ── agents ────────────────────────────────────────────────────────────────
   /**
-   * GET /v1/agents: the agent namespaces you've written under (the distinct
-   * non-null agent_id values), each with active memory + fact counts and
-   * last-active time, plus the tier agent `cap` and how many slots are `used`.
-   * The antidote to the agent-cap trap: when a write is rejected with
-   * `agent_cap_exceeded`, call this to see which namespaces already exist and
-   * reuse one instead of minting a new id.
+   * GET /v1/agents: the agent namespaces written under in this key's project
+   * (the distinct non-null agent_id values), each with active memory + fact
+   * counts and last-active time. The antidote to the agent-cap trap: when a
+   * write is rejected with `agent_cap_exceeded`, call this to see which
+   * namespaces already exist and reuse one instead of minting a new id.
+   *
+   * `total` counts this project's namespaces (exactly the ones this key can
+   * delete); `used` counts the cap slots taken across the whole account, by
+   * name, which is what the 403 compares with `cap`. `used` is above `total`
+   * when other projects use names this one does not. A self-hosted install
+   * sets no cap and answers `cap: 0`.
    */
   async listAgents(opts: ListAgentsOptions = {}): Promise<AgentsPage> {
     const page: { agents: AgentScope[]; total: number; cap: number; used: number } =
@@ -473,10 +537,17 @@ export class Korely {
   }
 
   /**
-   * DELETE /v1/agents/:agent_id: hard-delete an agent namespace, purge every
-   * memory + fact written under this agent_id and FREE its cap slot
-   * (soft-forgetting its data does NOT free the slot). Resolves to the purge
-   * counts + an audit id.
+   * DELETE /v1/agents/:agent_id: hard-delete an agent namespace, purging every
+   * memory + fact written under this agent_id in this key's project
+   * (soft-forgetting its data does NOT free its cap slot; this does). Resolves
+   * to the purge counts, an audit id and `slot_freed`.
+   *
+   * The namespace must be one `listAgents()` shows for this key: anything else
+   * rejects with NotFoundError, including a name only another project of the
+   * account uses (the server answered 200 with zero counts for it before
+   * 2026-09-28, and freed nothing). The cap counts a name across the account,
+   * so while another project still uses the same agent_id its rows stay and
+   * `slot_freed` is false.
    */
   async deleteAgent(agentId: string): Promise<AgentDeleteReceipt> {
     return this.request("DELETE", `/v1/agents/${seg(agentId, "agentId")}`);
@@ -566,6 +637,13 @@ export class Korely {
    * Not an edit: the old row keeps its dates and gains a pointer to the new
    * one, so `as_of` before the correction still returns what you believed then.
    * At least one of the three fields is required.
+   *
+   * Resolves to the new Fact in the write shape. Its `invalidated` lists every
+   * fact the correction superseded: the corrected one first, then any other
+   * that the contradiction check on the new fact closed. It is not always one
+   * id. A correction that names the fact as it already stands (same subject,
+   * predicate and object, still open) supersedes nothing: the server
+   * reconfirms the fact and returns it, same `id`, with `invalidated: []`.
    */
   async correctFact(
     factId: string,
@@ -613,9 +691,12 @@ export class Korely {
    *
    * `add()` resolves as soon as the memory is stored; fact extraction runs
    * behind it. Each event carries a memory's `status` ("processing", "ready"
-   * or "error"), and `processing` counts those still in flight among your 200
-   * most recent writes. No webhook fires when extraction finishes, so this is
-   * how to know.
+   * or "error"), newest first. `status` filters before `limit` (up to 200) is
+   * applied, so `{ status: "error" }` returns the latest errors however many
+   * ready writes came after them. `processing` counts every write of this
+   * key's project still in flight (of `user_id`, when given), whatever
+   * `status` and `limit` say. No webhook fires when extraction finishes, so
+   * this is how to know.
    */
   async events(opts: EventsOptions = {}): Promise<EventsResponse> {
     return this.request("GET", "/v1/events", {
@@ -630,11 +711,20 @@ export class Korely {
   // ── batch ─────────────────────────────────────────────────────────────────
   /**
    * POST /v1/batch: bulk import, up to 500 memory objects, processed
-   * asynchronously. Each object takes `content` and optionally `user_id`,
-   * `agent_id`, `run_id` and `metadata`; any other key (`timestamp` included)
-   * is refused with a 422 for the whole batch.
+   * asynchronously. Each object is the body of one `add()` (see
+   * `BatchMemory`): `content` and optionally `user_id`, `agent_id`, `run_id`,
+   * `metadata` and `timestamp`.
+   *
+   * `timestamp` means what it means on `add()`: when the events happened.
+   * The facts extracted from the item inherit it as `valid_from`, so a
+   * migration keeps its real dates; without it an item is dated when it is
+   * imported. A value that is not an ISO 8601 date or datetime refuses the
+   * whole batch before anything is queued: a 422 (APIError,
+   * `code === "invalid_request"`) whose message names the item, e.g.
+   * `memories[3].timestamp`. Any key not listed above is refused the same
+   * way. Servers older than 2026-09-28 refuse `timestamp` itself.
    */
-  async batch(memories: Array<Record<string, unknown>>): Promise<BatchJob> {
+  async batch(memories: Array<BatchMemory | Record<string, unknown>>): Promise<BatchJob> {
     return this.request("POST", "/v1/batch", { body: { memories } });
   }
 

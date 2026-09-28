@@ -35,6 +35,7 @@ export type {
   BulkReceipt,
   Context,
   BatchJob,
+  BatchMemory,
   Profile,
   HistoryEvent,
   HistoryEventType,

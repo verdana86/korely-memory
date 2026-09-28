@@ -41,23 +41,23 @@ Every method maps to one REST endpoint.
 |---|---|---|
 | `add(content, opts?)` | `POST /v1/memories` | Write. `content` is a string or a list of chat messages. `opts.timestamp` (ISO) backfills the past: facts inherit it as `valid_from`. |
 | `search(query, opts?)` | `POST /v1/memories/search` | Semantic search over memories; filter by `user_id`, `agent_id`, `run_id`, `metadata`. |
-| `getAll(opts?)` | `GET /v1/memories` | List a scope, newest first. The page is iterable. |
+| `getAll(opts?)` | `GET /v1/memories` | List a scope, newest first. The page is iterable; `limit` up to 200. |
 | `get(id)` | `GET /v1/memories/:id` | One memory, with its facts. |
 | `update(id, { content })` | `PATCH /v1/memories/:id` | Re-runs extraction. |
 | `delete(id)` | `DELETE /v1/memories/:id` | Forget one (audited). |
-| `deleteAll({ user_id })` | `DELETE /v1/users/:user_id/memories` | Erase everything for a user (GDPR). |
+| `deleteAll({ user_id })` | `DELETE /v1/users/:user_id/memories` | Erase everything for a user (GDPR). The receipt counts `memories_deleted` and `facts_deleted`; `memories_forgotten` and `facts_invalidated` are deprecated aliases. |
 | `history(id)` | `GET /v1/memories/:id/history` | A memory's timeline + the facts it produced. |
 | `users(opts?)` | `GET /v1/users` | Your end users, with counts. |
-| `listAgents(opts?)` | `GET /v1/agents` | Your agent namespaces, with counts + the tier `cap`/`used`. Call after `agent_cap_exceeded` to reuse an id. |
-| `deleteAgent(agentId)` | `DELETE /v1/agents/:agent_id` | Purge an agent namespace and free its cap slot. |
+| `listAgents(opts?)` | `GET /v1/agents` | This project's agent namespaces, with counts. `total` counts this project's names, `used` the cap slots taken across the account. Call after `agent_cap_exceeded` to reuse an id. |
+| `deleteAgent(agentId)` | `DELETE /v1/agents/:agent_id` | Purge an agent namespace of this project. `NotFoundError` for a name the project does not use; `slot_freed` says whether the cap slot is free now. |
 | `getFacts(opts?)` | `GET /v1/facts` | Typed facts; `as_of` for point-in-time. The array also carries `total`. |
 | `addFactTriple(s, p, o, opts?)` | `POST /v1/facts` | Write a fact directly (bi-temporal; `tense: "past"` for one that is over). |
-| `correctFact(id, changes)` | `PATCH /v1/facts/:id` | Supersede a fact with a corrected one. |
+| `correctFact(id, changes)` | `PATCH /v1/facts/:id` | Supersede a fact with a corrected one; `invalidated` lists what it closed. Restating the fact as it stands reconfirms it (`invalidated: []`). |
 | `forgetFact(id, { at? })` | `POST /v1/facts/:id/forget` | Close a fact; it stays in history. |
 | `getProfile({ user_id, as_of? })` | `GET /v1/profile` | The assembled profile of one end user. |
 | `getContext({ query, user_id? })` | `GET /v1/context` | One call, a prompt-ready context block. |
-| `events(opts?)` | `GET /v1/events` | Which writes are still being extracted. |
-| `batch(memories)` | `POST /v1/batch` | Bulk import, for migrations. |
+| `events(opts?)` | `GET /v1/events` | Which writes are still being extracted; `limit` up to 200. |
+| `batch(memories)` | `POST /v1/batch` | Bulk import, for migrations. Each item takes `timestamp`, as `add()` does. |
 | `batchStatus(jobId)` | `GET /v1/batch/:id` | Poll an import job. |
 
 ## Bi-temporal facts (the moat)
@@ -79,7 +79,9 @@ await korely.addFactTriple("Marco", "works_at", "Acme GmbH", {
 ## Errors
 
 Every error the server answers with is an `APIError` carrying the stable `code`
-of the REST error envelope; the common statuses also have their own subclass.
+and the `message` of the REST error envelope (`{code, message}`; a self-hosted
+install that answers FastAPI's `detail` is read the same way). The common
+statuses also have their own subclass.
 Everything subclasses `KorelyError`, which is also what a client-side problem
 throws (no key, a connection error, a timeout).
 
