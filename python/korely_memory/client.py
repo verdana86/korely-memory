@@ -41,7 +41,7 @@ from .models import (
     UsersPage,
 )
 
-__version__ = "0.1.14"
+__version__ = "0.1.15"
 
 # All keys are the EU region; data is stored and processed in the EU.
 _REGIONS = {"eu": "https://api.korely.ai"}
