@@ -11,6 +11,12 @@ Si versionano in modo indipendente.
 # l'extra installato: `pip install 'mcp>=1.2.0,<2'` in un ambiente usa e getta.
 cd python && PYTHONPATH=. python3 -m unittest discover -s tests
 
+# L'integrazione LangGraph: senza l'extra i suoi test si saltano (su Python 3.9
+# sempre), quindi vanno lanciati anche in un ambiente con Python 3.10+.
+cd python && uv venv --python 3.13 .venv   # oppure python3.10+ -m venv .venv
+uv pip install --python .venv/bin/python langgraph langchain-core pytest
+.venv/bin/python -m pytest tests -q
+
 # Node: `npm ci`, non `npm install`
 cd js && npm ci && npm run build && npm test
 

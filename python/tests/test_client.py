@@ -1170,14 +1170,18 @@ class RunsOnThePythonItDeclares(unittest.TestCase):
     break at import on 3.9, where no test here runs."""
 
     def test_every_module_parses_as_python_3_9(self):
+        # Subpackages too: korely_memory/integrations/ arrived with the
+        # LangGraph extra, and a listing of the top folder alone missed it.
         import ast
 
-        for name in sorted(os.listdir(_PKG)):
-            if not name.endswith(".py"):
-                continue
-            with self.subTest(module=name):
-                with open(os.path.join(_PKG, name), encoding="utf-8") as fh:
-                    ast.parse(fh.read(), filename=name, feature_version=(3, 9))
+        for root, _dirs, files in os.walk(_PKG):
+            for name in sorted(files):
+                if not name.endswith(".py"):
+                    continue
+                path = os.path.join(root, name)
+                with self.subTest(module=os.path.relpath(path, _PKG)):
+                    with open(path, encoding="utf-8") as fh:
+                        ast.parse(fh.read(), filename=name, feature_version=(3, 9))
 
 
 if __name__ == "__main__":

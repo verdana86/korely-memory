@@ -184,6 +184,125 @@ except QuotaExceededError as err:   # 429
 
 The SDK does not retry on its own.
 
+## LangGraph
+
+```bash
+pip install 'korely-memory[langgraph]'   # Python 3.10+, as LangGraph itself
+```
+
+`korely_memory.integrations.langgraph` gives a graph three ways to use Korely.
+Take the ones you need: `import korely_memory` loads none of them, so the core
+package keeps zero dependencies.
+
+### Context before the model answers
+
+`korely_context(client, user_id, query)` makes one `GET /v1/context` call and
+returns the text for a `SystemMessage`: the user's current facts and the
+memories relevant to the question, within `token_budget`, under a
+`Current date: YYYY-MM-DD` line. In our measurements the model answers better
+when its prompt carries the date; `include_date=False` leaves it out and
+`today=` sets it. Write each turn back with `add()`, and the next turn finds
+it, on any thread.
+
+```python
+from dataclasses import dataclass
+
+from langchain.chat_models import init_chat_model
+from langchain_core.messages import SystemMessage
+from langgraph.checkpoint.memory import InMemorySaver
+from langgraph.graph import START, MessagesState, StateGraph
+from langgraph.runtime import Runtime
+
+from korely_memory import Korely
+from korely_memory.integrations.langgraph import korely_context
+
+korely = Korely()                          # reads KORELY_API_KEY
+model = init_chat_model("provider:model")  # any chat model LangChain supports
+
+
+@dataclass
+class Context:
+    user_id: str
+
+
+def call_model(state: MessagesState, runtime: Runtime[Context]):
+    user_id = runtime.context.user_id
+    question = state["messages"][-1].text
+    memory = korely_context(korely, user_id, question, token_budget=800)
+    reply = model.invoke([SystemMessage(memory), *state["messages"]])
+    korely.add([{"role": "user", "content": question},
+                {"role": "assistant", "content": reply.text}], user_id=user_id)
+    return {"messages": [reply]}
+
+
+builder = StateGraph(MessagesState, context_schema=Context)
+builder.add_node(call_model)
+builder.add_edge(START, "call_model")
+graph = builder.compile(checkpointer=InMemorySaver())
+
+graph.invoke(
+    {"messages": [{"role": "user", "content": "Where should I send the package?"}]},
+    {"configurable": {"thread_id": "1"}},
+    context=Context(user_id="maria"),
+)
+```
+
+The checkpointer keeps one thread's messages; Korely keeps what the user said
+across all of them. `akorely_context()` is the same call for an `async` node.
+
+### Tools
+
+```python
+from korely_memory.integrations.langgraph import create_korely_tools
+
+tools = create_korely_tools(korely, user_id="maria")   # [search_memory, save_memory]
+model_with_tools = model.bind_tools(tools)
+```
+
+`search_memory(query)` answers with the same block as `korely_context()`;
+`save_memory(content)` stores one memory. The app binds the user (and
+`agent_id=`) when it creates the tools: neither is in the tools' schema, so
+the model can neither see nor change them. Create the tools per user, for
+instance in the node that calls the model. A Korely error reaches the model as
+the tool's answer instead of ending the run.
+
+### Store
+
+```python
+from korely_memory.integrations.langgraph import KorelyStore
+
+graph = builder.compile(checkpointer=InMemorySaver(), store=KorelyStore(korely))
+# in a node: runtime.store.put(("memories", user_id), key, {"content": "..."})
+```
+
+`KorelyStore` is a LangGraph `BaseStore`, for code that expects one:
+`runtime.store`, LangMem's memory tools. Each item is a Korely memory of the
+user, so Korely extracts facts from it and `korely_context()` and the tools
+find it. The memory's text is the value's `content`, `text`, `memory` or
+`data` string, else one `key: value` line per field (`index=[...]` on a put,
+or `index_fields=`, picks other fields). The value itself travels in the
+memory's metadata and comes back exactly.
+
+| Operation | On Korely |
+|---|---|
+| `put`, `get`, `delete` | Yes. The API has no lookup by your key, so each pages through the namespace's items, one request per 200. A `put` on an existing key stores the new memory, then forgets the old one. |
+| `search(ns, query=...)` | Yes, one `POST /v1/memories/search`, with scores. `offset + limit` at most 50; `filter` takes equality on top-level fields. |
+| `search(ns)` without a query | Yes, newest first, with every `filter` operator. |
+| `list_namespaces`, a prefix such as `("memories",)`, `ttl`, `index=False` | No: `NotImplementedError`, before any request. |
+
+The namespace `("memories", user_id)` is that Korely end user;
+`KorelyStore(korely, agent_id="support-bot")` adds the agent, and
+`namespace_to_scope=` maps other shapes (a function returning the user id or
+`(user_id, agent_id)`). A search covers exactly the namespace it names, never
+the ones below it. Each namespace is also a Korely run,
+`run_id="langgraph:memories.maria"`: that is how the store reads its own items
+and nothing else of the user's, while the rest of Korely reads them as the
+user's memories. A value must fit in a memory's metadata, 8 KB of JSON on the
+current server. `delete` forgets as `delete()` does; erasure is
+`delete_all(user_id=)`. Two writers on one key at the same instant can leave
+two memories: reads take the newest, and the next `put` or `delete` removes
+the other.
+
 ## MCP server
 
 ```bash

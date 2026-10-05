@@ -19,6 +19,16 @@ Found by the public conformance test of 2026-09-29 (production, docs as written)
 
 Python:
 
+- LangGraph integration, `pip install 'korely-memory[langgraph]'` (Python
+  3.10+, LangGraph's own floor; the core package keeps zero dependencies and
+  Python 3.9). `korely_memory.integrations.langgraph` has `korely_context()`,
+  the `GET /v1/context` block for a `SystemMessage` under a `Current date:`
+  line; `create_korely_tools()`, `search_memory` and `save_memory` bound to an
+  end user the model cannot change; and `KorelyStore`, a LangGraph `BaseStore`
+  on the API. The store does `put`, `get`, `delete` and `search`; each
+  namespace is a Korely run of the user, so the store reads only its own items
+  while Korely extracts facts from them. `list_namespaces`, searching a prefix
+  across namespaces, `ttl` and `index=False` raise `NotImplementedError`.
 - `Korely(ca_file=...)` (or `KORELY_CA_FILE`): the certificate authority to
   trust for https, for a server whose certificate a private CA signed, like
   Caddy's local CA on a laptop install. The Python 3.9 of macOS does not read
