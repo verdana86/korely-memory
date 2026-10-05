@@ -66,6 +66,11 @@ def _seg(value: Any, what: str) -> str:
     the list endpoint behind a redirect, and came back as a Memory with nothing
     in it.
     """
+    if value is not None and (isinstance(value, bool) or not isinstance(value, (str, int))):
+        # Only a string, or a whole number, is an id: str() turned a dict or a
+        # function into text that went out as the path (the JS client's
+        # "/v1/facts/[object Object]" in the hosted product's logs, 2026-10-05).
+        raise KorelyError(f"{what} must be a string id, not {type(value).__name__}.")
     s = "" if value is None else str(value)
     if not s:
         raise KorelyError(f"{what} is empty.")

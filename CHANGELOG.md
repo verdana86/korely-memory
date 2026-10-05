@@ -8,6 +8,17 @@ The server side of the entries marked "API" shipped on 2026-09-28. Against an
 older server these clients keep working: the old field names are still read,
 and a batch `timestamp` is refused there with a 422.
 
+## Unreleased
+
+Both clients:
+
+- An id that is not a string (or a whole number) is refused before any call,
+  with a `KorelyError` that names the argument. It used to be turned into
+  text: an object went out as `/v1/facts/[object Object]` and a function as
+  its source, and came back as a 401 or a 404 that said nothing useful (the
+  hosted product saw 5,224 of them on 2026-10-05, from automated callers right
+  after the release).
+
 ## Python 0.1.16 (2026-10-05)
 
 - LangGraph integration, `pip install 'korely-memory[langgraph]'` (Python

@@ -737,6 +737,20 @@ class IdsAreOnePathSegment(unittest.TestCase):
         _client(rec).delete_all(user_id="maria@example.com")
         self.assertEqual(rec.last["path"], "/v1/users/maria%40example.com/memories")
 
+    def test_an_id_that_is_not_a_string_never_reaches_the_server(self):
+        """A dict, a list, a function or a boolean is no id: str() used to send
+        it as the path (the JS client's "/v1/facts/[object Object]" in the
+        hosted product's logs, 2026-10-05). A whole number still goes."""
+        for bad in ({"id": "m1"}, ["m1"], print, True, 1.5):
+            with self.subTest(bad=repr(bad)):
+                rec = _Recorder()
+                with self.assertRaises(KorelyError):
+                    _client(rec).get(bad)
+                self.assertEqual(rec.calls, [])
+        rec = _Recorder()
+        _client(rec).get(42)
+        self.assertEqual(rec.last["path"], "/v1/memories/42")
+
     def test_an_empty_id_never_reaches_the_server(self):
         for call in (lambda k: k.get(""), lambda k: k.delete_agent(""),
                      lambda k: k.delete_all(user_id=""), lambda k: k.forget_fact("")):

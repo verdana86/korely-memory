@@ -103,6 +103,14 @@ function coerceContent(content: string | Message[]): string {
  * An empty id is refused: `get("")` asked for the list endpoint.
  */
 function seg(value: unknown, what: string): string {
+  // Only a string, or a whole number, is an id. Anything else used to be
+  // turned into text by String(): an object became "[object Object]" and a
+  // function its source, so the call went out as /v1/facts/[object Object]
+  // and came back a confusing 404 or 401 (hosted product's logs, 2026-10-05).
+  if (value != null && typeof value !== "string"
+      && !(typeof value === "number" && Number.isInteger(value))) {
+    throw new KorelyError(`${what} must be a string id, not ${Array.isArray(value) ? "an array" : `a ${typeof value}`}.`);
+  }
   const s = value == null ? "" : String(value);
   if (!s) throw new KorelyError(`${what} is empty.`);
   return encodeURIComponent(s);

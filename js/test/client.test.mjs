@@ -561,3 +561,17 @@ test("getContext takes a bare query string (the Vercel AI SDK example, 2026-09-2
   assert.equal(u.searchParams.get("user_id"), "acme");
   await assert.rejects(() => k.getContext(""), KorelyError);
 });
+
+
+test("an id that is not a string never reaches the server", async () => {
+  // A function or an object went out as the path through String():
+  // "/v1/facts/[object Object]" in the hosted product's logs (2026-10-05).
+  for (const bad of [{ id: "m1" }, ["m1"], () => "m1", true, 1.5]) {
+    const { k, f } = client([]);
+    await assert.rejects(() => k.get(bad), KorelyError);
+    assert.equal(f.calls.length, 0);
+  }
+  const { k, f } = client([{ body: { id: "42" } }]);
+  await k.get(42);
+  assert.equal(f.calls[0].url, "https://api.test/v1/memories/42");
+});
