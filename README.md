@@ -86,6 +86,8 @@ npm install korely-memory      # Node / TypeScript
 
 Both clients have **zero runtime dependencies**.
 
+For LangGraph, the optional `pip install 'korely-memory[langgraph]'` adds a store, memory tools and a context helper: see [python/README.md](python/README.md#langgraph).
+
 ## Get a key
 
 The hobby tier is free and needs no signup form:
