@@ -48,11 +48,20 @@ const DEFAULT_TOKEN_BUDGET = 800;
  */
 const CONTEXT_REUSE_MS = 5 * 60_000;
 /**
- * A failed read is kept for less, counted from the failure: long enough that
- * the steps of one tool loop do not each wait for the same outage, short
- * enough that the user's next try reads the memory again.
+ * A read that failed, or ran past `contextTimeoutMs`, is kept for less,
+ * counted from the failure: long enough that the steps of one tool loop do
+ * not each wait for the same outage, short enough that the user's next try
+ * reads the memory again.
  */
 const FAILURE_REUSE_MS = 30_000;
+/**
+ * How long a call waits for the memory by default. The client's own timeout
+ * is 30 s, and a chat that hangs half a minute before answering without its
+ * memory is worse than one that answers without it after five seconds.
+ */
+const DEFAULT_CONTEXT_TIMEOUT_MS = 5000;
+/** setTimeout fires at once for a longer delay (2^31 - 1 ms, about 24.8 days). */
+const MAX_TIMER_MS = 2 ** 31 - 1;
 
 // ── types, taken from the AI SDK itself ───────────────────────────────────
 type TransformArgs = Parameters<NonNullable<LanguageModelMiddleware["transformParams"]>>[0];
@@ -98,6 +107,13 @@ export interface KorelyMemoryOptions extends KorelyToolsOptions {
    * writes memories itself, or has no consent to store the conversation.
    */
   remember?: boolean;
+  /**
+   * How long a call waits for the memory, in milliseconds. Default 5000: past
+   * it the call goes on without the memory, `onError` hears of it (phase
+   * "context"), and the answer that arrives later is dropped. 0 or Infinity
+   * waits for the client's own `timeoutMs` instead (30 s by default).
+   */
+  contextTimeoutMs?: number;
   /**
    * Hands over the pending write so a serverless runtime keeps the function
    * alive until it is done, e.g. `waitUntil` from "@vercel/functions" or
@@ -262,6 +278,22 @@ function endsTurn(finishReason: unknown, content: ReadonlyArray<{ type: string }
   );
 }
 
+/**
+ * The wait for the memory, or undefined for no limit of our own (0, Infinity,
+ * or a delay setTimeout cannot hold). A value that is not a duration throws
+ * now, not on every turn.
+ */
+function contextLimit(value: number | undefined): number | undefined {
+  const ms = value ?? DEFAULT_CONTEXT_TIMEOUT_MS;
+  if (typeof ms !== "number" || Number.isNaN(ms) || ms < 0) {
+    throw new KorelyError(
+      `contextTimeoutMs must be a number of milliseconds, 0 or more, got ${JSON.stringify(value)}. ` +
+        "0 or Infinity waits for the client's own timeout.",
+    );
+  }
+  return ms === 0 || ms >= MAX_TIMER_MS ? undefined : ms;
+}
+
 function reporter(onError: KorelyMemoryOptions["onError"]): (error: unknown, phase: KorelyPhase) => void {
   return (error, phase) => {
     try {
@@ -288,6 +320,7 @@ function reporter(onError: KorelyMemoryOptions["onError"]): (error: unknown, pha
 export function korelyMemoryMiddleware(options: KorelyMemoryOptions): LanguageModelMiddleware {
   const scope = scopeOf(options, "korelyMemoryMiddleware");
   const remember = options.remember ?? true;
+  const limit = contextLimit(options.contextTimeoutMs);
   const report = reporter(options.onError);
   const waitUntil = options.waitUntil;
   let lastTurn: { key: string; until: number; parts: Promise<Parts | undefined> } | undefined;
@@ -297,20 +330,41 @@ export function korelyMemoryMiddleware(options: KorelyMemoryOptions): LanguageMo
     const key = `${turn}\u0000${query}`;
     if (lastTurn && lastTurn.key === key && Date.now() < lastTurn.until) return lastTurn.parts;
     const entry = { key, until: Date.now() + CONTEXT_REUSE_MS, parts: Promise.resolve<Parts | undefined>(undefined) };
-    entry.parts = Promise.resolve()
-      .then(() =>
-        scope.client.getContext({
-          query: clip(query, QUERY_MAX),
-          user_id: scope.userId,
-          agent_id: scope.agentId,
-          token_budget: scope.tokenBudget,
-        }),
-      )
-      .then(partsOf, (error) => {
-        entry.until = Date.now() + FAILURE_REUSE_MS;
-        report(error, "context");
-        return undefined;
-      });
+    entry.parts = new Promise<Parts | undefined>((resolve) => {
+      // The first outcome wins: the answer, a failure, or the limit. What comes
+      // after it (the answer past the limit, the client's own timeout) is
+      // dropped: it reaches no call, no onError, and does not touch the cache,
+      // where a timed-out read stays a failure until its window is over.
+      let done = false;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const finish = (parts: Parts | undefined, failure?: { error: unknown }) => {
+        if (done) return;
+        done = true;
+        if (timer !== undefined) clearTimeout(timer);
+        if (failure) {
+          entry.until = Date.now() + FAILURE_REUSE_MS;
+          report(failure.error, "context");
+        }
+        resolve(parts);
+      };
+      if (limit !== undefined) {
+        timer = setTimeout(
+          () => finish(undefined, { error: new KorelyError(`GET /v1/context took longer than ${limit} ms (contextTimeoutMs).`) }),
+          limit,
+        );
+      }
+      Promise.resolve()
+        .then(() =>
+          scope.client.getContext({
+            query: clip(query, QUERY_MAX),
+            user_id: scope.userId,
+            agent_id: scope.agentId,
+            token_budget: scope.tokenBudget,
+          }),
+        )
+        .then((ctx) => finish(partsOf(ctx)))
+        .catch((error) => finish(undefined, { error }));
+    });
     lastTurn = entry;
     return entry.parts;
   }
@@ -410,11 +464,11 @@ function resolveModel(model: LanguageModel): ModelObject {
  * Before each call, `GET /v1/context` for the latest user message, added as
  * system messages after the app's own: the stable part first, then the
  * current date and the part this question brought. The call waits for that
- * read, for at most the client's `timeoutMs` (pass a client with a shorter
- * one to bound it). After a call that ends the turn, the user message and the
- * reply are stored as one memory (`remember`), and the call does not wait for
- * that write. Neither step can fail the call: a failure goes to `onError`,
- * and the call goes on without the context or without the write.
+ * read for at most `contextTimeoutMs` (5 s by default), then goes on without
+ * it. After a call that ends the turn, the user message and the reply are
+ * stored as one memory (`remember`), and the call does not wait for that
+ * write. Neither step can fail the call: a failure or a timeout goes to
+ * `onError`, and the call goes on without the context or without the write.
  *
  * Create it per request, with the id of the user making it:
  *

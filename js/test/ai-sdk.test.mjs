@@ -150,6 +150,18 @@ function pending() {
 const utcDay = () => new Date().toISOString().slice(0, 10);
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
+/** Lets the event loop turn (setImmediate is never mocked here) until `condition` holds. */
+async function until(condition) {
+  for (let i = 0; i < 200 && !condition(); i++) await tick();
+  assert.ok(condition(), "the awaited condition never held");
+}
+
+const weather = tool({
+  description: "The weather in a city.",
+  inputSchema: jsonSchema({ type: "object", properties: { city: { type: "string" } }, required: ["city"] }),
+  execute: async () => ({ sky: "sunny", celsius: 24 }),
+});
+
 // ── withKorelyMemory ────────────────────────────────────────────────────────
 
 test("the memory goes after the app's system prompt, the stable part first", async () => {
@@ -249,11 +261,6 @@ test("streamText: the stream arrives whole, then the turn is stored", async () =
 });
 
 test("a tool loop reads the memory once and stores only the final reply", async () => {
-  const weather = tool({
-    description: "The weather in a city.",
-    inputSchema: jsonSchema({ type: "object", properties: { city: { type: "string" } }, required: ["city"] }),
-    execute: async () => ({ sky: "sunny", celsius: 24 }),
-  });
   for (const run of [generateText, streamText]) {
     const k = korely();
     const keep = pending();
@@ -352,11 +359,6 @@ test("a failed read serves the whole tool loop, and the next try reads again", a
     remember: false,
     onError: (_error, { phase }) => errors.push(phase),
   });
-  const weather = tool({
-    description: "The weather in a city.",
-    inputSchema: jsonSchema({ type: "object", properties: { city: { type: "string" } }, required: ["city"] }),
-    execute: async () => ({ sky: "sunny" }),
-  });
   const ask = () => generateText({ model: wrapped, tools: { weather }, stopWhen: stepCountIs(3), prompt: "Weather in Rome?" });
 
   await ask();
@@ -368,6 +370,172 @@ test("a failed read serves the whole tool loop, and the next try reads again", a
   t.mock.timers.tick(31_000);
   await ask();
   assert.equal(k.reads().length, 2);
+});
+
+// ── contextTimeoutMs ────────────────────────────────────────────────────────
+
+const NOW = Date.parse("2026-10-05T10:00:00Z");
+
+/** A client whose reads answer as `read` says (the n-th read gets n); writes succeed. */
+function slowClient(read) {
+  const reads = [];
+  return {
+    reads,
+    getContext: (params) => read(params, reads.push(params)),
+    add: async () => ({ id: "mem_1", status: "processing" }),
+  };
+}
+
+test("contextTimeoutMs: a read that never answers holds the call 5 s by default, then it goes on", { timeout: 3000 }, async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: NOW });
+  const client = slowClient(() => new Promise(() => {}));
+  const errors = [];
+  const model = fakeModel({ text: "Hello!" });
+  const call = generateText({
+    model: withKorelyMemory(model, {
+      client,
+      userId: "maria",
+      remember: false,
+      onError: (error, { phase }) => errors.push({ phase, error }),
+    }),
+    prompt: "Hi",
+  });
+
+  await until(() => client.reads.length === 1);
+  t.mock.timers.tick(4999);
+  await tick();
+  assert.equal(model.calls.length, 0); // still waiting for the memory
+  t.mock.timers.tick(1);
+  const result = await call;
+
+  assert.equal(result.text, "Hello!");
+  assert.deepEqual(
+    model.calls[0].prompt.map((m) => m.role),
+    ["system", "user"],
+  );
+  assert.equal(model.calls[0].prompt[0].content, "Current date: 2026-10-05");
+  assert.equal(errors.length, 1);
+  assert.equal(errors[0].phase, "context");
+  assert.ok(errors[0].error instanceof KorelyError);
+  assert.match(errors[0].error.message, /took longer than 5000 ms \(contextTimeoutMs\)/);
+});
+
+test("contextTimeoutMs: the late answer is dropped, and the turn reads again after the failure window", { timeout: 3000 }, async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: NOW });
+  const PHONE = "## Known facts\n- Maria prefers_contact phone (since 2026-10-05)";
+  let answerLate;
+  const client = slowClient((_params, n) =>
+    n === 1
+      ? new Promise((resolve) => (answerLate = resolve))
+      : Promise.resolve({ ...CONTEXT, context: `${STABLE}\n\n${PHONE}`, volatile: PHONE }),
+  );
+  const errors = [];
+  const model = fakeModel({ tool: "weather", input: { city: "Rome" } }, { text: "Sunny." });
+  const wrapped = withKorelyMemory(model, {
+    client,
+    userId: "maria",
+    remember: false,
+    contextTimeoutMs: 1000,
+    onError: (_error, { phase }) => errors.push(phase),
+  });
+  const ask = () =>
+    generateText({ model: wrapped, tools: { weather }, stopWhen: stepCountIs(3), prompt: "Weather in Rome?" });
+  const sawMemory = (call) => call.prompt.some((m) => m.role === "system" && m.content.includes("prefers_contact"));
+
+  // The read runs past the limit: both steps of the loop go on without it,
+  // and the second step does not wait again.
+  const first = ask();
+  await until(() => client.reads.length === 1);
+  t.mock.timers.tick(1000);
+  await first;
+  assert.equal(model.calls.length, 2);
+  assert.equal(client.reads.length, 1);
+  assert.deepEqual(errors, ["context"]);
+  assert.ok(!model.calls.some(sawMemory));
+
+  // The answer arrives late: no onError, and the cache does not take it.
+  answerLate(CONTEXT);
+  await tick();
+  assert.deepEqual(errors, ["context"]);
+  await ask(); // the same turn, inside the failure window: no read, no memory
+  assert.equal(client.reads.length, 1);
+  assert.ok(!model.calls.some(sawMemory));
+
+  // Past the window the turn reads again and gets today's answer, not the late one.
+  t.mock.timers.tick(31_000);
+  await ask();
+  assert.equal(client.reads.length, 2);
+  const fresh = model.calls.at(-1).prompt;
+  assert.equal(fresh[0].content, STABLE);
+  assert.equal(fresh[1].content, `Current date: 2026-10-05\n\n${PHONE}`);
+
+  // A read that answered in time leaves no timer behind to report a timeout later.
+  t.mock.timers.tick(5000);
+  await tick();
+  assert.deepEqual(errors, ["context"]);
+});
+
+test("contextTimeoutMs: 0 or Infinity waits for the client's own timeout", { timeout: 3000 }, async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: NOW });
+  for (const contextTimeoutMs of [0, Infinity]) {
+    // Answers after 6 s: later than the default limit, sooner than the client's 30 s.
+    const client = slowClient(() => new Promise((resolve) => setTimeout(() => resolve(CONTEXT), 6000)));
+    const errors = [];
+    const model = fakeModel({ text: "OK." });
+    const call = generateText({
+      model: withKorelyMemory(model, {
+        client,
+        userId: "maria",
+        remember: false,
+        contextTimeoutMs,
+        onError: (_error, { phase }) => errors.push(phase),
+      }),
+      prompt: "Hi",
+    });
+    await until(() => client.reads.length === 1);
+    t.mock.timers.tick(6000);
+    await call;
+    assert.equal(model.calls[0].prompt[0].content, STABLE, String(contextTimeoutMs));
+    assert.deepEqual(errors, [], String(contextTimeoutMs));
+  }
+});
+
+test("contextTimeoutMs: the client's own timeout, arriving after the limit, is not reported again", { timeout: 3000 }, async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: NOW });
+  const client = slowClient(
+    () =>
+      new Promise((_resolve, reject) =>
+        setTimeout(() => reject(new KorelyError("Request timed out after 30000 ms (GET /v1/context).")), 30_000),
+      ),
+  );
+  const errors = [];
+  const call = generateText({
+    model: withKorelyMemory(fakeModel({ text: "OK." }), {
+      client,
+      userId: "maria",
+      remember: false,
+      onError: (error) => errors.push(error.message),
+    }),
+    prompt: "Hi",
+  });
+  await until(() => client.reads.length === 1);
+  t.mock.timers.tick(5000);
+  assert.equal((await call).text, "OK.");
+  t.mock.timers.tick(25_000);
+  await tick();
+  assert.deepEqual(errors, ["GET /v1/context took longer than 5000 ms (contextTimeoutMs)."]);
+});
+
+test("contextTimeoutMs refuses what is not a duration", () => {
+  const client = slowClient(() => Promise.resolve(CONTEXT));
+  for (const contextTimeoutMs of [-1, Number.NaN, "5000"]) {
+    assert.throws(
+      () => withKorelyMemory(fakeModel({ text: "x" }), { client, userId: "maria", contextTimeoutMs }),
+      KorelyError,
+      String(contextTimeoutMs),
+    );
+  }
+  assert.equal(client.reads.length, 0);
 });
 
 test("a failed write goes to onError and leaves the reply alone, even when onError throws", async () => {

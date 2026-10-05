@@ -71,13 +71,14 @@ that is the same on every call, so the provider's prompt cache keeps it, then
 `Current date: YYYY-MM-DD` and the facts and memories this question brought.
 After a reply that ends the turn, it stores the user message and the reply as
 one memory, without waiting for the write (`waitUntil` keeps a serverless
-function alive until it lands). If Korely cannot be reached, the call goes on
-without memory and `onError` is told; the read waits at most the client's
-`timeoutMs` (30 s, unless you pass a `client` with a shorter one).
+function alive until it lands). If Korely cannot be reached, or takes longer
+than `contextTimeoutMs` (5 s) to answer, the call goes on without memory,
+`onError` is told, and an answer that arrives later is dropped.
 
 Options: `userId` (required), `agentId`, `runId`, `client` (a configured
-`Korely`, default `new Korely()`), `tokenBudget` (800), `includeDate` (true),
-`timeZone` ("UTC"), `remember` (true), `waitUntil`, `onError`.
+`Korely`, default `new Korely()`), `tokenBudget` (800), `contextTimeoutMs`
+(5000; 0 waits for the client's own 30 s), `includeDate` (true), `timeZone`
+("UTC"), `remember` (true), `waitUntil`, `onError`.
 
 To let the model decide when to look something up or save it, give it the
 tools instead: `tools: korelyTools({ userId })` adds `searchMemory` and
