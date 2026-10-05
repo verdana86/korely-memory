@@ -526,16 +526,138 @@ test("contextTimeoutMs: the client's own timeout, arriving after the limit, is n
   assert.deepEqual(errors, ["GET /v1/context took longer than 5000 ms (contextTimeoutMs)."]);
 });
 
-test("contextTimeoutMs refuses what is not a duration", () => {
+test("contextTimeoutMs refuses what is not a duration, in both entry points", () => {
   const client = slowClient(() => Promise.resolve(CONTEXT));
-  for (const contextTimeoutMs of [-1, Number.NaN, "5000"]) {
-    assert.throws(
-      () => withKorelyMemory(fakeModel({ text: "x" }), { client, userId: "maria", contextTimeoutMs }),
-      KorelyError,
-      String(contextTimeoutMs),
-    );
+  const makers = [(o) => withKorelyMemory(fakeModel({ text: "x" }), o), (o) => korelyTools(o)];
+  for (const make of makers) {
+    for (const contextTimeoutMs of [-1, Number.NaN, "5000"]) {
+      assert.throws(() => make({ client, userId: "maria", contextTimeoutMs }), KorelyError, String(contextTimeoutMs));
+    }
   }
   assert.equal(client.reads.length, 0);
+});
+
+// ── searchMemory and contextTimeoutMs ───────────────────────────────────────
+
+const UNAVAILABLE =
+  "Memory is unavailable right now: earlier conversations cannot be checked. Answer from this conversation alone.";
+const search = (tools, query = "contact preference") =>
+  tools.searchMemory.execute({ query }, { toolCallId: "c1", messages: [] });
+
+test("searchMemory: past 5 s by default it tells the model the memory is unavailable, and onError hears of it", { timeout: 3000 }, async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: NOW });
+  const client = slowClient(() => new Promise(() => {}));
+  const errors = [];
+  const tools = korelyTools({ client, userId: "maria", onError: (error, { phase }) => errors.push({ phase, error }) });
+  let answer;
+  search(tools).then((out) => (answer = out));
+
+  await until(() => client.reads.length === 1);
+  t.mock.timers.tick(4999);
+  await tick();
+  assert.equal(answer, undefined); // still waiting
+  t.mock.timers.tick(1);
+  await until(() => answer !== undefined);
+
+  assert.equal(answer, `Current date: 2026-10-05\n\n${UNAVAILABLE}`);
+  assert.equal(errors.length, 1);
+  assert.equal(errors[0].phase, "search");
+  assert.ok(errors[0].error instanceof KorelyError);
+  assert.equal(errors[0].error.message, "GET /v1/context took longer than 5000 ms (contextTimeoutMs).");
+});
+
+test("searchMemory: the model reads the unavailable note as the tool's result and goes on", { timeout: 3000 }, async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: NOW });
+  const client = slowClient(() => new Promise(() => {}));
+  const model = fakeModel({ tool: "searchMemory", input: { query: "contact preference" } }, { text: "I can't check right now." });
+  const call = generateText({
+    model,
+    tools: korelyTools({ client, userId: "maria", includeDate: false, onError: () => {} }),
+    stopWhen: stepCountIs(3),
+    prompt: "How do I like to be contacted?",
+  });
+  await until(() => client.reads.length === 1);
+  t.mock.timers.tick(5000);
+  const result = await call;
+
+  assert.equal(result.text, "I can't check right now.");
+  const [toolResult] = result.steps[0].toolResults;
+  assert.equal(toolResult.output, UNAVAILABLE); // a result, not a tool error
+  assert.equal(model.calls.length, 2);
+  assert.ok(JSON.stringify(model.calls[1].prompt).includes("Memory is unavailable right now"));
+});
+
+test("searchMemory: a late answer, or the client's own timeout after the limit, is ignored", { timeout: 3000 }, async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: NOW });
+  let answerLate;
+  const client = slowClient((_params, n) => {
+    if (n === 1) return new Promise((resolve) => (answerLate = resolve));
+    if (n === 2)
+      return new Promise((_resolve, reject) =>
+        setTimeout(() => reject(new KorelyError("Request timed out after 30000 ms (GET /v1/context).")), 30_000),
+      );
+    return Promise.resolve(CONTEXT);
+  });
+  const errors = [];
+  const tools = korelyTools({
+    client,
+    userId: "maria",
+    includeDate: false,
+    contextTimeoutMs: 1000,
+    onError: (error) => errors.push(error.message),
+  });
+  const LIMIT = "GET /v1/context took longer than 1000 ms (contextTimeoutMs).";
+
+  // An answer after the limit.
+  let first;
+  search(tools).then((out) => (first = out));
+  await until(() => client.reads.length === 1);
+  t.mock.timers.tick(1000);
+  await until(() => first !== undefined);
+  assert.equal(first, UNAVAILABLE);
+  answerLate(CONTEXT);
+  await tick();
+  assert.deepEqual(errors, [LIMIT]);
+
+  // The client's own timeout, firing after the limit.
+  let second;
+  search(tools).then((out) => (second = out));
+  await until(() => client.reads.length === 2);
+  t.mock.timers.tick(1000);
+  await until(() => second !== undefined);
+  assert.equal(second, UNAVAILABLE);
+  t.mock.timers.tick(29_000);
+  await tick();
+  assert.deepEqual(errors, [LIMIT, LIMIT]);
+
+  // A read in time answers normally, and leaves no timer to report later.
+  assert.equal(await search(tools), CONTEXT.context);
+  t.mock.timers.tick(5000);
+  await tick();
+  assert.deepEqual(errors, [LIMIT, LIMIT]);
+});
+
+test("searchMemory: 0 or Infinity waits for the client's own timeout", { timeout: 3000 }, async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout", "Date"], now: NOW });
+  for (const contextTimeoutMs of [0, Infinity]) {
+    const client = slowClient(() => new Promise((resolve) => setTimeout(() => resolve(CONTEXT), 6000)));
+    const errors = [];
+    const tools = korelyTools({ client, userId: "maria", includeDate: false, contextTimeoutMs, onError: (e) => errors.push(e) });
+    const pendingAnswer = search(tools);
+    await until(() => client.reads.length === 1);
+    t.mock.timers.tick(6000);
+    assert.equal(await pendingAnswer, CONTEXT.context, String(contextTimeoutMs));
+    assert.deepEqual(errors, [], String(contextTimeoutMs));
+  }
+});
+
+test("searchMemory: a failure inside the limit still rejects, and reaches onError", async () => {
+  const failure = new KorelyError("Connection error: fetch failed");
+  const client = slowClient(() => Promise.reject(failure));
+  const errors = [];
+  const tools = korelyTools({ client, userId: "maria", onError: (error, { phase }) => errors.push({ phase, error }) });
+  await assert.rejects(() => search(tools), (error) => error === failure);
+  assert.deepEqual(errors, [{ phase: "search", error: failure }]);
 });
 
 test("a failed write goes to onError and leaves the reply alone, even when onError throws", async () => {

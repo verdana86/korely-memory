@@ -72,8 +72,11 @@ type StreamResult = Awaited<ReturnType<NonNullable<LanguageModelMiddleware["wrap
 type StreamPart = StreamResult["stream"] extends ReadableStream<infer P> ? P : never;
 type ModelObject = Exclude<LanguageModel, string>;
 
-/** Where a failure happened: reading the context before a call, or storing the turn after it. */
-export type KorelyPhase = "context" | "remember";
+/**
+ * Where a failure happened: reading the context before a call ("context"),
+ * storing the turn after it ("remember"), or the searchMemory tool ("search").
+ */
+export type KorelyPhase = "context" | "remember" | "search";
 
 export interface KorelyToolsOptions {
   /**
@@ -97,6 +100,24 @@ export interface KorelyToolsOptions {
   includeDate?: boolean;
   /** IANA time zone of that date, e.g. "Europe/Rome". Default UTC, the zone of the dates in the facts. */
   timeZone?: string;
+  /**
+   * How long a read of the memory may take, in milliseconds: the context read
+   * before each call, and searchMemory. Default 5000. Past it the call goes on
+   * without the memory, or searchMemory tells the model the memory is
+   * unavailable right now; `onError` hears of it, and the answer that arrives
+   * later is dropped. 0 or Infinity waits for the client's own `timeoutMs`
+   * instead (30 s by default).
+   */
+  contextTimeoutMs?: number;
+  /**
+   * Called when the memory cannot be read or a turn cannot be stored, with
+   * where it happened: "context" (the read before a call, which goes on
+   * without it), "remember" (the write after it), "search" (searchMemory: past
+   * `contextTimeoutMs` it tells the model the memory is unavailable, any other
+   * failure rejects and the AI SDK hands it to the model). Default: a console
+   * warning.
+   */
+  onError?: (error: unknown, info: { phase: KorelyPhase }) => void;
 }
 
 export interface KorelyMemoryOptions extends KorelyToolsOptions {
@@ -108,24 +129,11 @@ export interface KorelyMemoryOptions extends KorelyToolsOptions {
    */
   remember?: boolean;
   /**
-   * How long a call waits for the memory, in milliseconds. Default 5000: past
-   * it the call goes on without the memory, `onError` hears of it (phase
-   * "context"), and the answer that arrives later is dropped. 0 or Infinity
-   * waits for the client's own `timeoutMs` instead (30 s by default).
-   */
-  contextTimeoutMs?: number;
-  /**
    * Hands over the pending write so a serverless runtime keeps the function
    * alive until it is done, e.g. `waitUntil` from "@vercel/functions" or
    * `after` from "next/server". Without it the write is fire-and-forget.
    */
   waitUntil?: (promise: Promise<unknown>) => void;
-  /**
-   * Called when reading the context or storing a turn fails. The model call
-   * goes on either way: without the context, or without the write. Default:
-   * a console warning.
-   */
-  onError?: (error: unknown, info: { phase: KorelyPhase }) => void;
 }
 
 /** The two tools `korelyTools()` returns, ready to spread into `tools`. */
@@ -142,6 +150,9 @@ interface Scope {
   tokenBudget: number;
   /** "Current date: ..." for now, or undefined when the date is off. */
   today?: () => string;
+  /** How long a read may take, or undefined to wait for the client's own timeout. */
+  limit?: number;
+  report: (error: unknown, phase: KorelyPhase) => void;
 }
 
 function scopeOf(options: KorelyToolsOptions, caller: string): Scope {
@@ -159,6 +170,8 @@ function scopeOf(options: KorelyToolsOptions, caller: string): Scope {
     runId: o.runId,
     tokenBudget: o.tokenBudget ?? DEFAULT_TOKEN_BUDGET,
     today: o.includeDate === false ? undefined : dateLine(o.timeZone),
+    limit: contextLimit(o.contextTimeoutMs),
+    report: reporter(o.onError),
   };
 }
 
@@ -294,21 +307,52 @@ function contextLimit(value: number | undefined): number | undefined {
   return ms === 0 || ms >= MAX_TIMER_MS ? undefined : ms;
 }
 
-function reporter(onError: KorelyMemoryOptions["onError"]): (error: unknown, phase: KorelyPhase) => void {
+const DEFAULT_WARNING: Record<KorelyPhase, string> = {
+  context: "korely-memory/ai-sdk: could not read the memory; this call went on without it.",
+  remember: "korely-memory/ai-sdk: could not store the turn.",
+  search: "korely-memory/ai-sdk: searchMemory could not read the memory.",
+};
+
+function reporter(onError: KorelyToolsOptions["onError"]): (error: unknown, phase: KorelyPhase) => void {
   return (error, phase) => {
     try {
       if (onError) onError(error, { phase });
-      else
-        console.warn(
-          phase === "context"
-            ? "korely-memory/ai-sdk: could not read the memory; this call went on without it."
-            : "korely-memory/ai-sdk: could not store the turn.",
-          error,
-        );
+      else console.warn(DEFAULT_WARNING[phase], error);
     } catch {
       // A throwing onError must not fail the user's call.
     }
   };
+}
+
+type ReadOutcome = { ok: true; ctx: Context } | { ok: false; error: unknown; timedOut: boolean };
+
+/**
+ * One read of the memory, given at most `limit` ms. The first outcome wins:
+ * the answer, a failure, or the limit. The promise settles once, and the
+ * callers report and cache only what it settled with, so what comes after
+ * (the answer past the limit, the client's own timeout firing later) reaches
+ * no call and no onError, and leaves nothing to reject unhandled.
+ */
+function readWithin(read: () => Promise<Context>, limit: number | undefined): Promise<ReadOutcome> {
+  return new Promise<ReadOutcome>((resolve) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (outcome: ReadOutcome) => {
+      if (timer !== undefined) clearTimeout(timer);
+      resolve(outcome);
+    };
+    if (limit !== undefined) {
+      timer = setTimeout(() => {
+        const error = new KorelyError(`GET /v1/context took longer than ${limit} ms (contextTimeoutMs).`);
+        finish({ ok: false, error, timedOut: true });
+      }, limit);
+    }
+    Promise.resolve()
+      .then(read)
+      .then(
+        (ctx) => finish({ ok: true, ctx }),
+        (error) => finish({ ok: false, error, timedOut: false }),
+      );
+  });
 }
 
 /**
@@ -320,51 +364,36 @@ function reporter(onError: KorelyMemoryOptions["onError"]): (error: unknown, pha
 export function korelyMemoryMiddleware(options: KorelyMemoryOptions): LanguageModelMiddleware {
   const scope = scopeOf(options, "korelyMemoryMiddleware");
   const remember = options.remember ?? true;
-  const limit = contextLimit(options.contextTimeoutMs);
-  const report = reporter(options.onError);
+  const report = scope.report;
   const waitUntil = options.waitUntil;
   let lastTurn: { key: string; until: number; parts: Promise<Parts | undefined> } | undefined;
 
-  /** The context for this turn: read once, then reused by the turn's other steps. */
+  /**
+   * The context for this turn: read once, then reused by the turn's other
+   * steps. A read that failed or ran past the limit stays a failure until its
+   * window is over; the answer that arrives after the limit never enters here.
+   */
   function contextFor(query: string, turn: number): Promise<Parts | undefined> {
     const key = `${turn}\u0000${query}`;
     if (lastTurn && lastTurn.key === key && Date.now() < lastTurn.until) return lastTurn.parts;
     const entry = { key, until: Date.now() + CONTEXT_REUSE_MS, parts: Promise.resolve<Parts | undefined>(undefined) };
-    entry.parts = new Promise<Parts | undefined>((resolve) => {
-      // The first outcome wins: the answer, a failure, or the limit. What comes
-      // after it (the answer past the limit, the client's own timeout) is
-      // dropped: it reaches no call, no onError, and does not touch the cache,
-      // where a timed-out read stays a failure until its window is over.
-      let done = false;
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const finish = (parts: Parts | undefined, failure?: { error: unknown }) => {
-        if (done) return;
-        done = true;
-        if (timer !== undefined) clearTimeout(timer);
-        if (failure) {
-          entry.until = Date.now() + FAILURE_REUSE_MS;
-          report(failure.error, "context");
-        }
-        resolve(parts);
-      };
-      if (limit !== undefined) {
-        timer = setTimeout(
-          () => finish(undefined, { error: new KorelyError(`GET /v1/context took longer than ${limit} ms (contextTimeoutMs).`) }),
-          limit,
-        );
-      }
-      Promise.resolve()
-        .then(() =>
-          scope.client.getContext({
-            query: clip(query, QUERY_MAX),
-            user_id: scope.userId,
-            agent_id: scope.agentId,
-            token_budget: scope.tokenBudget,
-          }),
-        )
-        .then((ctx) => finish(partsOf(ctx)))
-        .catch((error) => finish(undefined, { error }));
-    });
+    entry.parts = readWithin(
+      () =>
+        scope.client.getContext({
+          query: clip(query, QUERY_MAX),
+          user_id: scope.userId,
+          agent_id: scope.agentId,
+          token_budget: scope.tokenBudget,
+        }),
+      scope.limit,
+    )
+      .then((outcome) => {
+        if (outcome.ok) return partsOf(outcome.ctx);
+        entry.until = Date.now() + FAILURE_REUSE_MS;
+        report(outcome.error, "context");
+        return undefined;
+      })
+      .catch(() => undefined);
     lastTurn = entry;
     return entry.parts;
   }
@@ -491,6 +520,15 @@ export function withKorelyMemory(
 
 type Checked<T> = { success: true; value: T } | { success: false; error: Error };
 
+/** What searchMemory answers when the memory works but holds nothing for the query. */
+const NOTHING_IN_MEMORY = "Nothing in memory bears on this.";
+/**
+ * What it answers past `contextTimeoutMs`. Not the same as finding nothing:
+ * the model must not conclude the user never told it something.
+ */
+const MEMORY_UNAVAILABLE =
+  "Memory is unavailable right now: earlier conversations cannot be checked. Answer from this conversation alone.";
+
 /**
  * Keeps the one field the model may set. A user, agent or run id the model
  * adds is dropped here, and the ids that reach the API come from the app.
@@ -512,11 +550,18 @@ function oneText<K extends string>(value: unknown, key: K, max: number): Checked
  * The user, agent and run come from `options`, never from the model: the
  * tools' inputs have no such field, so the model cannot choose whose memory
  * it reads or writes. Create them per request, with the id of the user
- * making it. A failing call rejects, and the AI SDK hands the error to the
- * model as the tool's result.
+ * making it.
+ *
+ * searchMemory waits for the memory at most `contextTimeoutMs` (5 s by
+ * default), then tells the model the memory is unavailable right now, so a
+ * slow Korely cannot stall the agent; the answer that arrives later is
+ * dropped. Any other failure rejects, and the AI SDK hands the error to the
+ * model as the tool's result. Both reach `onError` (phase "search").
+ * addMemory rejects on failure, and the AI SDK hands the error to the model.
  */
 export function korelyTools(options: KorelyToolsOptions): KorelyTools {
   const scope = scopeOf(options, "korelyTools");
+  const withDate = (text: string) => (scope.today ? `${scope.today()}\n\n${text}` : text);
   return {
     searchMemory: tool({
       description:
@@ -538,17 +583,23 @@ export function korelyTools(options: KorelyToolsOptions): KorelyTools {
         { validate: (value) => oneText(value, "query", QUERY_MAX) },
       ),
       execute: async ({ query }) => {
-        const ctx = await scope.client.getContext({
-          query,
-          user_id: scope.userId,
-          agent_id: scope.agentId,
-          token_budget: scope.tokenBudget,
-        });
-        const block =
-          typeof ctx?.context === "string" && ctx.context.trim()
-            ? ctx.context
-            : "Nothing in memory bears on this.";
-        return scope.today ? `${scope.today()}\n\n${block}` : block;
+        const outcome = await readWithin(
+          () =>
+            scope.client.getContext({
+              query,
+              user_id: scope.userId,
+              agent_id: scope.agentId,
+              token_budget: scope.tokenBudget,
+            }),
+          scope.limit,
+        );
+        if (!outcome.ok) {
+          scope.report(outcome.error, "search");
+          if (!outcome.timedOut) throw outcome.error;
+          return withDate(MEMORY_UNAVAILABLE);
+        }
+        const ctx = outcome.ctx;
+        return withDate(typeof ctx?.context === "string" && ctx.context.trim() ? ctx.context : NOTHING_IN_MEMORY);
       },
     }),
     addMemory: tool({

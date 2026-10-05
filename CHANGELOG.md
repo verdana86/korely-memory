@@ -39,15 +39,17 @@ npm:
   `withKorelyMemory(model, { userId })` reads `/v1/context` for the latest
   user message before each call and adds it as system messages after the
   app's own: the stable part first, then `Current date: YYYY-MM-DD` and the
-  part this question brought. It waits at most `contextTimeoutMs` (5000 ms by
-  default) for that read, then goes on without it and reports the timeout to
-  `onError`; the late answer is dropped. After a reply that ends the turn it
-  stores the user message and the reply as one memory, without waiting for
-  the write.
-  `korelyTools({ userId })` gives the model `searchMemory` and `addMemory`,
-  scoped to the user the app names. `ai` is an optional peer dependency
-  (`^5 || ^6 || ^7`) and the core entry still loads nothing: with npm, an app
-  on `ai` 4 or older needs `--legacy-peer-deps` to install this version.
+  part this question brought. It waits at most `contextTimeoutMs` (5000 ms
+  by default) for that read, then goes on without it and reports the timeout
+  to `onError`; the late answer is dropped. After a reply that ends the turn
+  it stores the user message and the reply as one memory, without waiting
+  for the write. `korelyTools({ userId })` gives the model `searchMemory`
+  and `addMemory`, scoped to the user the app names; `searchMemory` also
+  waits at most `contextTimeoutMs`, then tells the model the memory is
+  unavailable right now and reports to `onError` (phase `search`). `ai` is
+  an optional peer dependency (`^5 || ^6 || ^7`) and the core entry still
+  loads nothing: with npm, an app on `ai` 4 or older needs
+  `--legacy-peer-deps` to install this version.
 - `Context` types the fields `/v1/context` already sends: `stable`,
   `volatile`, `stable_hash`, `degraded` and `degraded_parts`.
 

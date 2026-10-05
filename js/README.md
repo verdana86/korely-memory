@@ -82,8 +82,11 @@ Options: `userId` (required), `agentId`, `runId`, `client` (a configured
 
 To let the model decide when to look something up or save it, give it the
 tools instead: `tools: korelyTools({ userId })` adds `searchMemory` and
-`addMemory`. Either way the user comes from your code: the model has no field
-to name another one.
+`addMemory`, and takes the same options except `remember` and `waitUntil`.
+`searchMemory` also waits at most `contextTimeoutMs`, then tells the model the
+memory is unavailable right now (`onError` hears of it, phase `"search"`).
+Either way the user comes from your code: the model has no field to name
+another one.
 
 ## Methods
 
