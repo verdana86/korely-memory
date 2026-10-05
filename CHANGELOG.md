@@ -8,16 +8,7 @@ The server side of the entries marked "API" shipped on 2026-09-28. Against an
 older server these clients keep working: the old field names are still read,
 and a batch `timestamp` is refused there with a 422.
 
-## Unreleased
-
-Found by the public conformance test of 2026-09-29 (production, docs as written):
-- `korely facts --json` answers `{"facts": [...], "total": n}` and `korely search --json` answers `{"results": [...]}`, the API's own shapes, so the documented `jq '.facts[]'` and `jq '.results[0].snippet'` work (they were bare lists).
-- With `--json`, an error is a JSON object on stderr with `code`, `message` and `status` (it was the plain line).
-- `korely add --timestamp DATE`: the facts take the date the events happened, like `add(timestamp=)` in the SDK.
-- `get_context("...", user_id=...)`: the query may be passed by position (it raised TypeError); `getContext("...")` in the Node SDK takes a bare string too (it answered 422).
-- README quickstart: a city move instead of "switched to Rust", which the hosted engine does not supersede yet (being measured).
-
-Python:
+## Python 0.1.16 (2026-10-05)
 
 - LangGraph integration, `pip install 'korely-memory[langgraph]'` (Python
   3.10+, LangGraph's own floor; the core package keeps zero dependencies and
@@ -38,8 +29,14 @@ Python:
   implemented with the standard library. It used to import `mcp`, which needs
   Python 3.10 and whose 2.0 removed the module the server used. The `[mcp]`
   extra stays, empty.
+- Found by the public conformance test of 2026-09-29 (production, docs as written):
+  - `korely facts --json` answers `{"facts": [...], "total": n}` and `korely search --json` answers `{"results": [...]}`, the API's own shapes, so the documented `jq '.facts[]'` and `jq '.results[0].snippet'` work (they were bare lists).
+  - With `--json`, an error is a JSON object on stderr with `code`, `message` and `status` (it was the plain line).
+  - `korely add --timestamp DATE`: the facts take the date the events happened, like `add(timestamp=)` in the SDK.
+  - `get_context("...", user_id=...)`: the query may be passed by position (it raised TypeError).
+  - README quickstart: a city move instead of "switched to Rust", which the hosted engine does not supersede yet (being measured).
 
-npm:
+## Node 0.1.8 (2026-10-05)
 
 - The README documents `baseUrl` and `KORELY_BASE_URL` for a self-hosted
   install, and `NODE_EXTRA_CA_CERTS` for a private CA.
@@ -62,6 +59,7 @@ npm:
   `--legacy-peer-deps` to install this version.
 - `Context` types the fields `/v1/context` already sends: `stable`,
   `volatile`, `stable_hash`, `degraded` and `degraded_parts`.
+- `getContext("...")` takes a bare string (it answered 422), found by the public conformance test of 2026-09-29.
 
 ## Python 0.1.15 (2026-09-28)
 
