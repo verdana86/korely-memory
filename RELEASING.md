@@ -14,6 +14,10 @@ cd python && PYTHONPATH=. python3 -m unittest discover -s tests
 # Node: `npm ci`, non `npm install`
 cd js && npm ci && npm run build && npm test
 
+# korely-memory/ai-sdk dichiara `ai` ^5 || ^6 || ^7 e `npm test` gira sulla 7:
+# gli stessi test sulle altre due, poi `npm ci` rimette il lockfile
+cd js && for m in 5 6; do npm install --no-save "ai@^$m" && node --test test/ai-sdk.test.mjs; done; npm ci
+
 # n8n (senza rete; test/run.mjs invece vuole un server vero)
 cd n8n && npm ci && npm run build && npm test
 ```

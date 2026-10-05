@@ -9,7 +9,9 @@
     "llm",
     "rag",
     "knowledge-graph",
-    "typescript"
+    "typescript",
+    "vercel-ai-sdk",
+    "ai-sdk"
   ],
   "homepage": "https://korely.ai/agents",
   "repository": {
@@ -31,6 +33,18 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
+    },
+    "./ai-sdk": {
+      "types": "./dist/ai-sdk.d.ts",
+      "import": "./dist/ai-sdk.js",
+      "require": "./dist/ai-sdk.cjs"
+    }
+  },
+  "typesVersions": {
+    "*": {
+      "ai-sdk": [
+        "./dist/ai-sdk.d.ts"
+      ]
     }
   },
   "files": [
@@ -48,8 +62,17 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {},
+  "peerDependencies": {
+    "ai": "^5.0.0 || ^6.0.0 || ^7.0.0"
+  },
+  "peerDependenciesMeta": {
+    "ai": {
+      "optional": true
+    }
+  },
   "devDependencies": {
     "@types/node": "^22.9.0",
+    "ai": "^7.0.127",
     "tsup": "^8.3.5",
     "typescript": "^5.6.3"
   }

@@ -35,6 +35,18 @@ npm:
   install, and `NODE_EXTRA_CA_CERTS` for a private CA.
 - `new Korely({ base_url })` (the Python spelling) throws instead of being
   ignored, which sent the requests to the hosted service.
+- `korely-memory/ai-sdk`, for the Vercel AI SDK 5, 6 and 7.
+  `withKorelyMemory(model, { userId })` reads `/v1/context` for the latest
+  user message before each call and adds it as system messages after the
+  app's own: the stable part first, then `Current date: YYYY-MM-DD` and the
+  part this question brought. After a reply that ends the turn it stores the
+  user message and the reply as one memory, without waiting for the write.
+  `korelyTools({ userId })` gives the model `searchMemory` and `addMemory`,
+  scoped to the user the app names. `ai` is an optional peer dependency
+  (`^5 || ^6 || ^7`) and the core entry still loads nothing: with npm, an app
+  on `ai` 4 or older needs `--legacy-peer-deps` to install this version.
+- `Context` types the fields `/v1/context` already sends: `stable`,
+  `volatile`, `stable_hash`, `degraded` and `degraded_parts`.
 
 ## Python 0.1.15 (2026-09-28)
 

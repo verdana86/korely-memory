@@ -117,6 +117,8 @@ await korely.add("Maria downgraded to Free.", { user_id: "maria" });
 const ctx = await korely.getContext({ query: "what plan is Maria on?", user_id: "maria" });
 ```
 
+With the Vercel AI SDK, `withKorelyMemory(model, { userId })` from `korely-memory/ai-sdk` gives any model this memory in one line: see [js/README.md](js/README.md#vercel-ai-sdk).
+
 ## CLI
 
 ```bash

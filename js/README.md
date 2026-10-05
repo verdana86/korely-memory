@@ -33,6 +33,57 @@ console.log(ctx.context); // drop straight into your system prompt
 That's the whole loop: `add` to remember, `getContext` (or `search`) to recall.
 Behind `add`, Korely extracts typed, bi-temporal facts; you just hand it text.
 
+## Vercel AI SDK
+
+`korely-memory/ai-sdk` gives any [AI SDK](https://ai-sdk.dev) model (AI SDK 5,
+6 or 7) a memory of each of your users. Install `ai` next to this package; the
+core client never loads it.
+
+```ts
+// app/api/chat/route.ts
+import {
+  convertToModelMessages,
+  createUIMessageStreamResponse,
+  streamText,
+  toUIMessageStream,
+  type UIMessage,
+} from "ai";
+import { waitUntil } from "@vercel/functions";
+import { withKorelyMemory } from "korely-memory/ai-sdk";
+
+export async function POST(req: Request) {
+  const { messages }: { messages: UIMessage[] } = await req.json();
+  const userId = await currentUserId(req); // from your auth, never from the request body
+
+  const result = streamText({
+    model: withKorelyMemory("anthropic/claude-sonnet-5.5", { userId, waitUntil }),
+    instructions: "You are the support assistant of Acme.",
+    messages: await convertToModelMessages(messages),
+  });
+
+  return createUIMessageStreamResponse({ stream: toUIMessageStream({ stream: result.stream }) });
+}
+```
+
+Before each call, the wrapper reads `getContext` for the latest user message
+and adds what Korely knows as system messages after your own: first the part
+that is the same on every call, so the provider's prompt cache keeps it, then
+`Current date: YYYY-MM-DD` and the facts and memories this question brought.
+After a reply that ends the turn, it stores the user message and the reply as
+one memory, without waiting for the write (`waitUntil` keeps a serverless
+function alive until it lands). If Korely cannot be reached, the call goes on
+without memory and `onError` is told; the read waits at most the client's
+`timeoutMs` (30 s, unless you pass a `client` with a shorter one).
+
+Options: `userId` (required), `agentId`, `runId`, `client` (a configured
+`Korely`, default `new Korely()`), `tokenBudget` (800), `includeDate` (true),
+`timeZone` ("UTC"), `remember` (true), `waitUntil`, `onError`.
+
+To let the model decide when to look something up or save it, give it the
+tools instead: `tools: korelyTools({ userId })` adds `searchMemory` and
+`addMemory`. Either way the user comes from your code: the model has no field
+to name another one.
+
 ## Methods
 
 Every method maps to one REST endpoint.

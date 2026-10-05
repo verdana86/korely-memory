@@ -129,6 +129,26 @@ export interface Context {
   context: string;
   tokens: number;
   sources: string[];
+  /**
+   * True when part of the block could not be retrieved the way a healthy
+   * request retrieves it; the block then closes with a NOTE saying so to the
+   * model. Servers before 2026-09-28 do not send it.
+   */
+  degraded?: boolean;
+  /** Which part, when `degraded`: "facts" and/or "memories". */
+  degraded_parts?: string[];
+  /**
+   * The head of `context` that does not depend on the question (the reader
+   * note; with the profile on, the profile too): the same text from one call
+   * to the next. Put it in the system prompt, where the provider's prompt
+   * cache can reuse it. `context` is `stable` and `volatile` joined by a blank
+   * line, either side possibly empty. Servers before 2026-10-01 do not send it.
+   */
+  stable?: string;
+  /** The rest of `context`: the facts and memories for this question, and the NOTE when `degraded`. */
+  volatile?: string;
+  /** SHA-256 (hex) of `stable`: the same value means the same prefix, so a cached system prompt is still valid. */
+  stable_hash?: string;
 }
 
 /**
