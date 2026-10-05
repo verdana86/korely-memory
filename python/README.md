@@ -281,7 +281,9 @@ user, so Korely extracts facts from it and `korely_context()` and the tools
 find it. The memory's text is the value's `content`, `text`, `memory` or
 `data` string, else one `key: value` line per field (`index=[...]` on a put,
 or `index_fields=`, picks other fields). The value itself travels in the
-memory's metadata and comes back exactly.
+memory's metadata and comes back exactly. Each `put` is a write like any
+other: it is digested into facts and counts in your plan's writes, so the
+store suits what a user said or decided, not caches or scratch state.
 
 | Operation | On Korely |
 |---|---|
