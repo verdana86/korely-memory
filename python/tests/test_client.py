@@ -1774,3 +1774,48 @@ class SigningUpWithoutAKey(unittest.TestCase):
         for name in sync:
             with self.subTest(method=name):
                 self.assertTrue(inspect.iscoroutinefunction(getattr(AsyncKorely, name, None)))
+
+
+class TheContextInTwoParts(unittest.TestCase):
+    """/v1/context sends `stable`, `volatile`, `stable_hash`, `degraded` and
+    `degraded_parts` on both products; the JS client typed them in 0.1.8 and
+    this one dropped them on the floor (`_take` keeps declared fields only)."""
+
+    _BODY = {"context": "Note.\n\n## Known facts\n- maria lives_in Milan", "tokens": 18,
+             "sources": ["fct_1"], "degraded": True, "degraded_parts": ["memories"],
+             "stable": "Note.", "volatile": "## Known facts\n- maria lives_in Milan",
+             "stable_hash": "a" * 64}
+
+    def test_every_field_arrives(self):
+        rec = _Recorder().queue(200, dict(self._BODY))
+        ctx = _client(rec).get_context("where does maria live?", user_id="maria")
+        self.assertEqual((ctx.stable, ctx.volatile, ctx.stable_hash),
+                         ("Note.", "## Known facts\n- maria lives_in Milan", "a" * 64))
+        self.assertIs(ctx.degraded, True)
+        self.assertEqual(ctx.degraded_parts, ["memories"])
+        self.assertEqual(ctx.context, ctx.stable + "\n\n" + ctx.volatile)
+
+    def test_an_older_server_leaves_them_unset(self):
+        ctx = Context.from_dict({"context": "c", "tokens": 1, "sources": []})
+        self.assertIsNone(ctx.degraded)
+        self.assertEqual(ctx.degraded_parts, [])
+        self.assertIsNone(ctx.stable)
+        self.assertIsNone(ctx.volatile)
+        self.assertIsNone(ctx.stable_hash)
+
+    def test_positional_construction_means_what_it_meant(self):
+        ctx = Context("c", 3, ["fct_1"])
+        self.assertEqual((ctx.context, ctx.tokens, ctx.sources), ("c", 3, ["fct_1"]))
+
+    def test_the_cli_json_carries_them(self):
+        import io
+        from contextlib import redirect_stdout
+        from korely_memory import cli
+
+        rec = _Recorder().queue(200, dict(self._BODY))
+        out = io.StringIO()
+        with redirect_stdout(out):
+            cli.cmd_context(_client(rec), cli.build_parser().parse_args(
+                ["context", "where?", "--json"]))
+        data = json.loads(out.getvalue())
+        self.assertEqual((data["stable_hash"], data["degraded_parts"]), ("a" * 64, ["memories"]))

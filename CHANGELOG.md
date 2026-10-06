@@ -52,6 +52,13 @@ Both clients:
 - On the Self-hosted, which has neither `/v1/account` nor `/v1/agents/init`,
   both calls answer 404, or 405 where the install serves its dashboard.
 
+Python:
+
+- `Context` keeps `stable`, `volatile`, `stable_hash`, `degraded` and
+  `degraded_parts`, which both servers send and the JS client typed in 0.1.8:
+  they were dropped, because a model keeps only the fields it declares. Each
+  is None when an older server does not send it.
+
 ## Python 0.1.17 and npm 0.1.9 (2026-10-06)
 
 Both clients:

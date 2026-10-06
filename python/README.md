@@ -150,6 +150,13 @@ correction superseded (the corrected one, plus any the contradiction check
 closed). A correction that restates the fact as it already stands supersedes
 nothing: the same fact comes back, reconfirmed, with `invalidated == []`.
 
+`get_context()` returns the block in `context`, and in two parts: `stable`,
+the head that is the same from one call to the next (put it in the system
+prompt, where the model provider's prompt cache reuses it; `stable_hash` says
+when it changed), and `volatile`, the facts and memories for this question.
+`degraded` is True when part of the block could not be retrieved, and
+`degraded_parts` says which.
+
 `get_facts()` returns a list of `Fact` that also carries `.total`, the number of
 facts matching the filters across all pages, so `offset` knows when to stop.
 `get_all()`, `get_facts()`, `users()`, `list_agents()` and `events()` take a

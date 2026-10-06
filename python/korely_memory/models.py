@@ -192,9 +192,36 @@ class BulkReceipt:
 
 @dataclass
 class Context:
+    """The block ``get_context()`` assembles.
+
+    ``context`` is the whole block. Both servers also send it in two parts,
+    and say when part of it is missing; the JS client typed these in 0.1.8,
+    and this one dropped them until 2026-10-06, because ``_take`` keeps only
+    declared fields. Each is None when the server does not send it (before
+    2026-09-28 for ``degraded``, before 2026-10-01 for the parts).
+
+    - ``stable``: the head of ``context`` that does not depend on the question
+      (the reader note; with the profile on, the profile too), the same text
+      from one call to the next. Put it in the system prompt, where the model
+      provider's prompt cache can reuse it.
+    - ``volatile``: the rest, the facts and memories for this question, and
+      the closing NOTE when ``degraded``. ``context`` is ``stable`` and
+      ``volatile`` joined by a blank line, either side possibly empty.
+    - ``stable_hash``: SHA-256 (hex) of ``stable``; the same value means the
+      same prefix, so a cached system prompt is still valid.
+    - ``degraded``: True when part of the block could not be retrieved the
+      way a healthy request retrieves it; the block then ends with a NOTE
+      saying so to the model. ``degraded_parts`` says which: ``facts``
+      and/or ``memories``.
+    """
     context: str = ""
     tokens: int = 0
     sources: List[str] = field(default_factory=list)
+    degraded: Optional[bool] = None
+    degraded_parts: List[str] = field(default_factory=list)
+    stable: Optional[str] = None
+    volatile: Optional[str] = None
+    stable_hash: Optional[str] = None
 
     @classmethod
     def from_dict(cls, d: dict) -> "Context":
