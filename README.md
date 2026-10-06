@@ -98,7 +98,9 @@ curl -X POST https://api.korely.ai/v1/agents/init \
   -d '{"agent_caller": "your-name-here"}'
 ```
 
-The response carries a `kor_live_` key. Set it as `KORELY_API_KEY` and the SDK, the CLI, and the REST API all authenticate with it.
+The response carries a `kor_live_` key. Set it as `KORELY_API_KEY` and the SDK, the CLI, and the REST API all authenticate with it. From code, `Korely.init_agent()` (Python) and `Korely.initAgent()` (JS) make the same call.
+
+The account behind that key has no login: the key is the account. Keep it, because it is also the only way to delete the account (`korely delete-account --yes`, or `delete_account(confirm=True)` in the SDK).
 
 Or let the CLI do it for you. `korely init` saves the key to `~/.korely/config.json`, and the SDK reads it from there when `KORELY_API_KEY` is not set, so this is enough to get going:
 

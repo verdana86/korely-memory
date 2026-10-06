@@ -24,6 +24,7 @@ import type {
   AddFactTripleOptions,
   AddOptions,
   AgentDeleteReceipt,
+  AgentInitResult,
   AgentScope,
   AgentsPage,
   AuditEvent,
@@ -77,6 +78,10 @@ export interface KorelyOptions {
   /** Inject a fetch implementation (mainly for testing / older runtimes). */
   fetch?: typeof fetch;
 }
+
+/** Where and how `Korely.initAgent()` signs up: the client options a call
+ *  without a key can use. */
+export type InitAgentOptions = Pick<KorelyOptions, "region" | "baseUrl" | "timeoutMs" | "fetch">;
 
 /** add() accepts a string or a list of chat messages, joined to one block. */
 function coerceContent(content: string | Message[]): string {
@@ -290,6 +295,150 @@ function refuseAMismatchedPair(apiKey: string, baseUrl: string): void {
   }
 }
 
+/** What one exchange needs: where, how long, with which fetch, and the key
+ *  (none only for `Korely.initAgent()`, the call that is how a key is got). */
+interface Transport {
+  baseUrl: string;
+  timeoutMs: number;
+  fetchImpl: typeof fetch;
+  apiKey?: string;
+}
+
+/** One HTTP exchange: the answer's JSON, or the error the status maps to. */
+async function exchange(
+  t: Transport,
+  method: string,
+  path: string,
+  opts: { params?: Params; body?: unknown } = {},
+): Promise<any> {
+  let url = t.baseUrl + path;
+  if (opts.params) {
+    const qs = new URLSearchParams();
+    for (const [k, v] of Object.entries(opts.params)) {
+      if (v !== undefined && v !== null) qs.append(k, String(v));
+    }
+    const s = qs.toString();
+    if (s) url += "?" + s;
+  }
+
+  const headers: Record<string, string> = {
+    Accept: "application/json",
+    "X-Korely-Client": `korely-js/${VERSION}`,
+  };
+  // No key only for initAgent(): that call is how a key is obtained, and an
+  // empty `Bearer ` is not "no key" to a server.
+  if (t.apiKey) headers.Authorization = `Bearer ${t.apiKey}`;
+  let body: string | undefined;
+  if (opts.body !== undefined) {
+    body = JSON.stringify(opts.body);
+    headers["Content-Type"] = "application/json";
+  }
+
+  // The timer covers the whole exchange, body included. It used to be
+  // cleared as soon as the headers arrived, so a server that sent headers
+  // and then stalled kept `await resp.text()` waiting forever, whatever
+  // `timeoutMs` said.
+  const controller = new AbortController();
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    controller.abort();
+  }, t.timeoutMs);
+  const failed = (e: any): KorelyError =>
+    new KorelyError(
+      timedOut
+        ? `Request timed out after ${t.timeoutMs} ms (${method} ${path}).`
+        : `Connection error: ${e?.message ?? String(e)}`,
+    );
+  let resp: Response;
+  let text: string;
+  try {
+    try {
+      resp = await t.fetchImpl(url, {
+        method,
+        headers,
+        body,
+        signal: controller.signal,
+      });
+    } catch (e: any) {
+      throw failed(e);
+    }
+    try {
+      text = await resp.text();
+    } catch (e: any) {
+      throw failed(e);
+    }
+  } finally {
+    clearTimeout(timer);
+  }
+
+  let parsed: any = {};
+  if (text) {
+    try {
+      parsed = JSON.parse(text);
+    } catch {
+      if (resp.ok) {
+        // A 200 carrying a proxy's HTML page is not a result.
+        throw new KorelyError(
+          `The server answered ${resp.status} to ${method} ${path} with a body ` +
+            `that is not JSON: ${JSON.stringify(text.slice(0, 200))}`,
+          { status: resp.status },
+        );
+      }
+      parsed = { message: text };
+    }
+  }
+  if (!resp.ok) {
+    raiseFor(resp.status, parsed, resp.headers.get("retry-after"));
+  }
+  return parsed && typeof parsed === "object" ? parsed : {};
+}
+
+/** The error an answer that is not a success maps to, by status and code. */
+function raiseFor(status: number, body: any, retryAfter: string | null): never {
+  const { code, message: msg } = errorFields(status, body);
+  // Retry-After on every status (2026-10-06), not only on a 429: the Cloud's
+  // 503 `writes_paused` sends it too, and it is the one number that says
+  // when writes resume.
+  const opts = {
+    status,
+    code,
+    retryAfter: retryAfterSeconds(retryAfter ?? body?.retry_after ?? body?._retry_after),
+  };
+  if (status === 401) throw new AuthenticationError(msg, opts);
+  if (status === 403) throw new NamespaceForbiddenError(msg, opts);
+  if (status === 404) throw new NotFoundError(msg, opts);
+  if (status === 409) {
+    // Only `stale_write` is a stale write (2026-10-06). Every 409 was thrown
+    // as StaleWriteError, so `deleteAccount()`'s `account_has_login` read as
+    // a lost update. Both servers name `stale_write` on every stale update,
+    // the self-hosted one since its first release (inside `detail` on an
+    // older install, which errorFields reads).
+    if (code === "stale_write") throw new StaleWriteError(msg, opts);
+    throw new ConflictError(msg, opts);
+  }
+  if (status === 429) {
+    // `too_many_batches` has its own class (2026-10-06): with no Retry-After
+    // it was indistinguishable by class from a monthly `quota_exceeded`, and
+    // it clears as soon as a batch finishes.
+    if (code === "too_many_batches") throw new TooManyBatchesError(msg, opts);
+    throw new QuotaExceededError(msg, opts);
+  }
+  throw new APIError(msg, opts);
+}
+
+/** `base_url` is the Python spelling. In TypeScript it does not compile; in
+ *  plain JavaScript it would be ignored, and the requests would go to the
+ *  hosted service instead of the server the caller meant. */
+function refusePythonSpelling(opts: object | undefined): void {
+  if (opts && Object.prototype.hasOwnProperty.call(opts, "base_url")) {
+    throw new KorelyError(
+      "Unknown option base_url: the JavaScript SDK takes baseUrl " +
+        "(new Korely({ baseUrl: 'https://...' })) or the KORELY_BASE_URL env var.",
+    );
+  }
+}
+
 export class Korely {
   readonly apiKey: string;
   readonly baseUrl: string;
@@ -297,15 +446,7 @@ export class Korely {
   private readonly fetchImpl: typeof fetch;
 
   constructor(opts: KorelyOptions = {}) {
-    // `base_url` is the Python spelling. In TypeScript it does not compile; in
-    // plain JavaScript it would be ignored, and the requests would go to the
-    // hosted service instead of the server the caller meant.
-    if (opts && Object.prototype.hasOwnProperty.call(opts, "base_url")) {
-      throw new KorelyError(
-        "Unknown option base_url: the JavaScript SDK takes baseUrl " +
-          "(new Korely({ baseUrl: 'https://...' })) or the KORELY_BASE_URL env var.",
-      );
-    }
+    refusePythonSpelling(opts);
     const envKey =
       typeof process !== "undefined" ? process.env?.KORELY_API_KEY : undefined;
     const key = opts.apiKey ?? envKey;
@@ -341,123 +482,62 @@ export class Korely {
     this.fetchImpl = f;
   }
 
+  /**
+   * POST /v1/agents/init, with no key: sign up for a free hobby key.
+   *
+   * The one call that runs without a key, because it is how one is obtained,
+   * so it is static: `await Korely.initAgent("my-app")`, then
+   * `new Korely({ apiKey: result.api_key })`. `agentCaller` is a free-form
+   * label of who signed up, kept for your reference. The answer carries the
+   * key, shown once (save it), its `tier`, `region`, `scopes` and `quotas`.
+   * The account it creates has no login: the key is the account, and
+   * `deleteAccount({ confirm: true })` closes it.
+   *
+   * Cloud only. The server is `baseUrl`, else KORELY_BASE_URL, else the
+   * region's. Refusals: 403 `signup_disabled` (NamespaceForbiddenError) when
+   * self-signup is closed; 429 `signup_rate_limited` (QuotaExceededError, with
+   * `retryAfter`) past the new accounts a network may open in a day. The
+   * Self-hosted has no such route and answers 404, or 405 where it serves its
+   * dashboard: its keys come from its own dashboard.
+   */
+  static async initAgent(agentCaller?: string, opts: InitAgentOptions = {}): Promise<AgentInitResult> {
+    refusePythonSpelling(opts);
+    if (agentCaller != null && typeof agentCaller !== "string") {
+      // `initAgent({ baseUrl })` with the options first would send them as the
+      // label, and the server would refuse a body it cannot read.
+      throw new KorelyError(
+        `agentCaller is a label, a string, not ${Array.isArray(agentCaller) ? "an array" : `a ${typeof agentCaller}`}: ` +
+          "Korely.initAgent('my-app', { baseUrl }).",
+      );
+    }
+    const envBase =
+      typeof process !== "undefined" ? process.env?.KORELY_BASE_URL : undefined;
+    const baseUrl = (
+      opts.baseUrl ??
+      envBase ??
+      REGIONS[opts.region ?? "eu"] ??
+      REGIONS.eu
+    ).replace(/\/+$/, "");
+    const fetchImpl = opts.fetch ?? (globalThis.fetch as typeof fetch | undefined);
+    if (!fetchImpl) {
+      throw new KorelyError(
+        "No fetch available. On Node < 18 pass a fetch implementation via { fetch }.",
+      );
+    }
+    return exchange({ baseUrl, timeoutMs: opts.timeoutMs ?? 30000, fetchImpl },
+      "POST", "/v1/agents/init", { body: { agent_caller: agentCaller ?? undefined } });
+  }
+
   // ── transport ─────────────────────────────────────────────────────────────
-  private async request(
+  private request(
     method: string,
     path: string,
     opts: { params?: Params; body?: unknown } = {},
   ): Promise<any> {
-    let url = this.baseUrl + path;
-    if (opts.params) {
-      const qs = new URLSearchParams();
-      for (const [k, v] of Object.entries(opts.params)) {
-        if (v !== undefined && v !== null) qs.append(k, String(v));
-      }
-      const s = qs.toString();
-      if (s) url += "?" + s;
-    }
-
-    const headers: Record<string, string> = {
-      Authorization: `Bearer ${this.apiKey}`,
-      Accept: "application/json",
-      "X-Korely-Client": `korely-js/${VERSION}`,
-    };
-    let body: string | undefined;
-    if (opts.body !== undefined) {
-      body = JSON.stringify(opts.body);
-      headers["Content-Type"] = "application/json";
-    }
-
-    // The timer covers the whole exchange, body included. It used to be
-    // cleared as soon as the headers arrived, so a server that sent headers
-    // and then stalled kept `await resp.text()` waiting forever, whatever
-    // `timeoutMs` said.
-    const controller = new AbortController();
-    let timedOut = false;
-    const timer = setTimeout(() => {
-      timedOut = true;
-      controller.abort();
-    }, this.timeoutMs);
-    const failed = (e: any): KorelyError =>
-      new KorelyError(
-        timedOut
-          ? `Request timed out after ${this.timeoutMs} ms (${method} ${path}).`
-          : `Connection error: ${e?.message ?? String(e)}`,
-      );
-    let resp: Response;
-    let text: string;
-    try {
-      try {
-        resp = await this.fetchImpl(url, {
-          method,
-          headers,
-          body,
-          signal: controller.signal,
-        });
-      } catch (e: any) {
-        throw failed(e);
-      }
-      try {
-        text = await resp.text();
-      } catch (e: any) {
-        throw failed(e);
-      }
-    } finally {
-      clearTimeout(timer);
-    }
-
-    let parsed: any = {};
-    if (text) {
-      try {
-        parsed = JSON.parse(text);
-      } catch {
-        if (resp.ok) {
-          // A 200 carrying a proxy's HTML page is not a result.
-          throw new KorelyError(
-            `The server answered ${resp.status} to ${method} ${path} with a body ` +
-              `that is not JSON: ${JSON.stringify(text.slice(0, 200))}`,
-            { status: resp.status },
-          );
-        }
-        parsed = { message: text };
-      }
-    }
-    if (!resp.ok) {
-      this.raise(resp.status, parsed, resp.headers.get("retry-after"));
-    }
-    return parsed && typeof parsed === "object" ? parsed : {};
-  }
-
-  private raise(status: number, body: any, retryAfter: string | null): never {
-    const { code, message: msg } = errorFields(status, body);
-    // Retry-After on every status (2026-10-06), not only on a 429: the Cloud's
-    // 503 `writes_paused` sends it too, and it is the one number that says
-    // when writes resume.
-    const opts = {
-      status,
-      code,
-      retryAfter: retryAfterSeconds(retryAfter ?? body?.retry_after ?? body?._retry_after),
-    };
-    if (status === 401) throw new AuthenticationError(msg, opts);
-    if (status === 403) throw new NamespaceForbiddenError(msg, opts);
-    if (status === 404) throw new NotFoundError(msg, opts);
-    if (status === 409) {
-      // Only `stale_write` is a stale write (2026-10-06). Every 409 was thrown
-      // as StaleWriteError, so `deleteAccount()`'s `account_has_login` read as
-      // a lost update. Both servers name `stale_write` on every stale update,
-      // the self-hosted one since its first release (inside `detail` on an
-      // older install, which errorFields reads).
-      if (code === "stale_write") throw new StaleWriteError(msg, opts);
-      throw new ConflictError(msg, opts);
-    }
-    if (status === 429) {
-      // `too_many_batches` has its own class (2026-10-06): with no Retry-After
-      // it was indistinguishable by class from a monthly `quota_exceeded`, and
-      // it clears as soon as a batch finishes.
-      if (code === "too_many_batches") throw new TooManyBatchesError(msg, opts);
-      throw new QuotaExceededError(msg, opts);
-    }
-    throw new APIError(msg, opts);
+    return exchange(
+      { baseUrl: this.baseUrl, timeoutMs: this.timeoutMs, fetchImpl: this.fetchImpl, apiKey: this.apiKey },
+      method, path, opts,
+    );
   }
 
   // ── the key and its account ───────────────────────────────────────────────

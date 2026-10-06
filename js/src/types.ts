@@ -309,6 +309,17 @@ export interface PingResponse {
   scopes: string[];
 }
 
+/** What `Korely.initAgent()` answers: a new hobby key and what it buys. */
+export interface AgentInitResult {
+  /** The key, shown this once and never again: save it. */
+  api_key: string;
+  tier: string;
+  region: string;
+  scopes: string[];
+  /** The hobby allowance: writes_per_month, queries_per_month, agents, the monthly AI budget. */
+  quotas: Record<string, unknown>;
+}
+
 /**
  * What `deleteAccount()` removed. `deleted` is true: the account and every key
  * of it are gone, the one this client holds included.

@@ -41,6 +41,7 @@ from .client import Korely
 from .models import (
     AccountDeleteReceipt,
     AgentDeleteReceipt,
+    AgentInitResult,
     AgentsPage,
     AuditEvent,
     AuditPage,
@@ -79,6 +80,12 @@ class AsyncKorely:
         self._sync = Korely(api_key=api_key, region=region,
                             base_url=base_url, timeout=timeout,
                             ca_file=ca_file, verify=verify)
+
+    @classmethod
+    async def init_agent(cls, agent_caller: Optional[str] = None, **kw) -> AgentInitResult:
+        """``Korely.init_agent``, awaitable: a class method too, since it is
+        the call that runs before there is a key to build a client with."""
+        return await asyncio.to_thread(Korely.init_agent, agent_caller, **kw)
 
     @property
     def api_key(self) -> str:

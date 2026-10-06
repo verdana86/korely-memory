@@ -1669,3 +1669,108 @@ class DeletingTheAccountOfAKey(unittest.TestCase):
         with self.assertRaises(APIError) as caught:
             _client(rec).delete_account(confirm=True)
         self.assertEqual(caught.exception.code, "method_not_allowed")
+
+
+class SigningUpWithoutAKey(unittest.TestCase):
+    """POST /v1/agents/init (Cloud only, GordonPro app/api/v1_agents_init.py):
+    the one call with no key, since it is how one is obtained. The SDKs had no
+    way to make it; only `korely init` did, with its own copy of the HTTP."""
+
+    _MINTED = {"api_key": "kor_live_0123456789abcdef0123456789abcdef", "tier": "hobby",
+               "region": "eu-hel1", "scopes": ["memories:read", "memories:write"],
+               "quotas": {"writes_per_month": 2000, "queries_per_month": 10000, "agents": 2}}
+
+    def setUp(self):
+        self._saved = {k: os.environ.get(k) for k in
+                       ("KORELY_API_KEY", "KORELY_BASE_URL", "KORELY_CONFIG_HOME")}
+        for k in self._saved:
+            os.environ.pop(k, None)
+        os.environ["KORELY_CONFIG_HOME"] = "/nonexistent-korely-config-dir"
+        self.seen = []
+
+    def tearDown(self):
+        for k, v in self._saved.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+
+    def _answering(self, status=201, body=None):
+        from unittest import mock
+
+        def fake(req, timeout):
+            self.seen.append(req)
+            return _FakeResponse(status=status, body=json.dumps(body or self._MINTED).encode())
+        return mock.patch("korely_memory.client._urlrequest.urlopen", fake)
+
+    def test_no_key_is_needed_and_none_is_sent(self):
+        from korely_memory import AgentInitResult
+
+        with self._answering():
+            r = Korely.init_agent("claude-code")
+        req = self.seen[0]
+        self.assertEqual((req.get_method(), req.full_url),
+                         ("POST", "https://api.korely.ai/v1/agents/init"))
+        self.assertIsNone(req.get_header("Authorization"))
+        self.assertEqual(json.loads(req.data), {"agent_caller": "claude-code"})
+        self.assertIsInstance(r, AgentInitResult)
+        self.assertEqual((r.api_key, r.tier, r.region), (self._MINTED["api_key"], "hobby", "eu-hel1"))
+        self.assertEqual(r.quotas["agents"], 2)
+
+    def test_the_key_stays_out_of_repr(self):
+        with self._answering():
+            r = Korely.init_agent()
+        self.assertNotIn(self._MINTED["api_key"], repr(r))
+        self.assertEqual(json.loads(self.seen[0].data), {})
+
+    def test_the_server_is_the_argument_then_the_environment(self):
+        os.environ["KORELY_BASE_URL"] = "http://localhost:8000/"
+        with self._answering():
+            Korely.init_agent()
+            Korely.init_agent(base_url="https://staging.example/")
+        self.assertEqual([r.full_url for r in self.seen],
+                         ["http://localhost:8000/v1/agents/init",
+                          "https://staging.example/v1/agents/init"])
+
+    def test_the_refusals_keep_their_code(self):
+        rec = _Recorder().queue(403, {"code": "signup_disabled",
+                                      "message": "Agent self-signup is currently closed."})
+        rec.queue(429, {"code": "signup_rate_limited", "message": "Try again tomorrow.",
+                        "_retry_after": "86400"})
+        from unittest import mock
+        with mock.patch.object(Korely, "_send", rec):
+            with self.assertRaises(NamespaceForbiddenError) as closed:
+                Korely.init_agent("x")
+            with self.assertRaises(QuotaExceededError) as capped:
+                Korely.init_agent("x")
+        self.assertEqual(closed.exception.code, "signup_disabled")
+        self.assertEqual((capped.exception.code, capped.exception.retry_after),
+                         ("signup_rate_limited", 86400))
+        self.assertEqual(rec.calls[0]["json"], {"agent_caller": "x"})
+
+    def test_a_label_that_is_not_text_never_leaves(self):
+        with self._answering():
+            with self.assertRaises(KorelyError):
+                Korely.init_agent({"base_url": "https://x.example"})
+        self.assertEqual(self.seen, [])
+
+    def test_the_async_client_signs_up_too(self):
+        import asyncio
+        from korely_memory import AsyncKorely
+
+        with self._answering():
+            r = asyncio.run(AsyncKorely.init_agent("claude-code"))
+        self.assertEqual(r.tier, "hobby")
+        self.assertIsNone(self.seen[0].get_header("Authorization"))
+
+    def test_class_methods_are_mirrored_too(self):
+        """The parity test lists functions; a class method is not one, so it
+        checks this separately."""
+        import inspect
+        from korely_memory import AsyncKorely
+
+        sync = {n for n, m in inspect.getmembers(Korely, inspect.ismethod) if not n.startswith("_")}
+        self.assertIn("init_agent", sync)
+        for name in sync:
+            with self.subTest(method=name):
+                self.assertTrue(inspect.iscoroutinefunction(getattr(AsyncKorely, name, None)))

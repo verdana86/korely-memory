@@ -776,3 +776,47 @@ test("deleteAccount() needs { confirm: true } before anything leaves, then DELET
   // The Self-hosted has no such route: 405 where it serves its dashboard.
   await assert.rejects(() => k.deleteAccount({ confirm: true }), (e) => e instanceof APIError && e.code === "method_not_allowed");
 });
+
+test("Korely.initAgent() signs up with no key: POST /v1/agents/init, no Authorization", async () => {
+  const minted = { api_key: "kor_live_0123456789abcdef", tier: "hobby", region: "eu-hel1", scopes: ["memories:read", "memories:write"], quotas: { agents: 2 } };
+  const savedKey = process.env.KORELY_API_KEY;
+  const savedBase = process.env.KORELY_BASE_URL;
+  delete process.env.KORELY_API_KEY;
+  delete process.env.KORELY_BASE_URL;
+  try {
+    const f = fakeFetch([{ status: 201, body: minted }, { status: 201, body: minted }, { status: 201, body: minted }]);
+    const r = await Korely.initAgent("claude-code", { fetch: f });
+    assert.equal(f.calls[0].url, "https://api.korely.ai/v1/agents/init");
+    assert.equal(f.calls[0].init.method, "POST");
+    assert.equal(f.calls[0].init.headers.Authorization, undefined);
+    assert.deepEqual(JSON.parse(f.calls[0].init.body), { agent_caller: "claude-code" });
+    assert.deepEqual(r, minted);
+    await Korely.initAgent(undefined, { fetch: f, baseUrl: "http://localhost:8000/" });
+    assert.equal(f.calls[1].url, "http://localhost:8000/v1/agents/init");
+    assert.deepEqual(JSON.parse(f.calls[1].init.body), {});
+    process.env.KORELY_BASE_URL = "https://staging.example";
+    await Korely.initAgent("x", { fetch: f });
+    assert.equal(f.calls[2].url, "https://staging.example/v1/agents/init");
+  } finally {
+    if (savedKey === undefined) delete process.env.KORELY_API_KEY; else process.env.KORELY_API_KEY = savedKey;
+    if (savedBase === undefined) delete process.env.KORELY_BASE_URL; else process.env.KORELY_BASE_URL = savedBase;
+  }
+});
+
+test("Korely.initAgent(): the refusals keep their code; a label that is not text, or base_url, never leaves", async () => {
+  const f = fakeFetch([
+    { status: 403, body: { code: "signup_disabled", message: "Agent self-signup is currently closed." } },
+    { status: 429, body: { code: "signup_rate_limited", message: "Try again tomorrow." }, headers: { "retry-after": "86400" } },
+  ]);
+  await assert.rejects(() => Korely.initAgent("x", { fetch: f, baseUrl: "https://api.test" }), (e) => e instanceof NamespaceForbiddenError && e.code === "signup_disabled");
+  await assert.rejects(() => Korely.initAgent("x", { fetch: f, baseUrl: "https://api.test" }), (e) => {
+    assert.ok(e instanceof QuotaExceededError);
+    assert.equal(e.code, "signup_rate_limited");
+    assert.equal(e.retryAfter, 86400);
+    return true;
+  });
+  const none = fakeFetch([]);
+  await assert.rejects(() => Korely.initAgent({ baseUrl: "https://api.test" }, { fetch: none }), KorelyError);
+  await assert.rejects(() => Korely.initAgent("x", { fetch: none, base_url: "https://api.test" }), /baseUrl/);
+  assert.equal(none.calls.length, 0);
+});

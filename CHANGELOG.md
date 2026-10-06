@@ -44,6 +44,13 @@ Both clients:
   Without the confirmation nothing is sent (`code` is
   `confirmation_required`, as the server's own refusal); an account with a
   login is a `ConflictError` (`account_has_login`).
+- `Korely.init_agent(agent_caller)` (Python, a class method; `AsyncKorely`
+  too) and `Korely.initAgent(agentCaller)` (JS, static), `POST
+  /v1/agents/init` with no key, Cloud only: a free hobby key and its quotas.
+  Refusals keep their code: 403 `signup_disabled`, 429 `signup_rate_limited`
+  with `retry_after`. In Python the key stays out of `repr()`.
+- On the Self-hosted, which has neither `/v1/account` nor `/v1/agents/init`,
+  both calls answer 404, or 405 where the install serves its dashboard.
 
 ## Python 0.1.17 and npm 0.1.9 (2026-10-06)
 

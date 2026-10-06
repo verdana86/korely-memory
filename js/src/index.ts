@@ -12,7 +12,7 @@
  *   const ctx = await korely.getContext({ query: "what does the user like?", user_id: "dana" });
  */
 export { Korely, VERSION } from "./client.js";
-export type { KorelyOptions } from "./client.js";
+export type { KorelyOptions, InitAgentOptions } from "./client.js";
 
 export {
   KorelyError,
@@ -51,6 +51,7 @@ export type {
   AgentDeleteReceipt,
   ForgetReceipt,
   PingResponse,
+  AgentInitResult,
   AccountDeleteReceipt,
   AuditActor,
   AuditAction,

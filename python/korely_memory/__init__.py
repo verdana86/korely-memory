@@ -26,6 +26,7 @@ from .exceptions import (
 from .models import (
     AccountDeleteReceipt,
     AgentDeleteReceipt,
+    AgentInitResult,
     AgentScope,
     AgentsPage,
     AuditEvent,
@@ -87,4 +88,5 @@ __all__ = [
     "AuditPage",
     "AuditRead",
     "AccountDeleteReceipt",
+    "AgentInitResult",
 ]

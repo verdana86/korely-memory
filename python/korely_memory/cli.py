@@ -24,7 +24,7 @@ from typing import Any, Optional
 
 from . import __version__
 from .client import Korely, _refuse_a_mismatched_pair
-from .exceptions import KorelyError
+from .exceptions import APIError, KorelyError
 
 _DEFAULT_BASE = "https://api.korely.ai"
 
@@ -302,13 +302,10 @@ def cmd_init(args) -> int:
     """Self-serve signup: mint a hobby key with no Firebase, save it locally.
 
     The one command that runs WITHOUT a key: it is how you get one. Calls
-    POST /v1/agents/init, writes the key to ~/.korely/config.json (chmod 600),
-    and from then on every other `korely` command (and the SDK, if you export
-    the key) just works.
+    POST /v1/agents/init (Korely.init_agent), writes the key to
+    ~/.korely/config.json (chmod 600), and from then on every other `korely`
+    command (and the SDK, if you export the key) just works.
     """
-    import urllib.error
-    import urllib.request
-
     base = (getattr(args, "base_url", None) or os.environ.get("KORELY_BASE_URL")
             or _DEFAULT_BASE).rstrip("/")
 
@@ -345,56 +342,40 @@ def cmd_init(args) -> int:
         print("  korely auth")
         return 0
 
-    payload = json.dumps({"agent_caller": getattr(args, "agent_caller", None)}).encode("utf-8")
-    req = urllib.request.Request(
-        base + "/v1/agents/init", data=payload,
-        headers={"Content-Type": "application/json", "User-Agent": f"korely-cli/{__version__}"},
-        method="POST",
-    )
+    # The SDK's call since 2026-10-06, so the transport, the TLS settings and
+    # the reading of the error envelope are the ones every other command has
+    # (`message`, else what `detail` says, never the raw JSON). This command
+    # used to carry its own urllib request and its own copy of the parsing.
     try:
-        with urllib.request.urlopen(req, timeout=30) as r:
-            data = json.loads(r.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        # The same reading of the error envelope as every other command
-        # (Korely._error_fields): `message`, else what `detail` says, so an
-        # install that answers `{"detail": ...}` is not printed as raw JSON.
-        detail = e.read().decode("utf-8", "replace")
-        try:
-            parsed = json.loads(detail)
-            if isinstance(parsed, dict):
-                detail = Korely._error_fields(e.code, parsed)[1]
-        except ValueError:
-            pass
-        print(f"error: signup failed ({e.code}): {detail}", file=sys.stderr)
+        result = Korely.init_agent(getattr(args, "agent_caller", None), base_url=base)
+    except APIError as e:
+        print(f"error: signup failed ({e.status}): {e.message or e}", file=sys.stderr)
         return 1
-    except urllib.error.URLError as e:
-        print(f"error: could not reach {base}: {e.reason}", file=sys.stderr)
-        return 1
-    except (OSError, ValueError) as e:
-        # A timeout while reading the answer is not a URLError, and a body that
-        # is not JSON is a ValueError: both used to end in a traceback.
-        print(f"error: signup at {base} failed: {type(e).__name__}: {e}", file=sys.stderr)
+    except KorelyError as e:
+        # Never reached the server, or got no usable answer: connection
+        # refused, a timeout, a body that is not JSON.
+        print(f"error: signup at {base} failed: {e}", file=sys.stderr)
         return 1
 
-    key = data.get("api_key")
+    key = result.api_key
     if not key:
         print("error: server did not return an api_key.", file=sys.stderr)
         return 1
     cfg = _load_config()
     cfg["api_key"] = key
     cfg["base_url"] = base
-    if data.get("tier"):
-        cfg["tier"] = data["tier"]
+    if result.tier:
+        cfg["tier"] = result.tier
     path = _save_config(cfg)
 
     if getattr(args, "json", False):
-        _emit_json(data)
+        _emit_json(dataclasses.asdict(result))
         return 0
 
-    q = data.get("quotas") or {}
+    q = result.quotas or {}
     print(f"You're set: a free hobby key was minted and saved to {path} (chmod 600).")
     print(f"  key     {_mask(key)}")
-    print(f"  tier    {data.get('tier')}    region {data.get('region')}")
+    print(f"  tier    {result.tier}    region {result.region}")
     if q:
         print(f"  quotas  {q.get('writes_per_month')} writes / "
               f"{q.get('queries_per_month')} queries per month · {q.get('agents')} agents")

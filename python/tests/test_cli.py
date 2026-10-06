@@ -427,3 +427,55 @@ class TestLaConformitaDel29Set(unittest.TestCase):
         ctx = _client(rec).get_context("What's the latest?", user_id="acme")
         self.assertEqual(ctx.context, "ok")
         self.assertEqual(rec.last["params"]["query"], "What's the latest?")
+
+
+class InitSignsUpThroughTheSdk(_CleanEnv):
+    """`korely init --agent` makes the SDK's call (Korely.init_agent) instead
+    of its own copy of the HTTP and of the error parsing (2026-10-06)."""
+
+    def test_the_key_is_saved_and_masked(self):
+        import json as _json
+        import urllib.request
+
+        seen = []
+
+        class _Resp:
+            status = 201
+
+            def read(self):
+                return _json.dumps({"api_key": "kor_live_0123456789abcdef0123456789abcdef",
+                                    "tier": "hobby", "region": "eu-hel1",
+                                    "scopes": ["memories:read", "memories:write"],
+                                    "quotas": {"writes_per_month": 2000,
+                                               "queries_per_month": 10000,
+                                               "agents": 2}}).encode()
+
+            def getcode(self):
+                return 201
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        def answer(req, timeout=None):
+            seen.append(req)
+            return _Resp()
+
+        real, urllib.request.urlopen = urllib.request.urlopen, answer
+        out = io.StringIO()
+        try:
+            with redirect_stdout(out), redirect_stderr(io.StringIO()):
+                rc = cli.main(["init", "--agent", "--agent-caller", "claude-code"])
+        finally:
+            urllib.request.urlopen = real
+        self.assertEqual(rc, 0)
+        self.assertEqual(seen[0].full_url, "https://api.korely.ai/v1/agents/init")
+        self.assertIsNone(seen[0].get_header("Authorization"))
+        cfg = _json.loads(open(os.path.join(self.cfg_dir, "config.json"), encoding="utf-8").read())
+        self.assertEqual(cfg, {"api_key": "kor_live_0123456789abcdef0123456789abcdef",
+                               "base_url": "https://api.korely.ai", "tier": "hobby"})
+        self.assertIn("kor_live_…cdef", out.getvalue())
+        self.assertNotIn("0123456789abcdef0123", out.getvalue())
+        self.assertIn("2000 writes / 10000 queries per month", out.getvalue())

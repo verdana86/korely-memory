@@ -74,6 +74,7 @@ Every method wraps exactly one REST endpoint.
 | `batch_status(job_id)` | `GET /v1/batch/:id` |
 | `ping()` | `GET /v1/ping` |
 | `delete_account(*, confirm=True)` | `DELETE /v1/account` (Cloud only) |
+| `Korely.init_agent(agent_caller=None, *, base_url=, …)` | `POST /v1/agents/init`, no key (Cloud only) |
 | `audit(*, user_id=, action=, since=, until=, limit=, offset=)` | `GET /v1/audit` |
 | `iter_audit(*, user_id=, action=, since=, until=, page_size=, offset=)` | `GET /v1/audit`, every page |
 
@@ -83,6 +84,11 @@ Every method wraps exactly one REST endpoint.
 `ping()` checks a key without spending anything (no scope, no rate limit, no
 quota) and answers its `tier`, `region` and `scopes`, on the Cloud and on the
 Self-hosted alike.
+
+`Korely.init_agent("my-app")` signs up for a free hobby key with no key, so
+it is a class method: the answer carries the key once (`repr()` leaves it
+out), then `Korely(api_key=result.api_key)`. It is what `korely init --agent`
+calls. Cloud only: a Self-hosted install mints its keys in its own dashboard.
 
 `delete_account(confirm=True)` deletes the account of the key, for good, with
 every key, memory and fact of it. It is for an account `korely init --agent`

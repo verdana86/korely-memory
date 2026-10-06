@@ -29,6 +29,7 @@ from .exceptions import (
 from .models import (
     AccountDeleteReceipt,
     AgentDeleteReceipt,
+    AgentInitResult,
     AgentsPage,
     AuditEvent,
     AuditPage,
@@ -369,6 +370,52 @@ class Korely:
         self.timeout = timeout
         self._ssl_context = _ssl_context(ca_file or os.environ.get("KORELY_CA_FILE") or None, verify)
 
+    @classmethod
+    def init_agent(cls, agent_caller: Optional[str] = None, *, region: str = "eu",
+                   base_url: Optional[str] = None, timeout: float = 30.0,
+                   ca_file: Optional[str] = None, verify: bool = True) -> AgentInitResult:
+        """POST /v1/agents/init, with no key: sign up for a free hobby key.
+
+        The one call that runs without a key, because it is how one is
+        obtained, so it is a class method: ``Korely.init_agent("my-app")``,
+        then ``Korely(api_key=result.api_key)``. ``agent_caller`` is a
+        free-form label of who signed up, kept for your reference. The answer
+        carries the key, shown once (save it), its ``tier``, ``region``,
+        ``scopes`` and ``quotas``. The account it creates has no login: the
+        key is the account, and ``delete_account(confirm=True)`` closes it.
+
+        Cloud only. The server is ``base_url``, else ``KORELY_BASE_URL``, else
+        the region's (the config file is not read: it holds what an earlier
+        signup saved). Refusals: 403 ``signup_disabled`` (NamespaceForbiddenError)
+        when self-signup is closed; 429 ``signup_rate_limited``
+        (QuotaExceededError, with ``retry_after``) past the new accounts a
+        network may open in a day. The Self-hosted has no such route and
+        answers 404, or 405 where it serves its dashboard: its keys come from
+        its own dashboard.
+        """
+        if agent_caller is not None and not isinstance(agent_caller, str):
+            raise KorelyError("agent_caller is a label, a string, "
+                              f"not {type(agent_caller).__name__}.")
+        k = cls._without_key(
+            base_url or os.environ.get("KORELY_BASE_URL") or _REGIONS.get(region)
+            or _REGIONS["eu"], timeout=timeout, ca_file=ca_file, verify=verify)
+        body = k._call("POST", "/v1/agents/init",
+                       json_body=_clean({"agent_caller": agent_caller}))
+        return AgentInitResult.from_dict(body)
+
+    @classmethod
+    def _without_key(cls, base_url: str, *, timeout: float, ca_file: Optional[str],
+                     verify: bool) -> "Korely":
+        """A client with no key, for the one call that runs without one. The
+        constructor refuses to build it, rightly, for every other call: the
+        same transport and the same reading of errors, minus the header."""
+        k = cls.__new__(cls)
+        k.api_key = None
+        k.base_url = base_url.rstrip("/")
+        k.timeout = timeout
+        k._ssl_context = _ssl_context(ca_file or os.environ.get("KORELY_CA_FILE") or None, verify)
+        return k
+
     # ── low-level transport (the one seam tests override) ──────────────────
     def _send(self, method: str, path: str, *, params: Optional[dict] = None,
               json_body: Optional[Any] = None) -> "tuple[int, dict]":
@@ -391,10 +438,13 @@ class Korely:
                 url += "?" + qs
         data = json.dumps(json_body).encode("utf-8") if json_body is not None else None
         headers = {
-            "Authorization": "Bearer " + self.api_key,
             "Accept": "application/json",
             "User-Agent": "korely-memory-python/" + __version__,
         }
+        # No key only on the client init_agent() builds: that call is how a
+        # key is obtained, and an empty `Bearer ` is not "no key" to a server.
+        if self.api_key:
+            headers["Authorization"] = "Bearer " + self.api_key
         if data is not None:
             headers["Content-Type"] = "application/json"
         req = _urlrequest.Request(url, data=data, method=method, headers=headers)

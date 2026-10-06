@@ -509,3 +509,23 @@ class AccountDeleteReceipt:
     @classmethod
     def from_dict(cls, d: dict) -> "AccountDeleteReceipt":
         return cls(**_take(cls, d))
+
+
+@dataclass
+class AgentInitResult:
+    """What ``Korely.init_agent()`` answers: a new hobby key and what it buys.
+
+    ``api_key`` is shown this once and never again, so save it (``korely
+    init`` writes it to ~/.korely/config.json). It is left out of ``repr()``:
+    printing the result, or a traceback that shows it, does not put the key in
+    a log. ``quotas`` is the hobby allowance (``writes_per_month``,
+    ``queries_per_month``, ``agents``, the monthly AI budget)."""
+    api_key: Optional[str] = field(default=None, repr=False)
+    tier: Optional[str] = None
+    region: Optional[str] = None
+    scopes: List[str] = field(default_factory=list)
+    quotas: dict = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "AgentInitResult":
+        return cls(**_take(cls, d))
