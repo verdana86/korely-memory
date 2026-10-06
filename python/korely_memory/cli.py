@@ -188,6 +188,93 @@ def cmd_auth(k: Korely, a) -> int:
     return 0
 
 
+def cmd_ping(k: Korely, a) -> int:
+    p = k.ping()
+    if a.json:
+        _emit_json(p)  # {"ok", "tier", "region", "scopes"}, the API's shape
+        return 0
+    print(f"ok  tier {p.tier}  region {p.region}  scopes {', '.join(p.scopes) or '(none)'}")
+    return 0
+
+
+def _audit_line(e) -> str:
+    line = (f"  {_utc_moment(e.ts):<19}  {e.actor or '':<9} {e.action or '':<15} "
+            f"{e.result or '':<6} {e.user_id or '-':<20} {e.target_id or ''}").rstrip()
+    if e.read:
+        line += f"  (read {len(e.read.memories)} memories, {len(e.read.facts)} facts)"
+    return line
+
+
+def cmd_audit(k: Korely, a) -> int:
+    filters = {"user_id": a.user_id, "action": a.action, "since": a.since, "until": a.until}
+    if a.all:
+        return _audit_export(k, a, filters)
+    page = k.audit(limit=a.limit or 100, offset=a.offset, **filters)
+    if a.json:
+        _emit_json(page)  # {"events": [...], "total": n}, the API's shape
+        return 0
+    if not len(page):
+        print("no events." + (f" (offset {a.offset} of {page.total})" if a.offset else ""))
+        return 0
+    if a.offset or len(page) < page.total:
+        print(f"{a.offset + 1}-{a.offset + len(page)} of {page.total} event(s), newest first:")
+    else:
+        print(f"{page.total} event(s), newest first:")
+    for e in page:
+        print(_audit_line(e))
+    return 0
+
+
+def _audit_export(k: Korely, a, filters: dict) -> int:
+    """`korely audit --all`: every page (iter_audit), written as it arrives.
+
+    With --json it is still one document in the API's shape, `{"events":
+    [...], "total": n}`, streamed event by event: a trail can be longer than
+    what the machine exporting it wants to hold in memory. `--offset` resumes
+    an export that stopped; pass the same `--until`, so the window is the
+    same."""
+    n = 0
+    events = k.iter_audit(page_size=a.limit or 1000, offset=a.offset, **filters)
+    if a.json:
+        sys.stdout.write('{"events": [')
+        for e in events:
+            sys.stdout.write((",\n  " if n else "\n  ")
+                             + json.dumps(dataclasses.asdict(e), ensure_ascii=False))
+            n += 1
+        sys.stdout.write(("\n" if n else "") + f'], "total": {n}}}\n')
+        return 0
+    for e in events:
+        print(_audit_line(e))
+        n += 1
+    print(f"{n} event(s).")
+    return 0
+
+
+def cmd_delete_account(k: Korely, a) -> int:
+    if not a.yes:
+        print("error: this deletes the account of this key for good: every key, project, "
+              "memory and fact of it. It is for an account made by `korely init --agent` "
+              "(Cloud only). Re-run with --yes to confirm.", file=sys.stderr)
+        return 2
+    r = k.delete_account(confirm=True)
+    # The key is dead now. Left in the config file, every later command would
+    # fail with a 401 on it, and `korely init` would refuse to replace it.
+    cfg = _load_config()
+    forgot = cfg.get("api_key") == k.api_key
+    if forgot:
+        cfg.pop("api_key", None)
+        cfg.pop("tier", None)
+        _save_config(cfg)
+    if a.json:
+        _emit_json(r)  # {"deleted": true, "removed": {...}}, the API's shape
+        return 0
+    removed = ", ".join(f"{n} {kind}" for kind, n in (r.removed or {}).items()) or "nothing"
+    print(f"deleted the account of key {_mask(k.api_key)}  (removed: {removed})")
+    if forgot:
+        print(f"  and the key from {_config_path()}: `korely init --agent` makes a new one.")
+    return 0
+
+
 def cmd_add(k: Korely, a) -> int:
     content = _read_content(a.content)
     if not content or not content.strip():
@@ -695,6 +782,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("auth", parents=[common], help="verify your API key")
     sp.set_defaults(func=cmd_auth)
 
+    sp = sub.add_parser("ping", parents=[common],
+                        help="the key's tier, region and scopes (no scope, no quota)")
+    sp.set_defaults(func=cmd_ping)
+
     sp = sub.add_parser("add", parents=[common], help="store a memory ('-' or pipe for stdin)")
     sp.add_argument("content", nargs="?", help="text to remember; '-' reads stdin")
     sp.add_argument("--run-id", help="optional run/session id")
@@ -825,6 +916,26 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("batch-status", parents=[common], help="poll an import job")
     sp.add_argument("job_id")
     sp.set_defaults(func=cmd_batch_status)
+
+    sp = sub.add_parser("audit", parents=[common],
+                        help="the audit trail of this key's project, newest first (--all to export)")
+    sp.add_argument("--action",
+                    help="read | write | fact_write | fact_invalidate | erase | key_create | "
+                         "key_revoke (and tenant_create on the Self-hosted)")
+    sp.add_argument("--since", help="ISO 8601 date or datetime: events at or after it")
+    sp.add_argument("--until", help="ISO 8601 date or datetime: events at or before it")
+    sp.add_argument("--limit", type=int, default=None,
+                    help="events per request, up to 1000 (default 100; 1000 with --all)")
+    sp.add_argument("--offset", type=int, default=0)
+    sp.add_argument("--all", action="store_true",
+                    help="every page, for an export (with --json: one streamed JSON document)")
+    sp.set_defaults(func=cmd_audit)
+
+    sp = sub.add_parser("delete-account", parents=[common],
+                        help="delete this key's account for good (Cloud, `init --agent` accounts; "
+                             "needs --yes)")
+    sp.add_argument("--yes", action="store_true", help="confirm: the account and its keys go")
+    sp.set_defaults(func=cmd_delete_account)
 
     return p
 

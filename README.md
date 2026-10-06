@@ -130,7 +130,10 @@ With the Vercel AI SDK, `withKorelyMemory(model, { userId })` from `korely-memor
 korely add "Maria downgraded to Free." --user-id maria
 korely context "what plan is Maria on?" --user-id maria
 korely facts --as-of 2026-03-01 --user-id maria
+korely audit --user-id maria --all --json > maria.json   # everything that touched Maria
 ```
+
+Every command is listed in [python/README.md](python/README.md#cli).
 
 ## What Korely does
 

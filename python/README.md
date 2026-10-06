@@ -250,7 +250,7 @@ ones that read or write memories.
 | Command | Call |
 |---|---|
 | `korely init [--agent] [--api-key KEY] [--force]` | `POST /v1/agents/init`, or save a key you have; `--force` to replace a saved one |
-| `korely auth` | `GET /v1/ping` |
+| `korely auth` / `korely ping` | `GET /v1/ping` |
 | `korely add TEXT` / `korely update ID TEXT` | `POST /v1/memories` / `PATCH /v1/memories/:id` (`-` or a pipe reads stdin) |
 | `korely search QUERY` | `POST /v1/memories/search` |
 | `korely context QUERY` | `GET /v1/context` |
@@ -268,10 +268,20 @@ ones that read or write memories.
 | `korely delete-all --user-id U --yes` | `DELETE /v1/users/:user_id/memories` |
 | `korely delete-agent --agent-id A --yes` | `DELETE /v1/agents/:agent_id` |
 | `korely batch FILE` / `korely batch-status JOB` | `POST /v1/batch` / `GET /v1/batch/:id` |
+| `korely audit [--all]` | `GET /v1/audit` (`--action`, `--since`, `--until`) |
+| `korely delete-account --yes` | `DELETE /v1/account` (Cloud only) |
 
 `korely batch` reads a JSON array, an object with `memories`, or JSON Lines
 (`-` for stdin); an item is the body of one `add`, or a string taken as its
 content. `--user-id` and `--agent-id` scope the items that name none.
+
+`korely audit --all` walks every page, for an export; with `--json` it is one
+JSON document in the API's shape, streamed, so a long trail never sits in
+memory. `--offset` resumes an export that stopped (pass the same `--until`).
+
+`korely delete-account --yes` closes the account of an `init --agent` key and
+removes that key from `~/.korely/config.json`, so the next `korely init` can
+save a new one.
 
 ## LangGraph
 

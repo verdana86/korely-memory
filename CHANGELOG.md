@@ -89,6 +89,11 @@ Python:
   read; `batch FILE` (a JSON array, `{"memories": [...]}` or JSON Lines, `-`
   for stdin; `--user-id` / `--agent-id` scope the items that name none) and
   `batch-status JOB`.
+- `ping`; `audit` (`--user-id`, `--action`, `--since`, `--until`, `--limit`,
+  `--offset`), with `--all` to export every page, as one streamed JSON
+  document with `--json`; `delete-account --yes` (Cloud only), which also
+  removes the dead key from `~/.korely/config.json` when it is the one saved
+  there.
 
 `korely-mcp`:
 

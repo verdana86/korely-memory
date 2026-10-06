@@ -159,6 +159,7 @@ class TestParserWiring(unittest.TestCase):
             ["agents"], ["delete-agent", "--agent-id", "bot", "--yes"],
             ["add-fact", "maria", "lives_in", "Milan"], ["correct-fact", "fct_1", "--object", "x"],
             ["forget-fact", "fct_1"], ["batch", "memories.jsonl"], ["batch-status", "job_1"],
+            ["ping"], ["audit", "--all"], ["delete-account", "--yes"],
         ):
             with self.subTest(cmd=argv[0]):
                 a = _args(argv)
@@ -876,3 +877,135 @@ class TheAgentFactAndBatchCommands(_RunsCommands):
         self.assertEqual(rec.last["path"], "/v1/batch/job_1")
         self.assertIn("job_1  completed  2 of 3 imported, 1 failed", out)
         self.assertIn("memory 2: content contains a NUL byte", out)
+
+
+def _ev(ts, **kw):
+    return dict({"ts": ts, "actor": "rest", "action": "read", "result": "ok",
+                 "user_id": "maria", "target_id": None, "meta": None, "ip": None,
+                 "read": None}, **kw)
+
+
+class PingAndTheAuditTrail(_RunsCommands):
+    """ping and audit, new in the SDK and in the CLI on 2026-10-06."""
+
+    def test_ping(self):
+        body = {"ok": True, "tier": "hobby", "region": "eu-hel1", "scopes": ["memories:read"]}
+        rec = _Recorder().queue(200, dict(body)).queue(200, dict(body))
+        rc, out = self._run(rec, ["ping"])
+        self.assertEqual(rec.last["path"], "/v1/ping")
+        self.assertEqual(out.strip(), "ok  tier hobby  region eu-hel1  scopes memories:read")
+        rc, data = self._run(rec, ["ping", "--json"])
+        self.assertEqual(data, body)
+
+    def test_one_page(self):
+        rec = _Recorder().queue(200, {"events": [
+            _ev("2026-10-06T12:00:00+02:00", target_id="mem_1",
+                read={"memories": ["mem_1", "mem_2"], "facts": ["fct_1"]}),
+            _ev("2026-10-06T09:00:00Z", action="erase", actor="mcp", user_id=None),
+        ], "total": 7})
+        rc, out = self._run(rec, ["audit", "--user-id", "maria", "--action", "read",
+                                  "--since", "2026-10-01", "--limit", "2"])
+        self.assertEqual(rc, 0)
+        self.assertEqual((rec.last["method"], rec.last["path"]), ("GET", "/v1/audit"))
+        self.assertEqual(rec.last["params"], {"user_id": "maria", "action": "read",
+                                              "since": "2026-10-01", "limit": 2, "offset": 0})
+        self.assertIn("1-2 of 7 event(s), newest first:", out)
+        self.assertIn("2026-10-06 10:00:00  rest      read            ok     maria", out)
+        self.assertIn("mem_1  (read 2 memories, 1 facts)", out)
+        self.assertIn("2026-10-06 09:00:00  mcp       erase           ok     -", out)
+
+    def test_the_default_page_and_json(self):
+        rec = _Recorder().queue(200, {"events": [_ev("2026-10-06T09:00:00Z")], "total": 1})
+        rc, data = self._run(rec, ["audit", "--json"])
+        self.assertEqual(rec.last["params"], {"limit": 100, "offset": 0})
+        self.assertEqual((data["total"], data["events"][0]["action"]), (1, "read"))
+        rec.queue(200, {"events": [], "total": 0})
+        rc, out = self._run(rec, ["audit"])
+        self.assertEqual(out.strip(), "no events.")
+
+    def test_all_walks_every_page(self):
+        rec = (_Recorder()
+               .queue(200, {"events": [_ev("2026-10-06T10:00:00Z"), _ev("2026-10-06T09:00:00Z")],
+                            "total": 3})
+               .queue(200, {"events": [_ev("2026-10-06T08:00:00Z")], "total": 3}))
+        rc, out = self._run(rec, ["audit", "--all", "--limit", "2", "--user-id", "maria"])
+        self.assertEqual(rc, 0)
+        self.assertEqual([c["params"]["offset"] for c in rec.calls], [0, 2])
+        self.assertEqual(rec.calls[1]["params"]["until"], "2026-10-06T10:00:00Z")
+        self.assertEqual(out.count("  rest  "), 3)
+        self.assertTrue(out.rstrip().endswith("3 event(s)."))
+
+    def test_all_json_is_one_document(self):
+        rec = (_Recorder()
+               .queue(200, {"events": [_ev("2026-10-06T10:00:00Z")], "total": 2})
+               .queue(200, {"events": [_ev("2026-10-06T09:00:00Z", action="write")], "total": 2}))
+        rc, data = self._run(rec, ["audit", "--all", "--json", "--limit", "1"])
+        self.assertEqual(data["total"], 2)
+        self.assertEqual([e["action"] for e in data["events"]], ["read", "write"])
+        rec = _Recorder().queue(200, {"events": [], "total": 0})
+        rc, data = self._run(rec, ["audit", "--all", "--json"])
+        self.assertEqual(data, {"events": [], "total": 0})
+
+    def test_an_empty_user_is_refused_not_read_as_everybody(self):
+        from unittest import mock
+
+        rec = _Recorder()
+        err = io.StringIO()
+        with mock.patch.object(cli, "Korely", side_effect=lambda **kw: _client(rec)), \
+                redirect_stderr(err), redirect_stdout(io.StringIO()):
+            rc = cli.main(["audit", "--user-id", "", "--api-key", "kor_live_test"])
+        self.assertEqual(rc, 1)
+        self.assertIn("empty", err.getvalue())
+        self.assertEqual(rec.calls, [])
+
+
+class DeleteAccountForgetsTheDeadKey(_CleanEnv, _RunsCommands):
+    """`korely delete-account --yes`: the Cloud's DELETE /v1/account, and the
+    key it killed leaves the config file, so `korely init` can save a new one."""
+
+    def _save(self, key):
+        import json as _json
+        with open(os.path.join(self.cfg_dir, "config.json"), "w", encoding="utf-8") as fh:
+            _json.dump({"api_key": key, "base_url": "https://api.korely.ai", "tier": "hobby"}, fh)
+
+    def _config(self):
+        import json as _json
+        with open(os.path.join(self.cfg_dir, "config.json"), encoding="utf-8") as fh:
+            return _json.load(fh)
+
+    def test_nothing_leaves_without_yes(self):
+        rc, err = self._refused(_Recorder(), ["delete-account"])
+        self.assertEqual(rc, 2)
+        self.assertIn("--yes", err)
+
+    def test_the_account_goes_and_so_does_the_saved_key(self):
+        self._save("kor_live_test")
+        rec = _Recorder().queue(200, {"deleted": True,
+                                      "removed": {"memories": 12, "facts": 30, "keys": 1}})
+        rc, out = self._run(rec, ["delete-account", "--yes"])
+        self.assertEqual(rc, 0)
+        self.assertEqual((rec.last["method"], rec.last["path"], rec.last["params"]),
+                         ("DELETE", "/v1/account", {"confirm": "true"}))
+        self.assertIn("removed: 12 memories, 30 facts, 1 keys", out)
+        self.assertEqual(self._config(), {"base_url": "https://api.korely.ai"})
+
+    def test_a_different_saved_key_is_left_alone(self):
+        self._save("kor_live_another_key")
+        rec = _Recorder().queue(200, {"deleted": True, "removed": {}})
+        rc, data = self._run(rec, ["delete-account", "--yes", "--json"])
+        self.assertEqual(data, {"deleted": True, "removed": {}})
+        self.assertEqual(self._config()["api_key"], "kor_live_another_key")
+
+    def test_an_account_with_a_login_is_refused_with_its_code(self):
+        from unittest import mock
+
+        self._save("kor_live_test")
+        rec = _Recorder().queue(409, {"code": "account_has_login",
+                                      "message": "This key belongs to an account with a Korely login."})
+        err = io.StringIO()
+        with mock.patch.object(cli, "Korely", side_effect=lambda **kw: _client(rec)), \
+                redirect_stderr(err), redirect_stdout(io.StringIO()):
+            rc = cli.main(["delete-account", "--yes"])
+        self.assertEqual(rc, 1)
+        self.assertIn("[account_has_login]", err.getvalue())
+        self.assertEqual(self._config()["api_key"], "kor_live_test")
