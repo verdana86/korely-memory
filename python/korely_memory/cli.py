@@ -688,6 +688,8 @@ def cmd_init(args) -> int:
             print(f"error: nothing saved. {e}", file=sys.stderr)
             return 2
         cfg = _load_config()
+        if cfg.get("api_key") != given:
+            cfg.pop("tier", None)  # the plan of the key this one replaces
         cfg["api_key"] = given
         cfg["base_url"] = base
         path = _save_config(cfg)
@@ -722,6 +724,7 @@ def cmd_init(args) -> int:
         print("error: server did not return an api_key.", file=sys.stderr)
         return 1
     cfg = _load_config()
+    cfg.pop("tier", None)  # the plan of a key replaced with --force
     cfg["api_key"] = key
     cfg["base_url"] = base
     if result.tier:

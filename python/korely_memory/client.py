@@ -112,9 +112,9 @@ def _audit_filters(user_id: Any, action: Any, since: Any, until: Any) -> dict:
     """The filters of GET /v1/audit, checked before anything is sent.
 
     An empty ``user_id`` or ``action`` is refused: both servers read an empty
-    filter as no filter, so ``audit(user_id="")``, an id that came out of a
-    variable empty, answered with the events of every end user. The trail is
-    what an access request for ONE person is answered from.
+    filter as no filter, so ``audit(user_id=uid)`` with a ``uid`` that happened
+    to be empty answered with the events of every end user. The trail is what
+    an access request for ONE person is answered from.
     """
     for name, value in (("user_id", user_id), ("action", action)):
         if isinstance(value, str) and value == "":

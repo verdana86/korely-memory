@@ -167,11 +167,11 @@ try {
 `QuotaExceededError` (429: `retryAfter` is set for `rate_limit_exceeded`,
 undefined for the monthly `quota_exceeded`) · `TooManyBatchesError` (a
 `QuotaExceededError`: `too_many_batches` from `batch()`, Cloud only, three
-imports still running; send again when one finishes) · `APIError` (the base of all of
-these, and everything else: 422, 503). Every `APIError` has `retryAfter` when
-the server sent `Retry-After`: a rate limit, and the Cloud's 503
-`writes_paused` (writes that need a model are paused until 00:00 UTC). The SDK
-does not retry on its own.
+imports still running; send again when one finishes) · `APIError` (the base
+of all of these, and everything else: 422, 503). Every `APIError` has
+`retryAfter` when the server sent `Retry-After`: a rate limit, and the Cloud's
+503 `writes_paused` (writes that need a model are paused until 00:00 UTC). The
+SDK does not retry on its own.
 
 ## Configuration
 

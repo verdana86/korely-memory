@@ -568,7 +568,8 @@ class InitDoesNotLoseASavedKey(_CleanEnv):
         rc, _, _ = self._init(["init", "--api-key", "kor_self_mine", "--base-url",
                                "https://mine.example", "--force"])
         self.assertEqual(rc, 0)
-        self.assertEqual(self._config()["api_key"], "kor_self_mine")
+        self.assertEqual(self._config(), {"api_key": "kor_self_mine",
+                                          "base_url": "https://mine.example"})
 
     def test_saving_the_same_key_again_needs_no_force(self):
         rc, _, _ = self._init(["init", "--api-key", self._OLD["api_key"]])

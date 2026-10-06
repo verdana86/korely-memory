@@ -33,8 +33,8 @@ Both clients:
   (ISO text, or a `datetime` / `date` in Python and a `Date` in JS, sent as
   UTC). `actor` and `action` stay open strings: the Cloud has `dashboard`, the
   Self-hosted `manage` and `tenant_create`. An empty `user_id` or `action` is
-  refused before sending, because both servers read it as no filter and
-  answered with every end user's events. `iter_audit()` (Python, `async for`
+  refused before sending, because both servers read an empty filter as none:
+  `user_id=""` answered with every end user's events. `iter_audit()` (Python, `async for`
   on `AsyncKorely`) and `iterAudit()` (JS) walk every page for an export,
   with `until` pinned to the newest event when they start, so events written
   meanwhile do not shift the pages.

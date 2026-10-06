@@ -149,9 +149,9 @@ function moment(value: unknown, what: string): string | undefined {
 /**
  * The filters of GET /v1/audit, checked before anything is sent. An empty
  * `user_id` or `action` is refused: both servers read an empty filter as no
- * filter, so `audit({ user_id: "" })`, an id that came out of a variable
- * empty, answered with the events of every end user, and the trail is what an
- * access request for ONE person is answered from.
+ * filter, so `audit({ user_id: uid })` with a `uid` that happened to be empty
+ * answered with the events of every end user, and the trail is what an access
+ * request for ONE person is answered from.
  */
 function auditFilters(opts: AuditOptions): Params {
   for (const name of ["user_id", "action"] as const) {

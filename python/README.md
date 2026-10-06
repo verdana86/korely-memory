@@ -99,7 +99,8 @@ where it serves its dashboard).
 
 `audit()` reads the trail of the key's project, newest first: who acted
 (`actor`), what (`action`: `read`, `write`, `fact_write`, `fact_invalidate`,
-`erase`, `key_create`, `key_revoke`), the `result`, the end user and the
+`erase`, `key_create`, `key_revoke`, and `tenant_create` on the Self-hosted;
+open strings, not an enum), the `result`, the end user and the
 memory or fact touched, and for a read the ids it returned, never the content.
 Both products have it, and the key needs `memories:read`; it costs no quota.
 `user_id=` answers an access or erasure request for one person; `since` and
