@@ -17,6 +17,7 @@ from urllib import request as _urlrequest
 from .exceptions import (
     APIError,
     AuthenticationError,
+    ConflictError,
     KorelyError,
     NamespaceForbiddenError,
     NotFoundError,
@@ -473,7 +474,15 @@ class Korely:
         if status == 404:
             raise NotFoundError(msg, status=status, code=code, body=server_body)
         if status == 409:
-            raise StaleWriteError(msg, status=status, code=code, body=server_body)
+            # Only `stale_write` is a stale write (2026-10-06). Every 409 was
+            # raised as StaleWriteError, so `delete_account()`'s
+            # `account_has_login` read as a lost update. Both servers name
+            # `stale_write` on every stale update, the self-hosted one since
+            # its first release (inside `detail` on an older install, which
+            # _error_fields reads), so nothing a stale write sends lands in
+            # the generic branch.
+            cls = StaleWriteError if code == "stale_write" else ConflictError
+            raise cls(msg, status=status, code=code, body=server_body)
         if status == 429:
             ra = _retry_after_seconds(body.get("_retry_after") or body.get("retry_after"))
             raise QuotaExceededError(msg, status=status, code=code, retry_after=ra,

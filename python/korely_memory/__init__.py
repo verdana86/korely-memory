@@ -15,6 +15,7 @@ from .client import Korely, __version__
 from .exceptions import (
     APIError,
     AuthenticationError,
+    ConflictError,
     KorelyError,
     NamespaceForbiddenError,
     NotFoundError,
@@ -51,6 +52,7 @@ __all__ = [
     "AuthenticationError",
     "NamespaceForbiddenError",
     "NotFoundError",
+    "ConflictError",
     "StaleWriteError",
     "QuotaExceededError",
     "APIError",

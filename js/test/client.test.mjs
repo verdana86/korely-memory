@@ -11,6 +11,7 @@ import {
   AuthenticationError,
   NotFoundError,
   NamespaceForbiddenError,
+  ConflictError,
   StaleWriteError,
   QuotaExceededError,
   APIError,
@@ -574,4 +575,38 @@ test("an id that is not a string never reaches the server", async () => {
   const { k, f } = client([{ body: { id: "42" } }]);
   await k.get(42);
   assert.equal(f.calls[0].url, "https://api.test/v1/memories/42");
+});
+
+// ── 2026-10-06: the gaps window A found comparing every /v1 route with the
+//    SDKs (GordonPro app/api/v1_*.py, korely-agent korely_agent/api/*.py) ──────
+
+test("only a stale_write 409 is a StaleWriteError; any other 409 is a ConflictError with its code", async () => {
+  // Every 409 was a StaleWriteError. DELETE /v1/account answers 409
+  // account_has_login, and the Self-hosted names an unnamed 409 `conflict`.
+  const cases = [
+    [{ code: "account_has_login", message: "This key belongs to an account with a Korely login." }, "account_has_login"],
+    [{ detail: "a key with that name already exists", code: "conflict", message: "a key with that name already exists" }, "conflict"],
+    [{ detail: "something clashed" }, undefined],
+  ];
+  for (const [body, code] of cases) {
+    const { k } = client([{ status: 409, body }]);
+    await assert.rejects(() => k.get("mem_1"), (e) => {
+      assert.ok(e instanceof ConflictError, `${JSON.stringify(body)} is not a ConflictError`);
+      assert.ok(e instanceof APIError);
+      assert.ok(!(e instanceof StaleWriteError), `${JSON.stringify(body)} is called a stale write`);
+      assert.equal(e.status, 409);
+      assert.equal(e.code, code);
+      return true;
+    });
+  }
+  for (const body of [{ code: "stale_write", message: "stale" }, { detail: { code: "stale_write", message: "stale" } }]) {
+    const { k } = client([{ status: 409, body }]);
+    await assert.rejects(() => k.update("mem_1", { content: "x", expected_updated_at: "2000-01-01T00:00:00Z" }), (e) => {
+      assert.ok(e instanceof StaleWriteError);
+      assert.ok(e instanceof ConflictError);
+      assert.equal(e.name, "StaleWriteError");
+      assert.equal(e.code, "stale_write");
+      return true;
+    });
+  }
 });

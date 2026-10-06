@@ -8,6 +8,16 @@ The server side of the entries marked "API" shipped on 2026-09-28. Against an
 older server these clients keep working: the old field names are still read,
 and a batch `timestamp` is refused there with a 422.
 
+## Unreleased
+
+Both clients:
+
+- A 409 is a `StaleWriteError` only when its code is `stale_write`. Any other
+  409 is a `ConflictError` (new, and the parent of `StaleWriteError`) carrying
+  the server's code: `account_has_login` on the Cloud, `conflict` on the
+  Self-hosted. Every 409 used to be a `StaleWriteError`, so a refusal that has
+  nothing to do with an update read as a lost write.
+
 ## Python 0.1.17 and npm 0.1.9 (2026-10-06)
 
 Both clients:

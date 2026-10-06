@@ -157,7 +157,8 @@ try {
 ```
 
 `AuthenticationError` (401) · `NamespaceForbiddenError` (403, e.g.
-`agent_cap_exceeded`) · `NotFoundError` (404) · `StaleWriteError` (409) ·
+`agent_cap_exceeded`) · `NotFoundError` (404) · `ConflictError` (409, e.g.
+`account_has_login`; `stale_write` is its subclass `StaleWriteError`) ·
 `QuotaExceededError` (429: `retryAfter` is set for `rate_limit_exceeded`,
 undefined for the monthly `quota_exceeded`) · `APIError` (the base of all of
 these, and everything else: 422, 503). The SDK does not retry on its own.

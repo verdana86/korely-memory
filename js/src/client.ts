@@ -11,6 +11,7 @@
 import {
   APIError,
   AuthenticationError,
+  ConflictError,
   KorelyError,
   NamespaceForbiddenError,
   NotFoundError,
@@ -379,7 +380,15 @@ export class Korely {
     if (status === 401) throw new AuthenticationError(msg, { status, code });
     if (status === 403) throw new NamespaceForbiddenError(msg, { status, code });
     if (status === 404) throw new NotFoundError(msg, { status, code });
-    if (status === 409) throw new StaleWriteError(msg, { status, code });
+    if (status === 409) {
+      // Only `stale_write` is a stale write (2026-10-06). Every 409 was thrown
+      // as StaleWriteError, so `deleteAccount()`'s `account_has_login` read as
+      // a lost update. Both servers name `stale_write` on every stale update,
+      // the self-hosted one since its first release (inside `detail` on an
+      // older install, which errorFields reads).
+      if (code === "stale_write") throw new StaleWriteError(msg, { status, code });
+      throw new ConflictError(msg, { status, code });
+    }
     if (status === 429) {
       const raw = retryAfter ?? body?.retry_after ?? body?._retry_after;
       let ra: number | undefined;

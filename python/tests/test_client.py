@@ -1279,3 +1279,51 @@ class TestTheCertificateAuthority(unittest.TestCase):
             k = Korely(api_key="kor_self_x", base_url="https://korely.localhost", verify=False)
         self.assertEqual(k._ssl_context.verify_mode, ssl.CERT_NONE)
         self.assertTrue(any("not checked" in str(x.message) for x in w))
+
+
+# ── 2026-10-06: the gaps window A found comparing every /v1 route with the
+#    SDKs (GordonPro app/api/v1_*.py, korely-agent korely_agent/api/*.py) ──────
+
+class OnlyAStaleWriteIsAStaleWrite(unittest.TestCase):
+    """Every 409 was a StaleWriteError. `DELETE /v1/account` answers 409
+    `account_has_login`, which has nothing to do with an update, and the
+    Self-hosted names a 409 it has no other name for `conflict`."""
+
+    def _err(self, body):
+        from korely_memory import ConflictError
+
+        with self.assertRaises(ConflictError) as caught:
+            Korely._raise(409, body)
+        return caught.exception
+
+    def test_account_has_login_is_a_conflict_not_a_stale_write(self):
+        e = self._err({"code": "account_has_login",
+                       "message": "This key belongs to an account with a Korely login."})
+        self.assertNotIsInstance(e, StaleWriteError)
+        self.assertIsInstance(e, APIError)
+        self.assertEqual((e.status, e.code), (409, "account_has_login"))
+        self.assertIn("Korely login", e.message)
+
+    def test_the_self_hosted_generic_conflict(self):
+        e = self._err({"detail": "a key with that name already exists",
+                       "code": "conflict", "message": "a key with that name already exists"})
+        self.assertNotIsInstance(e, StaleWriteError)
+        self.assertEqual(e.code, "conflict")
+
+    def test_a_409_that_names_no_code_is_not_called_a_stale_write(self):
+        e = self._err({"detail": "something clashed"})
+        self.assertNotIsInstance(e, StaleWriteError)
+        self.assertIsNone(e.code)
+
+    def test_stale_write_is_still_a_stale_write_and_a_conflict(self):
+        from korely_memory import ConflictError
+
+        for body in ({"code": "stale_write", "message": "stale"},
+                     {"detail": {"code": "stale_write", "message": "stale"}}):
+            with self.subTest(keys=sorted(body)):
+                rec = _Recorder().queue(409, body)
+                with self.assertRaises(StaleWriteError) as caught:
+                    _client(rec).update("mem_1", content="x",
+                                        expected_updated_at="2000-01-01T00:00:00Z")
+                self.assertIsInstance(caught.exception, ConflictError)
+                self.assertEqual(caught.exception.code, "stale_write")

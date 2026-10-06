@@ -19,6 +19,7 @@ export {
   AuthenticationError,
   NamespaceForbiddenError,
   NotFoundError,
+  ConflictError,
   StaleWriteError,
   QuotaExceededError,
   APIError,

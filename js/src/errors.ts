@@ -81,8 +81,31 @@ export class NotFoundError extends APIError {
   }
 }
 
-/** 409: update() with an expected_updated_at older than the record. */
-export class StaleWriteError extends APIError {
+/**
+ * 409: the request conflicts with what the server holds. `code` names the
+ * conflict: `stale_write` (update() with an expected_updated_at older than the
+ * record, thrown as the subclass StaleWriteError), `account_has_login`
+ * (`deleteAccount()` with the key of an account somebody signs in to, Cloud
+ * only) or `conflict` (the Self-hosted's code for a 409 that names no other).
+ *
+ * Until 2026-10-06 every 409 was a StaleWriteError, so a refusal that has
+ * nothing to do with an update read as a lost write, and code written to
+ * re-read the record and retry a stale write retried a refusal that never
+ * changes.
+ */
+export class ConflictError extends APIError {
+  constructor(message = "", opts: KorelyErrorOptions = {}) {
+    super(message, opts);
+    this.name = "ConflictError";
+    Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+/**
+ * 409 `stale_write`: update() with an expected_updated_at older than the
+ * record. A ConflictError, so `instanceof ConflictError` is true for it too.
+ */
+export class StaleWriteError extends ConflictError {
   constructor(message = "", opts: KorelyErrorOptions = {}) {
     super(message, opts);
     this.name = "StaleWriteError";

@@ -178,7 +178,8 @@ except QuotaExceededError as err:   # 429
 | `AuthenticationError` | 401 | `invalid_key` |
 | `NamespaceForbiddenError` | 403 | `agent_cap_exceeded`, missing scope |
 | `NotFoundError` | 404 | `not_found` |
-| `StaleWriteError` | 409 | `stale_write` |
+| `ConflictError` | 409 | `account_has_login` (Cloud), `conflict` (Self-hosted) |
+| `StaleWriteError` (a `ConflictError`) | 409 | `stale_write` |
 | `QuotaExceededError` (`.retry_after`) | 429 | `rate_limit_exceeded` (has `retry_after`), `quota_exceeded` (monthly, `retry_after` is None) |
 | `APIError` | any other, and the base of all of the above | `invalid_request` (422), `search_unavailable` / `model_unavailable` (503, safe to retry) |
 

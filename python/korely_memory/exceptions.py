@@ -65,8 +65,27 @@ class NotFoundError(APIError):
     """404: memory or fact id does not exist, or was forgotten."""
 
 
-class StaleWriteError(APIError):
-    """409: update() with an expected_updated_at older than the record."""
+class ConflictError(APIError):
+    """409: the request conflicts with what the server holds. ``code`` names
+    the conflict:
+
+    - ``stale_write``: ``update()`` with an ``expected_updated_at`` older than
+      the record, raised as the subclass :class:`StaleWriteError`;
+    - ``account_has_login``: ``delete_account()`` with the key of an account
+      somebody signs in to (Cloud only);
+    - ``conflict``: the Self-hosted's code for a 409 that names no other.
+
+    Until 2026-10-06 every 409 was a ``StaleWriteError``, so a refusal that has
+    nothing to do with an update (``account_has_login``) read as a lost write,
+    and code written to re-read the record and retry a stale write retried a
+    refusal that never changes.
+    """
+
+
+class StaleWriteError(ConflictError):
+    """409 ``stale_write``: update() with an expected_updated_at older than the
+    record. A :class:`ConflictError`, so ``except ConflictError`` catches it
+    too."""
 
 
 class QuotaExceededError(APIError):
