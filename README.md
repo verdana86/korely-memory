@@ -69,11 +69,12 @@ The `time.sleep(10)` above exists only so the snippet works when you paste it. *
 If you do need to know exactly when, ask instead of guessing. Every memory carries a `status` of `processing`, `ready`, or `error`, and `events()` reports what is still in flight:
 
 ```python
-korely.events()
-# {"events": [{"memory_id": "mem_...", "status": "ready", ...}], "processing": 0}
+page = korely.events()
+page.processing  # 0
+page.events[0]   # MemoryEvent(memory_id='mem_...', status='ready', ...)
 ```
 
-`processing: 0` means none of your project's writes (in the `user_id` scope, if you pass one) is still being extracted, however many there are, so a script can wait on that one number instead of walking every id. After a `batch()` import, wait for `batch_status()` to finish first: memories the job has not stored yet are not counted.
+`processing == 0` means none of your project's writes (in the `user_id` scope, if you pass one) is still being extracted, however many there are, so a script can wait on that one number instead of walking every id. After a `batch()` import, wait for `batch_status()` to finish first: memories the job has not stored yet are not counted.
 
 Polling is the only signal: no webhook fires when extraction finishes. The webhook events are `memory.created`, `fact.invalidated` and `quota.warning`.
 

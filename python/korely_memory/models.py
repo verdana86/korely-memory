@@ -318,6 +318,77 @@ class MemoryHistory:
 
 
 @dataclass
+class MemoryEvent:
+    """One write's processing state, as ``events()`` reports it: ``status`` is
+    ``processing``, ``ready`` or ``error``."""
+    memory_id: Optional[str] = None
+    user_id: Optional[str] = None
+    agent_id: Optional[str] = None
+    status: Optional[str] = None
+    created_at: Optional[str] = None
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "MemoryEvent":
+        return cls(**_take(cls, d))
+
+
+class EventsResponse(Dict[str, Any]):
+    """What ``events()`` answers. ``.events`` is a list of
+    :class:`MemoryEvent`, newest first; ``.processing`` counts the writes of
+    the key's project (of ``user_id``, when given) still being extracted,
+    over all of them, whatever ``status`` and ``limit`` say.
+
+    Still the plain dict ``events()`` returned until 2026-10-06
+    (``r["processing"]``, ``r["events"][0]["status"]``), so code written
+    against it keeps working and ``json.dumps`` takes it as it is; the
+    attributes are the typed view, the way FactList is a list that also
+    carries ``total``."""
+
+    @property
+    def events(self) -> List[MemoryEvent]:
+        return [MemoryEvent.from_dict(e) for e in (self.get("events") or [])]
+
+    @property
+    def processing(self) -> int:
+        return int(self.get("processing") or 0)
+
+    @classmethod
+    def from_dict(cls, d: Optional[dict]) -> "EventsResponse":
+        return cls(d or {})
+
+
+class ForgetReceipt(Dict[str, Any]):
+    """What ``forget_fact()`` answers: ``.id``; ``.status``, ``forgotten`` the
+    first time and ``already_forgotten`` after (closing a closed fact changes
+    nothing); ``.invalid_at``, the date the fact stopped being true (the one
+    passed as ``at``, else when it was closed); ``.audit_id``.
+
+    Still the plain dict ``forget_fact()`` returned until 2026-10-06
+    (``r["status"]``), so code written against it keeps working; the
+    attributes are the typed view."""
+
+    @property
+    def id(self) -> Optional[str]:
+        return self.get("id")
+
+    @property
+    def status(self) -> Optional[str]:
+        return self.get("status")
+
+    @property
+    def invalid_at(self) -> Optional[str]:
+        return self.get("invalid_at")
+
+    @property
+    def audit_id(self) -> Optional[str]:
+        return self.get("audit_id")
+
+    @classmethod
+    def from_dict(cls, d: Optional[dict]) -> "ForgetReceipt":
+        return cls(d or {})
+
+
+@dataclass
 class UserScope:
     """One end user the developer has stored data for, with counts."""
     user_id: Optional[str] = None

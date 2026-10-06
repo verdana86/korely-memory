@@ -38,8 +38,10 @@ from .models import (
     BulkReceipt,
     Context,
     DeleteReceipt,
+    EventsResponse,
     Fact,
     FactList,
+    ForgetReceipt,
     Memory,
     MemoryHistory,
     MemoryPage,
@@ -888,7 +890,7 @@ class Korely:
         }))
         return Fact.from_dict(body)
 
-    def forget_fact(self, fact_id: str, *, at: Optional[str] = None) -> dict:
+    def forget_fact(self, fact_id: str, *, at: Optional[str] = None) -> ForgetReceipt:
         """POST /v1/facts/{id}/forget: close a fact; it stops being current and
         stays in history.
 
@@ -897,15 +899,17 @@ class Korely:
         reason history is kept rather than rows deleted.
 
         Idempotent: closing an already-closed fact changes nothing and comes
-        back with ``status == "already_forgotten"``. Returns a dict with
-        ``id``, ``status``, ``invalid_at`` and ``audit_id``.
+        back with ``status == "already_forgotten"``. Returns a ForgetReceipt
+        (``.id``, ``.status``, ``.invalid_at``, ``.audit_id``), which is still
+        the dict it was until 2026-10-06.
 
         This is the half that makes a no-model write path possible. An agent
         that knows a fact is finished says so, and nothing has to infer it from
         a later sentence.
         """
-        return self._call("POST", "/v1/facts/" + _seg(fact_id, "fact_id") + "/forget",
-                          json_body=_clean({"at": at}))
+        return ForgetReceipt.from_dict(
+            self._call("POST", "/v1/facts/" + _seg(fact_id, "fact_id") + "/forget",
+                       json_body=_clean({"at": at})))
 
     def correct_fact(self, fact_id: str, *, subject: Optional[str] = None,
                      predicate: Optional[str] = None,
@@ -961,7 +965,7 @@ class Korely:
 
     # ── processing state ─────────────────────────────────────────────────────
     def events(self, *, user_id: Optional[str] = None, status: Optional[str] = None,
-               limit: int = 50) -> dict:
+               limit: int = 50) -> EventsResponse:
         """GET /v1/events: which writes have finished being processed.
 
         ``add()`` returns as soon as the memory is stored, then fact extraction
@@ -982,10 +986,13 @@ class Korely:
         fires for it: the webhook events are ``memory.created``,
         ``fact.invalidated`` and ``quota.warning``. The name
         ``fact_extracted`` exists only as an event type inside ``history()``.
+
+        Returns an EventsResponse: ``.events`` (MemoryEvent) and
+        ``.processing``, and still the dict it was until 2026-10-06.
         """
-        return self._call("GET", "/v1/events", params=_clean({
+        return EventsResponse.from_dict(self._call("GET", "/v1/events", params=_clean({
             "user_id": user_id, "status": status, "limit": limit,
-        }))
+        })))
 
     # ── batch ────────────────────────────────────────────────────────────────
     def batch(self, memories: "List[BatchMemory | dict]") -> BatchJob:

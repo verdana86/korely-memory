@@ -50,8 +50,10 @@ from .models import (
     BulkReceipt,
     Context,
     DeleteReceipt,
+    EventsResponse,
     Fact,
     FactList,
+    ForgetReceipt,
     Memory,
     MemoryHistory,
     MemoryPage,
@@ -122,7 +124,7 @@ class AsyncKorely:
         return await self._run(
             lambda: self._sync.add_fact_triple(subject, predicate, object, **kw))
 
-    async def forget_fact(self, fact_id: str, **kw) -> dict:
+    async def forget_fact(self, fact_id: str, **kw) -> ForgetReceipt:
         return await self._run(lambda: self._sync.forget_fact(fact_id, **kw))
 
     async def correct_fact(self, fact_id: str, **kw) -> Fact:
@@ -162,7 +164,7 @@ class AsyncKorely:
     async def delete_agent(self, agent_id: str) -> AgentDeleteReceipt:
         return await self._run(self._sync.delete_agent, agent_id)
 
-    async def events(self, **kw) -> dict:
+    async def events(self, **kw) -> EventsResponse:
         return await self._run(lambda: self._sync.events(**kw))
 
     async def batch_status(self, job_id: str) -> BatchJob:

@@ -1819,3 +1819,71 @@ class TheContextInTwoParts(unittest.TestCase):
                 ["context", "where?", "--json"]))
         data = json.loads(out.getvalue())
         self.assertEqual((data["stable_hash"], data["degraded_parts"]), ("a" * 64, ["memories"]))
+
+
+class EventsAndForgetAreTyped(unittest.TestCase):
+    """events() and forget_fact() returned bare dicts, the only two methods
+    without a model. They are typed now, and still the dicts they were."""
+
+    def test_events_has_typed_attributes(self):
+        from korely_memory import EventsResponse, MemoryEvent
+
+        rec = _Recorder().queue(200, {"events": [
+            {"memory_id": "mem_1", "user_id": "maria", "agent_id": None,
+             "status": "processing", "created_at": "2026-10-06T10:00:00+00:00"},
+            {"memory_id": "mem_0", "user_id": "maria", "agent_id": "bot",
+             "status": "ready", "created_at": "2026-10-06T09:00:00+00:00"},
+        ], "processing": 3})
+        r = _client(rec).events(user_id="maria")
+        self.assertIsInstance(r, EventsResponse)
+        self.assertEqual(r.processing, 3)
+        self.assertIsInstance(r.events[0], MemoryEvent)
+        self.assertEqual([(e.memory_id, e.status) for e in r.events],
+                         [("mem_1", "processing"), ("mem_0", "ready")])
+        self.assertEqual(r.events[1].agent_id, "bot")
+
+    def test_events_is_still_the_dict_it_was(self):
+        body = {"events": [{"memory_id": "mem_1", "status": "ready"}], "processing": 0}
+        rec = _Recorder().queue(200, dict(body))
+        r = _client(rec).events()
+        self.assertIsInstance(r, dict)
+        self.assertEqual(r["processing"], 0)
+        self.assertEqual(r["events"][0]["status"], "ready")
+        self.assertEqual(json.loads(json.dumps(r)), body)
+
+    def test_an_empty_answer_is_no_events_and_nothing_processing(self):
+        from korely_memory import EventsResponse
+
+        r = EventsResponse.from_dict({})
+        self.assertEqual((r.events, r.processing), ([], 0))
+
+    def test_forget_fact_is_typed_and_still_a_dict(self):
+        from korely_memory import ForgetReceipt
+
+        body = {"id": "fct_1", "status": "already_forgotten",
+                "invalid_at": "2026-09-30T00:00:00+00:00", "audit_id": "aud_9"}
+        rec = _Recorder().queue(200, dict(body))
+        r = _client(rec).forget_fact("fct_1", at="2026-09-30")
+        self.assertEqual(rec.last["json"], {"at": "2026-09-30"})
+        self.assertIsInstance(r, ForgetReceipt)
+        self.assertEqual((r.id, r.status, r.invalid_at, r.audit_id),
+                         ("fct_1", "already_forgotten", "2026-09-30T00:00:00+00:00", "aud_9"))
+        self.assertEqual(r["status"], "already_forgotten")
+        self.assertEqual(dict(r), body)
+
+    def test_the_async_client_returns_the_same_types(self):
+        import asyncio
+        from korely_memory import AsyncKorely, EventsResponse, ForgetReceipt
+
+        rec = (_Recorder().queue(200, {"events": [], "processing": 1})
+               .queue(200, {"id": "fct_1", "status": "forgotten"}))
+        korely = AsyncKorely(api_key="kor_live_async_types")
+        korely._sync._send = rec
+
+        async def both():
+            return await korely.events(), await korely.forget_fact("fct_1")
+
+        ev, fo = asyncio.run(both())
+        self.assertIsInstance(ev, EventsResponse)
+        self.assertIsInstance(fo, ForgetReceipt)
+        self.assertEqual((ev.processing, fo.status), (1, "forgotten"))

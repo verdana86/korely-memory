@@ -58,6 +58,11 @@ Python:
   `degraded_parts`, which both servers send and the JS client typed in 0.1.8:
   they were dropped, because a model keeps only the fields it declares. Each
   is None when an older server does not send it.
+- `events()` returns an `EventsResponse` (`.events`, a list of `MemoryEvent`,
+  and `.processing`) and `forget_fact()` a `ForgetReceipt` (`.id`, `.status`,
+  `.invalid_at`, `.audit_id`): they were the only two methods answering a
+  bare dict. Both are still that dict, so `r["processing"]` and `json.dumps`
+  keep working.
 
 ## Python 0.1.17 and npm 0.1.9 (2026-10-06)
 
