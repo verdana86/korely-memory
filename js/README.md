@@ -114,6 +114,7 @@ Every method maps to one REST endpoint.
 | `events(opts?)` | `GET /v1/events` | Which writes are still being extracted; `limit` up to 200. |
 | `batch(memories)` | `POST /v1/batch` | Bulk import, for migrations. Each item takes `timestamp`, as `add()` does. |
 | `batchStatus(jobId)` | `GET /v1/batch/:id` | Poll an import job. |
+| `ping()` | `GET /v1/ping` | Check a key without spending anything (no scope, rate limit or quota): its `tier`, `region` and `scopes`. Both products. |
 
 ## Bi-temporal facts (the moat)
 

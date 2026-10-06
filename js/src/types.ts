@@ -291,6 +291,24 @@ export interface AgentDeleteReceipt {
   slot_freed?: boolean;
 }
 
+/** What `ping()` answers: the key works. */
+export interface PingResponse {
+  /** Always true: a key that does not authenticate is an AuthenticationError instead. */
+  ok: boolean;
+  /**
+   * The plan of the key: hobby, developer, team or scale. On the Self-hosted
+   * every key says "hobby", and it limits nothing there.
+   */
+  tier: string;
+  /**
+   * Where the key's data is stored and processed, as the server declares it
+   * ("eu-hel1" on the Cloud; on the Self-hosted, what its operator set).
+   */
+  region: string;
+  /** What the key may do, e.g. "memories:read". */
+  scopes: string[];
+}
+
 // ── method option types (snake_case keys mirror the REST params) ────────────
 
 export interface AddOptions {

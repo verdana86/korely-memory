@@ -50,6 +50,7 @@ export type {
   AgentsPage,
   AgentDeleteReceipt,
   ForgetReceipt,
+  PingResponse,
   AddOptions,
   SearchOptions,
   ListOptions,

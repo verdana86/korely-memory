@@ -38,6 +38,7 @@ from .models import (
     Memory,
     MemoryHistory,
     MemoryPage,
+    PingResponse,
     Profile,
     SearchHit,
     UsersPage,
@@ -497,6 +498,17 @@ class Korely:
             cls = TooManyBatchesError if code == "too_many_batches" else QuotaExceededError
             raise cls(msg, status=status, code=code, retry_after=ra, body=server_body)
         raise APIError(msg, status=status, code=code, body=server_body, retry_after=ra)
+
+    # ── the key ────────────────────────────────────────────────────────────
+    def ping(self) -> PingResponse:
+        """GET /v1/ping: does this key work, and what may it do? Both
+        products answer it, with the same shape.
+
+        The cheapest authenticated call there is: no scope, no rate limit, no
+        quota, so it is how to check a key that was just minted or rotated
+        without spending anything. ``users()`` was the usual stand-in, and it
+        needs ``memories:read`` and counts as a query."""
+        return PingResponse.from_dict(self._call("GET", "/v1/ping"))
 
     # ── memories ───────────────────────────────────────────────────────────
     def add(self, content: "str | list", *, agent_id: Optional[str] = None,

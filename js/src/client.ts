@@ -44,6 +44,7 @@ import type {
   MemoryHistory,
   MemoryPage,
   Message,
+  PingResponse,
   Profile,
   SearchHit,
   SearchOptions,
@@ -413,6 +414,20 @@ export class Korely {
       throw new QuotaExceededError(msg, opts);
     }
     throw new APIError(msg, opts);
+  }
+
+  // ── the key ───────────────────────────────────────────────────────────────
+  /**
+   * GET /v1/ping: does this key work, and what may it do? Both products answer
+   * it, with the same shape.
+   *
+   * The cheapest authenticated call there is: no scope, no rate limit, no
+   * quota, so it is how to check a key that was just minted or rotated without
+   * spending anything. `users()` was the usual stand-in, and it needs
+   * `memories:read` and counts as a query.
+   */
+  async ping(): Promise<PingResponse> {
+    return this.request("GET", "/v1/ping");
   }
 
   // ── memories ────────────────────────────────────────────────────────────

@@ -38,6 +38,7 @@ from .models import (
     Memory,
     MemoryHistory,
     MemoryPage,
+    PingResponse,
     Profile,
     SearchHit,
     UserScope,
@@ -77,4 +78,5 @@ __all__ = [
     "AgentScope",
     "AgentsPage",
     "AgentDeleteReceipt",
+    "PingResponse",
 ]

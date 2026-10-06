@@ -398,3 +398,25 @@ class AgentDeleteReceipt:
     @classmethod
     def from_dict(cls, d: dict) -> "AgentDeleteReceipt":
         return cls(**_take(cls, d))
+
+
+@dataclass
+class PingResponse:
+    """What ``ping()`` answers: the key works.
+
+    - ``ok``: always True; a key that does not authenticate is an
+      AuthenticationError instead.
+    - ``tier``: the plan of the key (hobby, developer, team, scale). On the
+      Self-hosted every key says ``hobby``, and it limits nothing there.
+    - ``region``: where the key's data is stored and processed, as the server
+      declares it (``eu-hel1`` on the Cloud; on the Self-hosted, what its
+      operator set).
+    - ``scopes``: what the key may do, e.g. ``memories:read``."""
+    ok: bool = False
+    tier: Optional[str] = None
+    region: Optional[str] = None
+    scopes: List[str] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "PingResponse":
+        return cls(**_take(cls, d))

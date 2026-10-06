@@ -51,6 +51,7 @@ from .models import (
     Memory,
     MemoryHistory,
     MemoryPage,
+    PingResponse,
     Profile,
     SearchHit,
     UsersPage,
@@ -86,6 +87,10 @@ class AsyncKorely:
 
     async def _run(self, fn, *args, **kwargs):
         return await asyncio.to_thread(fn, *args, **kwargs)
+
+    # ── the key ───────────────────────────────────────────────────────────
+    async def ping(self) -> PingResponse:
+        return await self._run(self._sync.ping)
 
     # ── write ─────────────────────────────────────────────────────────────
     async def add(self, content: "str | list", **kw) -> Memory:

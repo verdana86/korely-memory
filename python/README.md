@@ -72,8 +72,13 @@ Every method wraps exactly one REST endpoint.
 | `events(*, user_id=, status=, limit=)` | `GET /v1/events` |
 | `batch(memories)` | `POST /v1/batch` |
 | `batch_status(job_id)` | `GET /v1/batch/:id` |
+| `ping()` | `GET /v1/ping` |
 
 `AsyncKorely` has the same methods, awaitable.
+
+`ping()` checks a key without spending anything (no scope, no rate limit, no
+quota) and answers its `tier`, `region` and `scopes`, on the Cloud and on the
+Self-hosted alike.
 
 `add(..., timestamp="2026-01-15")` backfills the past: facts extracted inherit
 the timestamp as their `valid_from`, so `as_of` point-in-time queries reflect

@@ -1411,3 +1411,32 @@ class TooManyBatchesIsNotTheMonthlyQuota(unittest.TestCase):
                     _client(rec).batch([{"content": "a"}])
                 self.assertNotIsInstance(caught.exception, TooManyBatchesError)
                 self.assertEqual(caught.exception.code, code)
+
+
+class PingChecksAKeyForFree(unittest.TestCase):
+    """GET /v1/ping, on both products: no scope, no rate limit, no quota."""
+
+    def test_the_cloud_answer(self):
+        from korely_memory import PingResponse
+
+        rec = _Recorder().queue(200, {"ok": True, "tier": "hobby", "region": "eu-hel1",
+                                      "scopes": ["memories:read", "memories:write"]})
+        p = _client(rec).ping()
+        self.assertEqual((rec.last["method"], rec.last["path"]), ("GET", "/v1/ping"))
+        self.assertIsNone(rec.last["params"])
+        self.assertIsNone(rec.last["json"])
+        self.assertIsInstance(p, PingResponse)
+        self.assertIs(p.ok, True)
+        self.assertEqual((p.tier, p.region), ("hobby", "eu-hel1"))
+        self.assertEqual(p.scopes, ["memories:read", "memories:write"])
+
+    def test_the_self_hosted_answer_has_the_same_shape(self):
+        rec = _Recorder().queue(200, {"ok": True, "tier": "hobby", "region": "eu",
+                                      "scopes": ["memories:read"]})
+        p = _client(rec).ping()
+        self.assertEqual((p.ok, p.region, p.scopes), (True, "eu", ["memories:read"]))
+
+    def test_a_key_that_does_not_work_is_an_authentication_error(self):
+        rec = _Recorder().queue(401, {"code": "invalid_key", "message": "Invalid API key."})
+        with self.assertRaises(AuthenticationError):
+            _client(rec).ping()

@@ -25,6 +25,9 @@ Both clients:
   `too_many_batches` from `batch()`, while three imports are still running.
   With no Retry-After it looked exactly like a monthly `quota_exceeded`, which
   the docs say to stop on, and it clears as soon as one batch finishes.
+- `ping()`, `GET /v1/ping` on both products: whether a key works, and its
+  `tier`, `region` and `scopes`, with no scope needed, no rate limit and no
+  quota spent.
 
 ## Python 0.1.17 and npm 0.1.9 (2026-10-06)
 

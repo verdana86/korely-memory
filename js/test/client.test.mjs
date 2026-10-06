@@ -657,3 +657,16 @@ test("too_many_batches is a TooManyBatchesError, not the monthly quota", async (
     return true;
   });
 });
+
+test("ping() reads GET /v1/ping, the same shape on both products", async () => {
+  const { k, f } = client([
+    { status: 200, body: { ok: true, tier: "hobby", region: "eu-hel1", scopes: ["memories:read", "memories:write"] } },
+    { status: 401, body: { code: "invalid_key", message: "Invalid API key." } },
+  ]);
+  const p = await k.ping();
+  assert.equal(f.calls[0].init.method, "GET");
+  assert.equal(f.calls[0].url, "https://api.test/v1/ping");
+  assert.equal(f.calls[0].init.body, undefined);
+  assert.deepEqual(p, { ok: true, tier: "hobby", region: "eu-hel1", scopes: ["memories:read", "memories:write"] });
+  await assert.rejects(() => k.ping(), AuthenticationError);
+});
