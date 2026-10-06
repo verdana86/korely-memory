@@ -156,8 +156,12 @@ def korely_add(content: str, user_id: Optional[str] = None,
     return "\n".join(out)
 
 
+# `limit` defaults to 10, as `korely_search` on both hosted MCP servers
+# (GordonPro app/mcp/agent_server.py, korely-agent korely_agent/mcp/server.py,
+# checked 2026-10-06). It was 15, the REST default of POST /v1/memories/search,
+# so the same tool call gave a model more hits here than on the hosted server.
 @mcp.tool()
-def korely_search(query: str, user_id: Optional[str] = None, limit: int = 15) -> str:
+def korely_search(query: str, user_id: Optional[str] = None, limit: int = 10) -> str:
     """Semantic (vector) search over raw memories: ranked hits with a relevance score.
 
     Use when you want the underlying memories rather than the assembled context

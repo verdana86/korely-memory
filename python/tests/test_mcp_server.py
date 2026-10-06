@@ -268,3 +268,32 @@ class TheProtocol(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheSearchDefaultOfTheHostedServers(unittest.TestCase):
+    """`korely_search` defaults to 10 on both hosted MCP servers (GordonPro
+    app/mcp/agent_server.py, korely-agent korely_agent/mcp/server.py, checked
+    2026-10-06); this one said 15, the REST default."""
+
+    def test_the_schema_says_10(self):
+        from korely_memory import mcp_server as m
+
+        listed = m.mcp.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})["result"]["tools"]
+        search = {t["name"]: t for t in listed}["korely_search"]
+        self.assertEqual(search["inputSchema"]["properties"]["limit"], {"type": "integer", "default": 10})
+
+    def test_a_call_without_limit_asks_for_10(self):
+        from korely_memory import Korely
+        from korely_memory import mcp_server as m
+
+        sent = []
+
+        def send(method, path, *, params=None, json_body=None):
+            sent.append(json_body)
+            return 200, {"results": []}
+
+        k = Korely(api_key="kor_live_mcp_test")
+        k._send = send
+        with mock.patch.object(m, "_client", lambda: k):
+            self.assertEqual(m.korely_search("tea"), "no matches.")
+        self.assertEqual(sent[0]["limit"], 10)

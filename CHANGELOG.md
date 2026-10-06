@@ -80,6 +80,12 @@ Python:
 - `korely search` sends no `--limit` unless given, so the server applies the
   API's default, 15. It sent 10.
 
+`korely-mcp`:
+
+- `korely_search` asks for 10 hits by default, as `korely_search` does on
+  both hosted MCP servers (Cloud and Self-hosted). It asked for 15, the REST
+  default, so the same tool call gave a model more hits here.
+
 ## Python 0.1.17 and npm 0.1.9 (2026-10-06)
 
 Both clients:
