@@ -156,6 +156,9 @@ class TestParserWiring(unittest.TestCase):
             ["facts"], ["profile"], ["users"], ["get", "mem_1"],
             ["delete", "mem_1"], ["delete-all", "--user-id", "x", "--yes"],
             ["list"], ["update", "mem_1", "new text"], ["history", "mem_1"], ["events"],
+            ["agents"], ["delete-agent", "--agent-id", "bot", "--yes"],
+            ["add-fact", "maria", "lives_in", "Milan"], ["correct-fact", "fct_1", "--object", "x"],
+            ["forget-fact", "fct_1"], ["batch", "memories.jsonl"], ["batch-status", "job_1"],
         ):
             with self.subTest(cmd=argv[0]):
                 a = _args(argv)
@@ -625,10 +628,7 @@ class SearchTakesTheApiDefault(unittest.TestCase):
         self.assertEqual(rec.calls[1]["json"]["limit"], 5)
 
 
-class TheMemoryCommands(unittest.TestCase):
-    """list, update, history and events: routes the SDK had and the CLI did
-    not (window A's comparison of every /v1 route, 2026-10-06)."""
-
+class _RunsCommands(unittest.TestCase):
     def _run(self, rec, argv, stdin=None):
         """One command against the recorder: (exit code, stdout, parsed with --json)."""
         import json as _json
@@ -644,6 +644,20 @@ class TheMemoryCommands(unittest.TestCase):
             rc = a.func(_client(rec), a)
         text = out.getvalue()
         return rc, (_json.loads(text) if "--json" in argv else text)
+
+    def _refused(self, rec, argv):
+        """(exit code, stderr) of a command refused before any call."""
+        err = io.StringIO()
+        with redirect_stderr(err), redirect_stdout(io.StringIO()):
+            a = _args(argv)
+            rc = a.func(_client(rec), a)
+        self.assertEqual(rec.calls, [])
+        return rc, err.getvalue()
+
+
+class TheMemoryCommands(_RunsCommands):
+    """list, update, history and events: routes the SDK had and the CLI did
+    not (window A's comparison of every /v1 route, 2026-10-06)."""
 
     def test_list(self):
         rec = _Recorder().queue(200, {"memories": [
@@ -734,3 +748,131 @@ class TheMemoryCommands(unittest.TestCase):
         rec.queue(200, {"events": [], "processing": 0})
         rc, data = self._run(rec, ["events", "--json"])
         self.assertEqual(data, {"events": [], "processing": 0})
+
+
+class TheAgentFactAndBatchCommands(_RunsCommands):
+    """agents, delete-agent, the fact writes and the batch: routes the SDK had
+    and the CLI did not (2026-10-06)."""
+
+    def test_agents(self):
+        rec = _Recorder().queue(200, {"agents": [
+            {"agent_id": "support-bot", "memories": 12, "facts": 4,
+             "last_active": "2026-10-06T10:00:00+00:00"}], "total": 1, "cap": 2, "used": 2})
+        rc, out = self._run(rec, ["agents", "--limit", "10"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(rec.last["params"], {"limit": 10, "offset": 0})
+        self.assertIn("1 agent namespace(s) in this project (2 of 2 agent slot(s) used", out)
+        self.assertIn("support-bot", out)
+        rec.queue(200, {"agents": [], "total": 0, "cap": 0, "used": 0})
+        rc, out = self._run(rec, ["agents"])
+        self.assertIn("no agent namespaces in this project (no agent cap)", out)
+
+    def test_delete_agent_needs_the_name_and_yes(self):
+        rc, err = self._refused(_Recorder(), ["delete-agent", "--yes"])
+        self.assertEqual(rc, 2)
+        self.assertIn("--agent-id", err)
+        rc, err = self._refused(_Recorder(), ["delete-agent", "--agent-id", "bot"])
+        self.assertEqual(rc, 2)
+        self.assertIn("--yes", err)
+
+    def test_delete_agent(self):
+        rec = _Recorder().queue(200, {"agent_id": "bot#1", "memories_deleted": 3,
+                                      "facts_deleted": 1, "audit_id": "aud_1", "slot_freed": False})
+        rc, out = self._run(rec, ["delete-agent", "--agent-id", "bot#1", "--yes"])
+        self.assertEqual(rc, 0)
+        self.assertEqual((rec.last["method"], rec.last["path"]), ("DELETE", "/v1/agents/bot%231"))
+        self.assertIn("deleted agent bot#1  (3 memory(ies), 1 fact(s) erased, audit aud_1", out)
+        self.assertIn("slot still taken", out)
+
+    def test_add_fact(self):
+        rec = _Recorder().queue(201, {"id": "fct_2", "subject": "maria", "predicate": "lives_in",
+                                      "object": "Milan", "valid_from": "2026-03-01T00:00:00+00:00",
+                                      "invalidated": ["fct_1"]})
+        rc, out = self._run(rec, ["add-fact", "maria", "lives_in", "Milan", "--user-id", "maria",
+                                  "--valid-from", "2026-03-01", "--tense", "current",
+                                  "--subject-type", "person"])
+        self.assertEqual(rc, 0)
+        self.assertEqual((rec.last["method"], rec.last["path"]), ("POST", "/v1/facts"))
+        self.assertEqual(rec.last["json"], {
+            "subject": "maria", "predicate": "lives_in", "object": "Milan", "user_id": "maria",
+            "subject_type": "person", "object_is_literal": False, "confidence": 0.9,
+            "valid_from": "2026-03-01", "tense": "current"})
+        self.assertIn("stored  fct_2  maria · lives_in · Milan [from 2026-03-01]", out)
+        self.assertIn("superseded: fct_1", out)
+
+    def test_correct_fact(self):
+        rc, err = self._refused(_Recorder(), ["correct-fact", "fct_1"])
+        self.assertEqual(rc, 2)
+        rec = _Recorder().queue(200, {"id": "fct_9", "subject": "maria", "predicate": "lives_in",
+                                      "object": "Rome", "invalidated": ["fct_1"]})
+        rc, out = self._run(rec, ["correct-fact", "fct_1", "--object", "Rome"])
+        self.assertEqual((rec.last["method"], rec.last["path"]), ("PATCH", "/v1/facts/fct_1"))
+        self.assertEqual(rec.last["json"], {"object": "Rome"})
+        self.assertIn("corrected  fct_1 -> fct_9  maria · lives_in · Rome", out)
+        rec.queue(200, {"id": "fct_1", "subject": "maria", "predicate": "lives_in",
+                        "object": "Milan", "invalidated": []})
+        rc, out = self._run(rec, ["correct-fact", "fct_1", "--object", "Milan"])
+        self.assertIn("reconfirmed  fct_1", out)
+
+    def test_forget_fact(self):
+        rec = _Recorder().queue(200, {"id": "fct_1", "status": "forgotten",
+                                      "invalid_at": "2026-09-30T00:00:00+00:00", "audit_id": "aud_3"})
+        rc, out = self._run(rec, ["forget-fact", "fct_1", "--at", "2026-09-30"])
+        self.assertEqual((rec.last["method"], rec.last["path"]), ("POST", "/v1/facts/fct_1/forget"))
+        self.assertEqual(rec.last["json"], {"at": "2026-09-30"})
+        self.assertIn("forgotten  fct_1  (kept in history, true until 2026-09-30, audit aud_3)", out)
+        rec.queue(200, {"id": "fct_1", "status": "already_forgotten", "invalid_at": None,
+                        "audit_id": None})
+        rc, data = self._run(rec, ["forget-fact", "fct_1", "--json"])
+        self.assertEqual(data["status"], "already_forgotten")
+
+    def _file(self, text):
+        import tempfile
+        fd, path = tempfile.mkstemp(suffix=".json")
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(text)
+        self.addCleanup(os.unlink, path)
+        return path
+
+    def test_batch_reads_every_shape_and_scopes_what_names_no_user(self):
+        import json as _json
+        shapes = [
+            _json.dumps([{"content": "a", "timestamp": "2026-01-15"}, "b"]),
+            _json.dumps({"memories": [{"content": "a", "timestamp": "2026-01-15"}, "b"]}),
+            '{"content": "a", "timestamp": "2026-01-15"}\n\n"b"\n',
+        ]
+        for text in shapes:
+            with self.subTest(text=text[:20]):
+                rec = _Recorder().queue(202, {"id": "job_1", "status": "processing", "received": 2})
+                rc, out = self._run(rec, ["batch", self._file(text), "--user-id", "franco"])
+                self.assertEqual(rc, 0)
+                self.assertEqual((rec.last["method"], rec.last["path"]), ("POST", "/v1/batch"))
+                self.assertEqual(rec.last["json"], {"memories": [
+                    {"content": "a", "timestamp": "2026-01-15", "user_id": "franco"},
+                    {"content": "b", "user_id": "franco"}]})
+                self.assertIn("queued  job_1  (2 memory(ies), processing)", out)
+                self.assertIn("korely batch-status job_1", out)
+
+    def test_batch_keeps_an_item_s_own_user_and_reads_stdin(self):
+        rec = _Recorder().queue(202, {"id": "job_2", "status": "processing", "received": 1})
+        rc, _ = self._run(rec, ["batch", "-", "--user-id", "franco"],
+                          stdin='[{"content": "a", "user_id": "maria"}]')
+        self.assertEqual(rec.last["json"], {"memories": [{"content": "a", "user_id": "maria"}]})
+
+    def test_batch_refuses_what_it_cannot_read(self):
+        for text in ("", "[1, 2]", '{"content": "a"}\nnot json\n'):
+            with self.subTest(text=text):
+                rc, err = self._refused(_Recorder(), ["batch", self._file(text)])
+                self.assertEqual(rc, 2)
+        rc, err = self._refused(_Recorder(), ["batch", "/nonexistent/memories.jsonl"])
+        self.assertEqual(rc, 2)
+        self.assertIn("cannot read", err)
+
+    def test_batch_status(self):
+        rec = _Recorder().queue(200, {"id": "job_1", "status": "completed", "received": 3,
+                                      "imported": 2, "failed": 1,
+                                      "errors": [{"index": 2, "error": "content contains a NUL byte"}]})
+        rc, out = self._run(rec, ["batch-status", "job_1"])
+        self.assertEqual(rec.last["path"], "/v1/batch/job_1")
+        self.assertIn("job_1  completed  2 of 3 imported, 1 failed", out)
+        self.assertIn("memory 2: content contains a NUL byte", out)

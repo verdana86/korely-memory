@@ -83,6 +83,12 @@ Python:
   /v1/memories`, `--limit`, `--offset`, `--run-id`), `update ID TEXT` (`PATCH`,
   stdin with `-`, `--expected-updated-at`), `history ID` and `events`
   (`--status`, `--limit`). Timelines print UTC times.
+- `agents` and `delete-agent --agent-id A --yes` (`GET` / `DELETE
+  /v1/agents`); `add-fact SUBJECT PREDICATE OBJECT`, `correct-fact ID` and
+  `forget-fact ID [--at DATE]`, the fact writes, which the CLI could only
+  read; `batch FILE` (a JSON array, `{"memories": [...]}` or JSON Lines, `-`
+  for stdin; `--user-id` / `--agent-id` scope the items that name none) and
+  `batch-status JOB`.
 
 `korely-mcp`:
 

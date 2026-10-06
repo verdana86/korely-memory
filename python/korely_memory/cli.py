@@ -394,6 +394,164 @@ def cmd_delete_all(k: Korely, a) -> int:
     return 0
 
 
+def cmd_agents(k: Korely, a) -> int:
+    page = k.list_agents(limit=a.limit, offset=a.offset)
+    if a.json:
+        _emit_json(page)
+        return 0
+    cap = (f"{page.used} of {page.cap} agent slot(s) used across the account" if page.cap
+           else "no agent cap")
+    if not len(page):
+        print(f"no agent namespaces in this project ({cap}).")
+        return 0
+    print(f"{page.total} agent namespace(s) in this project ({cap}):")
+    for ag in page:
+        print(f"  {ag.agent_id or '':30s} {ag.memories:>4} mem  {ag.facts:>4} facts  "
+              f"{(ag.last_active or '')[:10]}")
+    return 0
+
+
+def cmd_delete_agent(k: Korely, a) -> int:
+    # Named by --agent-id, as delete-all names its user by --user-id.
+    if not a.agent_id:
+        print("error: delete-agent needs --agent-id (which namespace to purge).", file=sys.stderr)
+        return 2
+    if not a.yes:
+        print(f"error: this permanently deletes every memory + fact written under agent "
+              f"'{a.agent_id}' in this project. Re-run with --yes to confirm.", file=sys.stderr)
+        return 2
+    r = k.delete_agent(a.agent_id)
+    if a.json:
+        _emit_json(r)
+        return 0
+    slot = {True: ", slot freed",
+            False: ", slot still taken: another project of the account uses the name"}.get(
+                r.slot_freed, "")
+    print(f"deleted agent {r.agent_id}  ({r.memories_deleted or 0} memory(ies), "
+          f"{r.facts_deleted or 0} fact(s) erased, audit {r.audit_id}{slot})")
+    return 0
+
+
+def cmd_add_fact(k: Korely, a) -> int:
+    f = k.add_fact_triple(a.subject, a.predicate, a.object, user_id=a.user_id,
+                          agent_id=a.agent_id, run_id=a.run_id, subject_type=a.subject_type,
+                          object_is_literal=a.literal, confidence=a.confidence,
+                          valid_from=a.valid_from, tense=a.tense)
+    if a.json:
+        _emit_json(f)
+        return 0
+    print(f"stored  {f.id}  {_fact_line(f)}")
+    if f.invalidated:
+        print(f"  superseded: {', '.join(f.invalidated)}")
+    return 0
+
+
+def cmd_correct_fact(k: Korely, a) -> int:
+    if not (a.subject or a.predicate or a.object):
+        print("error: correct-fact needs at least one of --subject, --predicate, --object.",
+              file=sys.stderr)
+        return 2
+    f = k.correct_fact(a.fact_id, subject=a.subject, predicate=a.predicate, object=a.object)
+    if a.json:
+        _emit_json(f)
+        return 0
+    if f.id == a.fact_id and not f.invalidated:
+        # The correction restated the fact as it stands: reconfirmed, nothing superseded.
+        print(f"reconfirmed  {f.id}  {_fact_line(f)}")
+        return 0
+    print(f"corrected  {a.fact_id} -> {f.id}  {_fact_line(f)}")
+    if f.invalidated:
+        print(f"  superseded: {', '.join(f.invalidated)}")
+    return 0
+
+
+def cmd_forget_fact(k: Korely, a) -> int:
+    r = k.forget_fact(a.fact_id, at=a.at)
+    if a.json:
+        _emit_json(r)
+        return 0
+    word = "already forgotten" if r.status == "already_forgotten" else "forgotten"
+    ended = f", true until {_utc_day(r.invalid_at)}" if r.invalid_at else ""
+    print(f"{word}  {r.id}  (kept in history{ended}, audit {r.audit_id})")
+    return 0
+
+
+def _read_batch(source: str) -> list:
+    """The memories of `korely batch`, from a file or stdin ('-'): a JSON
+    array, an object with `memories` (the body of POST /v1/batch), or JSON
+    Lines, one memory per line. A memory is an object (the body of one `add`)
+    or a string, taken as its content."""
+    text = (sys.stdin.read() if source == "-" else Path(source).read_text(encoding="utf-8")).strip()
+    if not text:
+        return []
+    try:
+        data = json.loads(text)
+    except ValueError:
+        data = []
+        for n, line in enumerate(text.splitlines(), 1):
+            if line.strip():
+                try:
+                    data.append(json.loads(line))
+                except ValueError as e:
+                    raise ValueError(f"line {n} is not JSON ({e})")
+    if isinstance(data, dict):
+        data = data["memories"] if "memories" in data else [data]
+    if not isinstance(data, list):
+        raise ValueError("expected a list of memories")
+    items = []
+    for i, m in enumerate(data):
+        if isinstance(m, str):
+            m = {"content": m}
+        if not isinstance(m, dict):
+            raise ValueError(f"memory {i} is neither an object nor a string")
+        items.append(dict(m))
+    return items
+
+
+def cmd_batch(k: Korely, a) -> int:
+    try:
+        items = _read_batch(a.file)
+    except (OSError, ValueError) as e:
+        print(f"error: cannot read {a.file}: {e}", file=sys.stderr)
+        return 2
+    if not items:
+        print(f"error: no memories in {a.file}.", file=sys.stderr)
+        return 2
+    # --user-id / --agent-id are the scope of the items that name none: every
+    # command takes them, and a flag that a command ignores in silence is a
+    # batch that lands in the wrong namespace.
+    for item in items:
+        if a.user_id:
+            item.setdefault("user_id", a.user_id)
+        if a.agent_id:
+            item.setdefault("agent_id", a.agent_id)
+    job = k.batch(items)
+    if a.json:
+        _emit_json(job)
+        return 0
+    print(f"queued  {job.id}  ({job.received} memory(ies), {job.status})")
+    print(f"  follow it:  korely batch-status {job.id}")
+    return 0
+
+
+def cmd_batch_status(k: Korely, a) -> int:
+    job = k.batch_status(a.job_id)
+    if a.json:
+        _emit_json(job)
+        return 0
+    print(f"{job.id}  {job.status}  {job.imported or 0} of {job.received or 0} imported, "
+          f"{job.failed or 0} failed")
+    errors = job.errors or []
+    for e in errors[:10]:
+        if isinstance(e, dict) and "index" in e:
+            print(f"  memory {e.get('index')}: {e.get('error')}")
+        else:
+            print(f"  {e}")
+    if len(errors) > 10:
+        print(f"  ...and {len(errors) - 10} more (--json shows them all)")
+    return 0
+
+
 def cmd_init(args) -> int:
     """Self-serve signup: mint a hobby key with no Firebase, save it locally.
 
@@ -580,6 +738,35 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--limit", type=int, default=50)
     sp.set_defaults(func=cmd_facts)
 
+    sp = sub.add_parser("add-fact", parents=[common],
+                        help="write a typed fact directly, no extraction (contradiction-checked)")
+    sp.add_argument("subject")
+    sp.add_argument("predicate")
+    sp.add_argument("object")
+    sp.add_argument("--run-id", help="optional run/session id")
+    sp.add_argument("--valid-from", help="ISO date it became true (default: now)")
+    sp.add_argument("--tense", choices=["current", "past", "planned"],
+                    help="past closes the open fact it restates (default: the server's, current)")
+    sp.add_argument("--subject-type", default="unknown", help="person, company... (default unknown)")
+    sp.add_argument("--literal", action="store_true",
+                    help="the object is a value (a price, a date), not an entity")
+    sp.add_argument("--confidence", type=float, default=0.9)
+    sp.set_defaults(func=cmd_add_fact)
+
+    sp = sub.add_parser("correct-fact", parents=[common],
+                        help="supersede a fact with a corrected one (the old one stays in history)")
+    sp.add_argument("fact_id")
+    sp.add_argument("--subject")
+    sp.add_argument("--predicate")
+    sp.add_argument("--object")
+    sp.set_defaults(func=cmd_correct_fact)
+
+    sp = sub.add_parser("forget-fact", parents=[common],
+                        help="close a fact: no longer current, kept in history")
+    sp.add_argument("fact_id")
+    sp.add_argument("--at", help="ISO date it STOPPED being true (default: now)")
+    sp.set_defaults(func=cmd_forget_fact)
+
     sp = sub.add_parser("profile", parents=[common], help="assembled profile of one end user")
     sp.add_argument("--as-of", help="ISO date: the point-in-time profile")
     sp.set_defaults(func=cmd_profile)
@@ -587,6 +774,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("users", parents=[common], help="end users you've stored data for")
     sp.add_argument("--limit", type=int, default=50)
     sp.set_defaults(func=cmd_users)
+
+    sp = sub.add_parser("agents", parents=[common],
+                        help="this project's agent namespaces, and the agent cap")
+    sp.add_argument("--limit", type=int, default=50)
+    sp.add_argument("--offset", type=int, default=0)
+    sp.set_defaults(func=cmd_agents)
 
     sp = sub.add_parser("list", parents=[common], help="the memories of a scope, newest first")
     sp.add_argument("--run-id", help="one run/session")
@@ -618,6 +811,20 @@ def build_parser() -> argparse.ArgumentParser:
                         help="GDPR: forget EVERY memory + fact for one --user-id (needs --yes)")
     sp.add_argument("--yes", action="store_true", help="confirm the irreversible wipe")
     sp.set_defaults(func=cmd_delete_all)
+
+    sp = sub.add_parser("delete-agent", parents=[common],
+                        help="purge one --agent-id of this project, freeing its slot (needs --yes)")
+    sp.add_argument("--yes", action="store_true", help="confirm the irreversible purge")
+    sp.set_defaults(func=cmd_delete_agent)
+
+    sp = sub.add_parser("batch", parents=[common],
+                        help="bulk import (up to 500): JSON array, {\"memories\": [...]} or JSON Lines")
+    sp.add_argument("file", help="the file; '-' reads stdin")
+    sp.set_defaults(func=cmd_batch)
+
+    sp = sub.add_parser("batch-status", parents=[common], help="poll an import job")
+    sp.add_argument("job_id")
+    sp.set_defaults(func=cmd_batch_status)
 
     return p
 

@@ -258,10 +258,20 @@ ones that read or write memories.
 | `korely get ID` / `korely history ID` | `GET /v1/memories/:id` / `.../history` |
 | `korely events [--status error]` | `GET /v1/events` |
 | `korely facts [--as-of DATE]` | `GET /v1/facts` |
+| `korely add-fact SUBJECT PREDICATE OBJECT` | `POST /v1/facts` (`--valid-from`, `--tense`) |
+| `korely correct-fact ID --object O` | `PATCH /v1/facts/:id` |
+| `korely forget-fact ID [--at DATE]` | `POST /v1/facts/:id/forget` |
 | `korely profile --user-id U` | `GET /v1/profile` |
 | `korely users` | `GET /v1/users` |
+| `korely agents` | `GET /v1/agents` |
 | `korely delete ID` | `DELETE /v1/memories/:id` |
 | `korely delete-all --user-id U --yes` | `DELETE /v1/users/:user_id/memories` |
+| `korely delete-agent --agent-id A --yes` | `DELETE /v1/agents/:agent_id` |
+| `korely batch FILE` / `korely batch-status JOB` | `POST /v1/batch` / `GET /v1/batch/:id` |
+
+`korely batch` reads a JSON array, an object with `memories`, or JSON Lines
+(`-` for stdin); an item is the body of one `add`, or a string taken as its
+content. `--user-id` and `--agent-id` scope the items that name none.
 
 ## LangGraph
 
