@@ -8,7 +8,7 @@ The server side of the entries marked "API" shipped on 2026-09-28. Against an
 older server these clients keep working: the old field names are still read,
 and a batch `timestamp` is refused there with a 422.
 
-## Unreleased
+## Python 0.1.17 and npm 0.1.9 (2026-10-06)
 
 Both clients:
 
