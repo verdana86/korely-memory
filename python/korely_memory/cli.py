@@ -143,13 +143,17 @@ def _fact_line(f) -> str:
 
 # ── commands ───────────────────────────────────────────────────────────────
 def cmd_auth(k: Korely, a) -> int:
-    page = k.users(limit=1)  # cheapest authenticated call
+    # GET /v1/ping (2026-10-06): no scope, no rate limit, no quota. It was
+    # GET /v1/users, which needs memories:read, so a write-only key failed
+    # the check it was meant to pass, and every check spent a query.
+    p = k.ping()
     if a.json:
-        _emit_json({"authenticated": True, "key": _mask(k.api_key),
-                    "base_url": k.base_url, "end_users": page.total})
+        _emit_json({"authenticated": bool(p.ok), "key": _mask(k.api_key),
+                    "base_url": k.base_url, "tier": p.tier, "region": p.region,
+                    "scopes": p.scopes})
     else:
         print(f"Authenticated  key {_mask(k.api_key)}  base {k.base_url}")
-        print(f"{page.total} end user(s) stored.")
+        print(f"tier {p.tier}  region {p.region}  scopes {', '.join(p.scopes) or '(none)'}")
     return 0
 
 

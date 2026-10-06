@@ -73,6 +73,10 @@ Python:
   account on the server, impossible to close. The check comes before the
   signup, so a refused `init` creates no account. Saving the same key again
   needs no flag. `init --agent` now signs up through `Korely.init_agent()`.
+- `korely auth` checks the key with `GET /v1/ping` and prints its tier,
+  region and scopes. It called `GET /v1/users`, which needs `memories:read`
+  (a write-only key failed the check) and counts as a query. `--json` has
+  `tier`, `region` and `scopes` instead of `end_users`.
 
 ## Python 0.1.17 and npm 0.1.9 (2026-10-06)
 

@@ -569,3 +569,43 @@ class InitDoesNotLoseASavedKey(_CleanEnv):
         rc, _, _ = self._init(["init", "--api-key", self._OLD["api_key"]])
         self.assertEqual(rc, 0)
         self.assertEqual(self._config()["api_key"], self._OLD["api_key"])
+
+
+class AuthSpendsNothing(unittest.TestCase):
+    """`korely auth` called GET /v1/users: it needs memories:read, so a
+    write-only key failed the check, and each check spent a query. It calls
+    GET /v1/ping now, which needs no scope and spends no quota."""
+
+    _PING = {"ok": True, "tier": "hobby", "region": "eu-hel1", "scopes": ["memories:write"]}
+
+    def test_it_pings_and_prints_what_the_key_may_do(self):
+        rec = _Recorder().queue(200, dict(self._PING))
+        out = io.StringIO()
+        with redirect_stdout(out):
+            rc = cli.cmd_auth(_client(rec), _args(["auth"]))
+        self.assertEqual(rc, 0)
+        self.assertEqual([(c["method"], c["path"]) for c in rec.calls], [("GET", "/v1/ping")])
+        self.assertIn("Authenticated", out.getvalue())
+        self.assertIn("tier hobby  region eu-hel1  scopes memories:write", out.getvalue())
+        self.assertNotIn("kor_live_test", out.getvalue().replace("kor_live_…", ""))
+
+    def test_json(self):
+        import json as _json
+        rec = _Recorder().queue(200, dict(self._PING))
+        out = io.StringIO()
+        with redirect_stdout(out):
+            cli.cmd_auth(_client(rec), _args(["auth", "--json"]))
+        data = _json.loads(out.getvalue())
+        self.assertEqual((data["authenticated"], data["tier"], data["region"], data["scopes"]),
+                         (True, "hobby", "eu-hel1", ["memories:write"]))
+        self.assertEqual(data["base_url"], "https://api.korely.ai")
+
+    def test_a_key_that_does_not_work(self):
+        from unittest import mock
+        rec = _Recorder().queue(401, {"code": "invalid_key", "message": "Invalid API key."})
+        err = io.StringIO()
+        with mock.patch.object(cli, "Korely", side_effect=lambda **kw: _client(rec)), \
+                redirect_stderr(err), redirect_stdout(io.StringIO()):
+            rc = cli.main(["auth", "--api-key", "kor_live_test"])
+        self.assertEqual(rc, 1)
+        self.assertIn("[invalid_key]", err.getvalue())
