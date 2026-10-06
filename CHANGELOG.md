@@ -64,6 +64,16 @@ Python:
   bare dict. Both are still that dict, so `r["processing"]` and `json.dumps`
   keep working.
 
+`korely` CLI:
+
+- `korely init` no longer replaces a key already saved in
+  `~/.korely/config.json` without `--force`, and says why: the account
+  `init --agent` makes has no login, so its key is the only way to use it and
+  the only way to delete it. A second `init` overwrote it and left the first
+  account on the server, impossible to close. The check comes before the
+  signup, so a refused `init` creates no account. Saving the same key again
+  needs no flag. `init --agent` now signs up through `Korely.init_agent()`.
+
 ## Python 0.1.17 and npm 0.1.9 (2026-10-06)
 
 Both clients:

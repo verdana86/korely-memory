@@ -479,3 +479,93 @@ class InitSignsUpThroughTheSdk(_CleanEnv):
         self.assertIn("kor_live_…cdef", out.getvalue())
         self.assertNotIn("0123456789abcdef0123", out.getvalue())
         self.assertIn("2000 writes / 10000 queries per month", out.getvalue())
+
+
+class InitDoesNotLoseASavedKey(_CleanEnv):
+    """A second `korely init` overwrote the key in ~/.korely/config.json. The
+    account `init --agent` makes has no login, so its key was the only way to
+    delete it: the account stayed on the server, impossible to close."""
+
+    _OLD = {"api_key": "kor_live_old0000000000000000000000000000", "base_url": "https://api.korely.ai",
+            "tier": "hobby"}
+
+    def setUp(self):
+        super().setUp()
+        import json as _json
+        with open(os.path.join(self.cfg_dir, "config.json"), "w", encoding="utf-8") as fh:
+            _json.dump(self._OLD, fh)
+
+    def _config(self):
+        import json as _json
+        with open(os.path.join(self.cfg_dir, "config.json"), encoding="utf-8") as fh:
+            return _json.load(fh)
+
+    def _init(self, argv, answer=None):
+        import json as _json
+        import urllib.request
+
+        calls = []
+
+        class _Resp:
+            status = 201
+
+            def read(self):
+                return _json.dumps(answer).encode()
+
+            def getcode(self):
+                return 201
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+
+        def network(req, timeout=None):
+            calls.append(req)
+            if answer is None:
+                raise AssertionError("init must not reach the network here")
+            return _Resp()
+
+        real, urllib.request.urlopen = urllib.request.urlopen, network
+        err = io.StringIO()
+        try:
+            with redirect_stderr(err), redirect_stdout(io.StringIO()):
+                rc = cli.main(argv)
+        finally:
+            urllib.request.urlopen = real
+        return rc, err.getvalue(), calls
+
+    def test_a_signup_over_a_saved_key_is_refused_before_any_account_is_made(self):
+        rc, err, calls = self._init(["init", "--agent"])
+        self.assertEqual(rc, 2)
+        self.assertEqual(calls, [])
+        self.assertEqual(self._config(), self._OLD)
+        self.assertIn("--force", err)
+        self.assertIn("korely delete-account", err)
+        self.assertIn("kor_live_…0000", err)
+        self.assertNotIn(self._OLD["api_key"], err)
+
+    def test_force_replaces_it(self):
+        rc, _, calls = self._init(["init", "--agent", "--force"],
+                                  answer={"api_key": "kor_live_new1111111111111111111111111111",
+                                          "tier": "hobby", "region": "eu-hel1",
+                                          "scopes": [], "quotas": {}})
+        self.assertEqual(rc, 0)
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(self._config()["api_key"], "kor_live_new1111111111111111111111111111")
+
+    def test_saving_another_key_is_refused_too(self):
+        rc, err, _ = self._init(["init", "--api-key", "kor_self_mine", "--base-url",
+                                 "https://mine.example"])
+        self.assertEqual(rc, 2)
+        self.assertEqual(self._config(), self._OLD)
+        rc, _, _ = self._init(["init", "--api-key", "kor_self_mine", "--base-url",
+                               "https://mine.example", "--force"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(self._config()["api_key"], "kor_self_mine")
+
+    def test_saving_the_same_key_again_needs_no_force(self):
+        rc, _, _ = self._init(["init", "--api-key", self._OLD["api_key"]])
+        self.assertEqual(rc, 0)
+        self.assertEqual(self._config()["api_key"], self._OLD["api_key"])

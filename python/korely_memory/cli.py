@@ -317,6 +317,25 @@ def cmd_init(args) -> int:
     # server, which made the README right about the idea and wrong about the
     # command: it did not exist, and the error was an unrecognized argument.
     given = (getattr(args, "api_key", None) or "").strip()
+
+    # A key already saved is not replaced without --force (2026-10-06). The
+    # account `init --agent` makes has no login: its key is the only way to
+    # use it and the only way to delete it (`korely delete-account`). A second
+    # `init` overwrote the file, and the first account stayed on the server,
+    # with its memories, impossible to close, its key held by nobody. Checked
+    # before the signup call, so a refused init mints no account either.
+    saved = _load_config().get("api_key")
+    if saved and saved != given and not getattr(args, "force", False):
+        print(f"error: nothing changed. A key is already saved in {_config_path()} "
+              f"({_mask(saved)}).\n"
+              "  If it came from `korely init --agent`, its account has no login: that "
+              "key is the only way\n"
+              "  to use the account, and the only way to delete it.\n"
+              "  To close that account first:  korely delete-account --yes\n"
+              "  To keep it, copy the key somewhere safe, then re-run with --force.",
+              file=sys.stderr)
+        return 2
+
     if given:
         # A pair the client will refuse on every later command must not be
         # saved with "Saved" printed over it. `korely init --api-key kor_self_...`
@@ -414,6 +433,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="agent self-signup (default; mints an anonymous hobby account)")
     sp.add_argument("--agent-caller", help="who is signing up, e.g. 'claude-code'")
     sp.add_argument("--base-url", help="API base URL (default https://api.korely.ai)")
+    sp.add_argument("--force", action="store_true",
+                    help="replace a key already saved in ~/.korely/config.json (it is lost)")
     sp.add_argument("--json", action="store_true", help="machine-readable output")
     sp.set_defaults(func=cmd_init)
 
