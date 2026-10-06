@@ -309,6 +309,58 @@ export interface PingResponse {
   scopes: string[];
 }
 
+/**
+ * Who acted, in an audit event. An open string, not a closed set: one client
+ * reads two products whose lists differ, and a server may add a value.
+ * "dashboard" is the Cloud's only, "manage" the Self-hosted's only.
+ */
+export type AuditActor = "rest" | "mcp" | "dashboard" | "manage" | "worker" | string;
+
+/**
+ * What happened, in an audit event. An open string for the same reason as
+ * AuditActor; "tenant_create" is the Self-hosted's only.
+ */
+export type AuditAction =
+  | "read"
+  | "write"
+  | "fact_write"
+  | "fact_invalidate"
+  | "erase"
+  | "key_create"
+  | "key_revoke"
+  | "tenant_create"
+  | string;
+
+/** For a read: what the call returned, by public id, at most 100 of each kind. Ids only, never content. */
+export interface AuditRead {
+  memories: string[];
+  facts: string[];
+}
+
+/** One event of the trail `audit()` reads (the API's `AuditRow`). */
+export interface AuditEvent {
+  /** When it happened, ISO 8601. */
+  ts: string;
+  actor: AuditActor;
+  action: AuditAction;
+  result: "ok" | "denied" | "error";
+  /** The end user the event touched. */
+  user_id?: string | null;
+  /** The memory or fact acted on, by public id. */
+  target_id?: string | null;
+  /** Counts and labels, never content. */
+  meta?: Record<string, unknown> | null;
+  ip?: string | null;
+  /** On a read, what it returned; with `as_of` on getFacts() it rebuilds what an agent knew when it decided. */
+  read?: AuditRead | null;
+}
+
+/** Iterable page of the audit trail, newest first. `total` counts the matches across every page. */
+export interface AuditPage extends Iterable<AuditEvent> {
+  events: AuditEvent[];
+  total: number;
+}
+
 // ── method option types (snake_case keys mirror the REST params) ────────────
 
 export interface AddOptions {
@@ -368,6 +420,28 @@ export interface EventsOptions {
   status?: "processing" | "ready" | "error";
   /** Default 50, up to 200. */
   limit?: number;
+}
+
+export interface AuditOptions {
+  /**
+   * Only the events that touched this end user. An empty string is refused
+   * before sending: the server reads it as no filter.
+   */
+  user_id?: string;
+  /** Only this kind of event. An unknown action answers an empty page; an empty string is refused. */
+  action?: AuditAction;
+  /** Events at or after it: ISO 8601 text, or a Date (sent as UTC). */
+  since?: string | Date;
+  /** Events at or before it: ISO 8601 text, or a Date (sent as UTC). */
+  until?: string | Date;
+  /** Default 100, 1 to 1000. */
+  limit?: number;
+  offset?: number;
+}
+
+export interface IterAuditOptions extends Omit<AuditOptions, "limit"> {
+  /** Events per request. Default 1000, the most the API gives. */
+  page_size?: number;
 }
 
 export interface GetFactsOptions {

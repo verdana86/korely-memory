@@ -28,6 +28,16 @@ Both clients:
 - `ping()`, `GET /v1/ping` on both products: whether a key works, and its
   `tier`, `region` and `scopes`, with no scope needed, no rate limit and no
   quota spent.
+- `audit()`, `GET /v1/audit` on both products: the trail of the key's
+  project, newest first, filtered by `user_id`, `action`, `since` and `until`
+  (ISO text, or a `datetime` / `date` in Python and a `Date` in JS, sent as
+  UTC). `actor` and `action` stay open strings: the Cloud has `dashboard`, the
+  Self-hosted `manage` and `tenant_create`. An empty `user_id` or `action` is
+  refused before sending, because both servers read it as no filter and
+  answered with every end user's events. `iter_audit()` (Python, `async for`
+  on `AsyncKorely`) and `iterAudit()` (JS) walk every page for an export,
+  with `until` pinned to the newest event when they start, so events written
+  meanwhile do not shift the pages.
 
 ## Python 0.1.17 and npm 0.1.9 (2026-10-06)
 

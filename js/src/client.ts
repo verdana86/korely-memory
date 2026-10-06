@@ -25,6 +25,9 @@ import type {
   AgentDeleteReceipt,
   AgentScope,
   AgentsPage,
+  AuditEvent,
+  AuditOptions,
+  AuditPage,
   BatchJob,
   BatchMemory,
   BulkReceipt,
@@ -38,6 +41,7 @@ import type {
   GetContextOptions,
   GetFactsOptions,
   GetProfileOptions,
+  IterAuditOptions,
   ListAgentsOptions,
   ListOptions,
   Memory,
@@ -120,6 +124,45 @@ function seg(value: unknown, what: string): string {
 }
 
 type Params = Record<string, string | number | boolean | undefined | null>;
+
+/**
+ * `since` / `until` as the ISO 8601 text the API reads. A string goes as
+ * written; a Date as `toISOString()`, which is UTC, so the server never reads
+ * it in its own database session's zone.
+ */
+function moment(value: unknown, what: string): string | undefined {
+  if (value == null) return undefined;
+  if (typeof value === "string") return value;
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) throw new KorelyError(`${what} is an invalid Date.`);
+    return value.toISOString();
+  }
+  throw new KorelyError(`${what} must be an ISO 8601 string or a Date, not a ${typeof value}.`);
+}
+
+/**
+ * The filters of GET /v1/audit, checked before anything is sent. An empty
+ * `user_id` or `action` is refused: both servers read an empty filter as no
+ * filter, so `audit({ user_id: "" })`, an id that came out of a variable
+ * empty, answered with the events of every end user, and the trail is what an
+ * access request for ONE person is answered from.
+ */
+function auditFilters(opts: AuditOptions): Params {
+  for (const name of ["user_id", "action"] as const) {
+    if (opts[name] === "") {
+      throw new KorelyError(
+        `${name} is empty: the server reads an empty filter as no filter. ` +
+          `Leave it out to mean every ${name.split("_")[0]}.`,
+      );
+    }
+  }
+  return {
+    user_id: opts.user_id,
+    action: opts.action,
+    since: moment(opts.since, "since"),
+    until: moment(opts.until, "until"),
+  };
+}
 
 /** FastAPI's `detail` as one line: a sentence as it is, a validation list as
  *  `field: reason` for the first three entries. */
@@ -428,6 +471,69 @@ export class Korely {
    */
   async ping(): Promise<PingResponse> {
     return this.request("GET", "/v1/ping");
+  }
+
+  // ── audit ─────────────────────────────────────────────────────────────────
+  /**
+   * GET /v1/audit: what this key's project did, and what its agents read,
+   * newest first (`ts` descending, then the event's id, so paging with
+   * `offset` is stable). Both products; the key needs `memories:read`.
+   *
+   * `user_id` keeps the events that touched one end user, the shape of an
+   * access or erasure request; `action` one kind ("read", "write", "erase"...;
+   * an unknown one answers an empty page); `since` and `until` bound `ts`,
+   * both inclusive, as ISO 8601 text or a Date. `limit` is 1 to 1000. To read
+   * everything, use `iterAudit()`. The page is iterable.
+   *
+   * Reading the trail counts against no quota and is not itself written to
+   * it; it does count against the rate limit. Scoped to the key's account and
+   * project, like every read.
+   */
+  async audit(opts: AuditOptions = {}): Promise<AuditPage> {
+    const page: { events: AuditEvent[]; total: number } = await this.request(
+      "GET", "/v1/audit", {
+        params: { ...auditFilters(opts), limit: opts.limit ?? 100, offset: opts.offset ?? 0 },
+      });
+    return iterableOver(page, "events");
+  }
+
+  /**
+   * Every event `audit()` would page through, for an export:
+   * `for await (const e of korely.iterAudit({ user_id }))`. The same filters,
+   * `page_size` events per request (1000, the most the API gives),
+   * `offset += page.length` until `total`.
+   *
+   * Without `until` the walk pins it to the newest event of its first page.
+   * The trail grows while it is read, newest first, and every new event pushed
+   * the rest one place down: the next page began with events already returned.
+   * The pin makes the export the trail as it stood when it started.
+   *
+   * A rate limit rejects mid-way, as any call does, and the SDK does not
+   * retry. To resume, call again with the same `until` (pin it yourself:
+   * `until: new Date()`) and `offset` the number of events already read.
+   */
+  async *iterAudit(opts: IterAuditOptions = {}): AsyncGenerator<AuditEvent, void, undefined> {
+    const filters = auditFilters(opts);
+    let offset = opts.offset ?? 0;
+    let pin = filters.until === undefined && offset === 0;
+    for (;;) {
+      const page = await this.audit({
+        user_id: opts.user_id,
+        action: opts.action,
+        since: filters.since as string | undefined,
+        until: filters.until as string | undefined,
+        limit: opts.page_size ?? 1000,
+        offset,
+      });
+      if (!page.events.length) return;
+      yield* page.events;
+      if (pin && page.events[0].ts) {
+        filters.until = page.events[0].ts;
+        pin = false;
+      }
+      offset += page.events.length;
+      if (offset >= page.total) return;
+    }
   }
 
   // ── memories ────────────────────────────────────────────────────────────

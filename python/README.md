@@ -73,12 +73,35 @@ Every method wraps exactly one REST endpoint.
 | `batch(memories)` | `POST /v1/batch` |
 | `batch_status(job_id)` | `GET /v1/batch/:id` |
 | `ping()` | `GET /v1/ping` |
+| `audit(*, user_id=, action=, since=, until=, limit=, offset=)` | `GET /v1/audit` |
+| `iter_audit(*, user_id=, action=, since=, until=, page_size=, offset=)` | `GET /v1/audit`, every page |
 
-`AsyncKorely` has the same methods, awaitable.
+`AsyncKorely` has the same methods, awaitable (`iter_audit` is an
+`async for`).
 
 `ping()` checks a key without spending anything (no scope, no rate limit, no
 quota) and answers its `tier`, `region` and `scopes`, on the Cloud and on the
 Self-hosted alike.
+
+`audit()` reads the trail of the key's project, newest first: who acted
+(`actor`), what (`action`: `read`, `write`, `fact_write`, `fact_invalidate`,
+`erase`, `key_create`, `key_revoke`), the `result`, the end user and the
+memory or fact touched, and for a read the ids it returned, never the content.
+Both products have it, and the key needs `memories:read`; it costs no quota.
+`user_id=` answers an access or erasure request for one person; `since` and
+`until` take ISO 8601 text, a `datetime` (UTC when it has no zone) or a
+`date`. `iter_audit()` walks every page for an export:
+
+```python
+import csv, sys
+
+out = csv.writer(sys.stdout)
+for e in korely.iter_audit(user_id="maria"):
+    out.writerow([e.ts, e.actor, e.action, e.result, e.target_id])
+```
+
+It pins `until` to the newest event when it starts, so events written during
+the export do not shift its pages.
 
 `add(..., timestamp="2026-01-15")` backfills the past: facts extracted inherit
 the timestamp as their `valid_from`, so `as_of` point-in-time queries reflect

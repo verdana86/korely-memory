@@ -420,3 +420,78 @@ class PingResponse:
     @classmethod
     def from_dict(cls, d: dict) -> "PingResponse":
         return cls(**_take(cls, d))
+
+
+@dataclass
+class AuditRead:
+    """For a read: what the call returned, by public id, at most 100 of each
+    kind. With ``as_of`` on ``get_facts()`` they rebuild what an agent knew
+    when it decided. Ids only: the trail never holds content."""
+    memories: List[str] = field(default_factory=list)
+    facts: List[str] = field(default_factory=list)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "AuditRead":
+        return cls(**_take(cls, d))
+
+
+@dataclass
+class AuditEvent:
+    """One event of the trail ``audit()`` reads (the API's ``AuditRow``).
+
+    ``actor`` and ``action`` are open strings, not enums: one client reads two
+    products whose lists differ, and a server may add a value.
+
+    - ``ts``: when it happened, ISO 8601.
+    - ``actor``: ``rest``, ``mcp``, ``worker``, ``dashboard`` (Cloud only) or
+      ``manage`` (Self-hosted only).
+    - ``action``: ``read``, ``write``, ``fact_write``, ``fact_invalidate``,
+      ``erase``, ``key_create``, ``key_revoke``, and ``tenant_create`` on the
+      Self-hosted only.
+    - ``result``: ``ok``, ``denied`` or ``error``.
+    - ``user_id``: the end user the event touched; ``target_id``: the memory or
+      fact acted on, by public id.
+    - ``meta``: counts and labels, never content; ``ip``: the caller's address.
+    - ``read``: on a read, what it returned (:class:`AuditRead`); else None."""
+    ts: Optional[str] = None
+    actor: Optional[str] = None
+    action: Optional[str] = None
+    result: Optional[str] = None
+    user_id: Optional[str] = None
+    target_id: Optional[str] = None
+    meta: Optional[dict] = None
+    ip: Optional[str] = None
+    read: Optional[AuditRead] = None
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "AuditEvent":
+        d = dict(d or {})
+        read = d.get("read")
+        obj = cls(**_take(cls, d))
+        obj.read = AuditRead.from_dict(read) if isinstance(read, dict) else None
+        return obj
+
+
+@dataclass
+class AuditPage:
+    """Iterable page of the audit trail, newest first, with ``total``: the
+    events that match the filters across every page."""
+    events: List[AuditEvent] = field(default_factory=list)
+    total: int = 0
+
+    def __iter__(self):
+        return iter(self.events)
+
+    def __len__(self) -> int:
+        return len(self.events)
+
+    def __getitem__(self, i):
+        return self.events[i]
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "AuditPage":
+        d = d or {}
+        return cls(
+            events=[AuditEvent.from_dict(e) for e in (d.get("events") or [])],
+            total=int(d.get("total", 0)),
+        )

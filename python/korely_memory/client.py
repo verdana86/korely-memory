@@ -9,7 +9,8 @@ import json
 import math
 import os
 import re
-from typing import Any, List, Optional
+from datetime import date, datetime, timezone
+from typing import Any, Iterator, List, Optional
 from urllib import error as _urlerror
 from urllib import parse as _urlparse
 from urllib import request as _urlrequest
@@ -28,6 +29,8 @@ from .exceptions import (
 from .models import (
     AgentDeleteReceipt,
     AgentsPage,
+    AuditEvent,
+    AuditPage,
     BatchJob,
     BatchMemory,
     BulkReceipt,
@@ -78,6 +81,43 @@ def _seg(value: Any, what: str) -> str:
     if not s:
         raise KorelyError(f"{what} is empty.")
     return _urlparse.quote(s, safe="")
+
+
+def _moment(value: Any, what: str) -> Optional[str]:
+    """``since`` / ``until`` as the ISO 8601 text the API reads.
+
+    A string goes as written. A ``datetime`` without a time zone is sent as
+    UTC, the rule the servers and this package's own date printing follow for
+    a value with no offset: sent bare, the server would compare it in its
+    database session's zone, whatever that is. A ``date`` is its midnight, UTC,
+    so ``until=date(2026, 10, 1)`` stops where 1 October begins.
+    """
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return (value if value.tzinfo else value.replace(tzinfo=timezone.utc)).isoformat()
+    if isinstance(value, date):
+        return datetime(value.year, value.month, value.day, tzinfo=timezone.utc).isoformat()
+    if isinstance(value, str):
+        return value
+    raise KorelyError(f"{what} must be an ISO 8601 string, a datetime or a date, "
+                      f"not {type(value).__name__}.")
+
+
+def _audit_filters(user_id: Any, action: Any, since: Any, until: Any) -> dict:
+    """The filters of GET /v1/audit, checked before anything is sent.
+
+    An empty ``user_id`` or ``action`` is refused: both servers read an empty
+    filter as no filter, so ``audit(user_id="")``, an id that came out of a
+    variable empty, answered with the events of every end user. The trail is
+    what an access request for ONE person is answered from.
+    """
+    for name, value in (("user_id", user_id), ("action", action)):
+        if isinstance(value, str) and value == "":
+            raise KorelyError(f"{name} is empty: the server reads an empty filter as no "
+                              f"filter. Pass None to mean every {name.split('_')[0]}.")
+    return {"user_id": user_id, "action": action,
+            "since": _moment(since, "since"), "until": _moment(until, "until")}
 
 
 def _coerce_content(content: Any) -> str:
@@ -509,6 +549,75 @@ class Korely:
         without spending anything. ``users()`` was the usual stand-in, and it
         needs ``memories:read`` and counts as a query."""
         return PingResponse.from_dict(self._call("GET", "/v1/ping"))
+
+    # ── audit ──────────────────────────────────────────────────────────────
+    def audit(self, *, user_id: Optional[str] = None, action: Optional[str] = None,
+              since: "str | datetime | date | None" = None,
+              until: "str | datetime | date | None" = None,
+              limit: int = 100, offset: int = 0) -> AuditPage:
+        """GET /v1/audit: what this key's project did, and what its agents
+        read, newest first (``ts`` descending, then the event's id, so paging
+        with ``offset`` is stable). Both products; the key needs
+        ``memories:read``.
+
+        ``user_id`` keeps the events that touched one end user, the shape of
+        an access or erasure request; ``action`` one kind (``read``,
+        ``write``, ``erase``...; an unknown one answers an empty page);
+        ``since`` and ``until`` bound ``ts``, both inclusive, as ISO 8601
+        text, a ``datetime`` (UTC when it has no zone) or a ``date`` (its
+        midnight, UTC). ``limit`` is 1 to 1000. To read everything, use
+        ``iter_audit()``.
+
+        Reading the trail counts against no quota and is not itself written to
+        it; it does count against the rate limit. Scoped to the key's account
+        and project, like every read.
+        """
+        body = self._call("GET", "/v1/audit", params=_clean(dict(
+            _audit_filters(user_id, action, since, until), limit=limit, offset=offset)))
+        return AuditPage.from_dict(body)
+
+    def iter_audit(self, *, user_id: Optional[str] = None, action: Optional[str] = None,
+                   since: "str | datetime | date | None" = None,
+                   until: "str | datetime | date | None" = None,
+                   page_size: int = 1000, offset: int = 0) -> Iterator[AuditEvent]:
+        """Every event ``audit()`` would page through, one at a time, for an
+        export: the same filters, ``page_size`` events per request (1000, the
+        most the API gives), ``offset += len(page)`` until ``total``.
+
+        Without ``until`` the walk pins it to the newest event of its first
+        page. The trail grows while it is read, newest first, and every new
+        event pushed the rest one place down: the next page began with events
+        already returned. The pin makes the export the trail as it stood when
+        it started.
+
+        A rate limit raises QuotaExceededError mid-way, as any call does, and
+        the SDK does not retry. To resume, call again with the same ``until``
+        (pin it yourself: ``until=datetime.now(timezone.utc)``) and ``offset``
+        the number of events already read.
+        """
+        for page in self._audit_pages(user_id=user_id, action=action, since=since,
+                                      until=until, page_size=page_size, offset=offset):
+            for event in page.events:
+                yield event
+
+    def _audit_pages(self, *, user_id, action, since, until, page_size: int,
+                     offset: int) -> Iterator[AuditPage]:
+        """The pages of ``iter_audit()``, one request each. AsyncKorely walks
+        the same generator a page at a time, off the event loop."""
+        filters = _audit_filters(user_id, action, since, until)
+        pin = filters["until"] is None and offset == 0
+        while True:
+            page = self.audit(user_id=filters["user_id"], action=filters["action"],
+                              since=filters["since"], until=filters["until"],
+                              limit=page_size, offset=offset)
+            if not page.events:
+                return
+            yield page
+            if pin and page.events[0].ts:
+                filters["until"], pin = page.events[0].ts, False
+            offset += len(page.events)
+            if offset >= page.total:
+                return
 
     # ── memories ───────────────────────────────────────────────────────────
     def add(self, content: "str | list", *, agent_id: Optional[str] = None,

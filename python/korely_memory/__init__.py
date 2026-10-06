@@ -27,6 +27,9 @@ from .models import (
     AgentDeleteReceipt,
     AgentScope,
     AgentsPage,
+    AuditEvent,
+    AuditPage,
+    AuditRead,
     BatchJob,
     BatchMemory,
     BulkReceipt,
@@ -79,4 +82,7 @@ __all__ = [
     "AgentsPage",
     "AgentDeleteReceipt",
     "PingResponse",
+    "AuditEvent",
+    "AuditPage",
+    "AuditRead",
 ]

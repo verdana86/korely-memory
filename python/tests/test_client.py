@@ -367,6 +367,8 @@ class TestAsyncClient(unittest.TestCase):
         self.assertEqual(missing, set(), f"AsyncKorely is missing: {sorted(missing)}")
 
     def test_every_mirrored_method_is_awaitable(self):
+        """Awaitable, or for the iterators (iter_audit) an async iterator:
+        `async for`, each page fetched off the event loop."""
         import inspect
         from korely_memory import AsyncKorely
 
@@ -374,8 +376,12 @@ class TestAsyncClient(unittest.TestCase):
             if name.startswith("_"):
                 continue
             with self.subTest(method=name):
-                self.assertTrue(inspect.iscoroutinefunction(fn),
-                                f"{name} should be async")
+                if name.startswith("iter_"):
+                    self.assertTrue(inspect.isasyncgenfunction(fn),
+                                    f"{name} should be an async iterator")
+                else:
+                    self.assertTrue(inspect.iscoroutinefunction(fn),
+                                    f"{name} should be async")
 
     def test_calls_reach_the_transport_and_run_concurrently(self):
         import asyncio
@@ -1440,3 +1446,166 @@ class PingChecksAKeyForFree(unittest.TestCase):
         rec = _Recorder().queue(401, {"code": "invalid_key", "message": "Invalid API key."})
         with self.assertRaises(AuthenticationError):
             _client(rec).ping()
+
+
+def _audit_event(ts, action="read", **kw):
+    return dict({"ts": ts, "actor": "rest", "action": action, "result": "ok",
+                 "user_id": "maria", "target_id": None, "meta": None, "ip": None,
+                 "read": None}, **kw)
+
+
+class TheAuditTrail(unittest.TestCase):
+    """GET /v1/audit, on both products (GordonPro app/api/v1_audit.py,
+    korely-agent api/audit.py): the events of the key's project, newest first,
+    `{events, total}`. The SDKs had no way to read it."""
+
+    def test_the_request_and_the_page(self):
+        from korely_memory import AuditEvent, AuditPage, AuditRead
+
+        rec = _Recorder().queue(200, {"events": [
+            _audit_event("2026-10-06T10:00:00.123456Z", meta={"memories_read": 2, "facts_read": 1},
+                         ip="203.0.113.7", read={"memories": ["mem_1", "mem_2"], "facts": ["fct_1"]}),
+            _audit_event("2026-10-06T09:00:00Z", action="erase", target_id=None,
+                         meta={"memories": 3}),
+        ], "total": 57})
+        page = _client(rec).audit(user_id="maria", action="read", since="2026-10-01",
+                                  limit=2, offset=4)
+        self.assertEqual((rec.last["method"], rec.last["path"]), ("GET", "/v1/audit"))
+        self.assertEqual(rec.last["params"], {"user_id": "maria", "action": "read",
+                                              "since": "2026-10-01", "limit": 2, "offset": 4})
+        self.assertIsInstance(page, AuditPage)
+        self.assertEqual((page.total, len(page)), (57, 2))
+        first = page[0]
+        self.assertIsInstance(first, AuditEvent)
+        self.assertEqual((first.ts, first.actor, first.action, first.result),
+                         ("2026-10-06T10:00:00.123456Z", "rest", "read", "ok"))
+        self.assertEqual((first.user_id, first.ip), ("maria", "203.0.113.7"))
+        self.assertEqual(first.meta, {"memories_read": 2, "facts_read": 1})
+        self.assertIsInstance(first.read, AuditRead)
+        self.assertEqual((first.read.memories, first.read.facts), (["mem_1", "mem_2"], ["fct_1"]))
+        self.assertIsNone(page[1].read)
+        self.assertEqual([e.action for e in page], ["read", "erase"])
+
+    def test_the_defaults_are_the_api_s(self):
+        rec = _Recorder().queue(200, {"events": [], "total": 0})
+        _client(rec).audit()
+        self.assertEqual(rec.last["params"], {"limit": 100, "offset": 0})
+
+    def test_actor_and_action_are_open_strings(self):
+        """The Self-hosted has `manage` and `tenant_create`, the Cloud
+        `dashboard`, and a server may add one: whatever comes, comes through."""
+        rec = _Recorder().queue(200, {"events": [
+            _audit_event("2026-10-06T10:00:00Z", action="tenant_create", actor="manage"),
+            _audit_event("2026-10-06T09:00:00Z", action="something_new", actor="dashboard"),
+        ], "total": 2})
+        page = _client(rec).audit(action="tenant_create")
+        self.assertEqual([(e.actor, e.action) for e in page],
+                         [("manage", "tenant_create"), ("dashboard", "something_new")])
+
+    def test_dates_and_datetimes_are_sent_as_utc(self):
+        from datetime import date, datetime, timedelta, timezone
+
+        rec = _Recorder().queue(200, {"events": [], "total": 0})
+        _client(rec).audit(since=datetime(2026, 10, 1, 8, 30),
+                           until=datetime(2026, 10, 2, 8, 30, tzinfo=timezone(timedelta(hours=2))))
+        self.assertEqual(rec.last["params"]["since"], "2026-10-01T08:30:00+00:00")
+        self.assertEqual(rec.last["params"]["until"], "2026-10-02T08:30:00+02:00")
+        rec.queue(200, {"events": [], "total": 0})
+        _client(rec).audit(until=date(2026, 10, 1))
+        self.assertEqual(rec.last["params"]["until"], "2026-10-01T00:00:00+00:00")
+
+    def test_what_cannot_be_a_moment_never_leaves(self):
+        rec = _Recorder()
+        with self.assertRaises(KorelyError):
+            _client(rec).audit(since=1696118400)
+        self.assertEqual(rec.calls, [])
+
+    def test_an_empty_filter_is_refused_not_read_as_every_user(self):
+        """Both servers read `user_id=` as no filter: an id that came out of a
+        variable empty answered with every end user's events."""
+        for kw in ({"user_id": ""}, {"action": ""}):
+            with self.subTest(**kw):
+                rec = _Recorder()
+                with self.assertRaises(KorelyError) as caught:
+                    _client(rec).audit(**kw)
+                self.assertIn("empty", str(caught.exception))
+                self.assertEqual(rec.calls, [])
+                with self.assertRaises(KorelyError):
+                    list(_client(rec).iter_audit(**kw))
+                self.assertEqual(rec.calls, [])
+
+    def test_a_key_without_memories_read_is_refused(self):
+        rec = _Recorder().queue(403, {"code": "forbidden",
+                                      "message": "API key missing required scope(s): memories:read"})
+        with self.assertRaises(NamespaceForbiddenError) as caught:
+            _client(rec).audit()
+        self.assertEqual(caught.exception.code, "forbidden")
+
+
+class ExportingTheAuditTrail(unittest.TestCase):
+    """iter_audit(): every page, offset += len(page) while offset < total."""
+
+    def _pages(self, rec, *pages):
+        for events, total in pages:
+            rec.queue(200, {"events": events, "total": total})
+        return rec
+
+    def test_it_walks_every_page_and_stops_at_total(self):
+        rec = self._pages(_Recorder(),
+                          ([_audit_event("2026-10-06T10:00:00.5Z"), _audit_event("2026-10-06T09:00:00Z")], 5),
+                          ([_audit_event("2026-10-06T08:00:00Z"), _audit_event("2026-10-06T07:00:00Z")], 5),
+                          ([_audit_event("2026-10-06T06:00:00Z")], 5))
+        events = list(_client(rec).iter_audit(user_id="maria", page_size=2))
+        self.assertEqual([e.ts[11:13] for e in events], ["10", "09", "08", "07", "06"])
+        self.assertEqual([c["params"]["offset"] for c in rec.calls], [0, 2, 4])
+        self.assertEqual({c["params"]["limit"] for c in rec.calls}, {2})
+        self.assertEqual({c["params"]["user_id"] for c in rec.calls}, {"maria"})
+
+    def test_until_is_pinned_to_the_first_page_so_new_events_do_not_shift_the_rest(self):
+        rec = self._pages(_Recorder(),
+                          ([_audit_event("2026-10-06T10:00:00.123456Z")], 2),
+                          ([_audit_event("2026-10-06T09:00:00Z")], 2))
+        list(_client(rec).iter_audit(page_size=1))
+        self.assertNotIn("until", rec.calls[0]["params"])
+        self.assertEqual(rec.calls[1]["params"]["until"], "2026-10-06T10:00:00.123456Z")
+
+    def test_an_until_given_is_kept(self):
+        rec = self._pages(_Recorder(),
+                          ([_audit_event("2026-10-05T10:00:00Z")], 2),
+                          ([_audit_event("2026-10-05T09:00:00Z")], 2))
+        list(_client(rec).iter_audit(until="2026-10-05T12:00:00Z", page_size=1))
+        self.assertEqual([c["params"]["until"] for c in rec.calls],
+                         ["2026-10-05T12:00:00Z", "2026-10-05T12:00:00Z"])
+
+    def test_resuming_starts_at_the_offset_given(self):
+        rec = self._pages(_Recorder(), ([_audit_event("2026-10-05T09:00:00Z")], 4))
+        events = list(_client(rec).iter_audit(until="2026-10-05T12:00:00Z", offset=3))
+        self.assertEqual(len(events), 1)
+        self.assertEqual(rec.calls[0]["params"]["offset"], 3)
+        self.assertEqual(rec.calls[0]["params"]["limit"], 1000)
+
+    def test_an_empty_page_ends_the_walk_whatever_total_says(self):
+        rec = self._pages(_Recorder(), ([_audit_event("2026-10-06T10:00:00Z")], 10), ([], 10))
+        self.assertEqual(len(list(_client(rec).iter_audit(page_size=1))), 1)
+        self.assertEqual(len(rec.calls), 2)
+
+    def test_an_empty_trail_is_one_request(self):
+        rec = self._pages(_Recorder(), ([], 0))
+        self.assertEqual(list(_client(rec).iter_audit()), [])
+        self.assertEqual(len(rec.calls), 1)
+
+    def test_the_async_client_walks_the_same_pages(self):
+        import asyncio
+        from korely_memory import AsyncKorely
+
+        rec = self._pages(_Recorder(),
+                          ([_audit_event("2026-10-06T10:00:00Z")], 2),
+                          ([_audit_event("2026-10-06T09:00:00Z")], 2))
+        korely = AsyncKorely(api_key="kor_live_async_audit")
+        korely._sync._send = rec
+
+        async def export():
+            return [e.ts async for e in korely.iter_audit(page_size=1)]
+
+        self.assertEqual(asyncio.run(export()), ["2026-10-06T10:00:00Z", "2026-10-06T09:00:00Z"])
+        self.assertEqual(rec.calls[1]["params"]["until"], "2026-10-06T10:00:00Z")

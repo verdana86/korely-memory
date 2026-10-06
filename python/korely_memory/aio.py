@@ -35,12 +35,14 @@ The sync ``Korely`` is unchanged and still the right choice for scripts.
 from __future__ import annotations
 
 import asyncio
-from typing import Any, List, Optional
+from typing import Any, AsyncIterator, List, Optional
 
 from .client import Korely
 from .models import (
     AgentDeleteReceipt,
     AgentsPage,
+    AuditEvent,
+    AuditPage,
     BatchJob,
     BatchMemory,
     BulkReceipt,
@@ -154,6 +156,26 @@ class AsyncKorely:
 
     async def batch_status(self, job_id: str) -> BatchJob:
         return await self._run(self._sync.batch_status, job_id)
+
+    # ── audit ─────────────────────────────────────────────────────────────
+    async def audit(self, **kw) -> AuditPage:
+        return await self._run(lambda: self._sync.audit(**kw))
+
+    async def iter_audit(self, *, user_id: Optional[str] = None,
+                         action: Optional[str] = None, since: Any = None,
+                         until: Any = None, page_size: int = 1000,
+                         offset: int = 0) -> AsyncIterator[AuditEvent]:
+        """``async for event in korely.iter_audit(...)``: the walk of
+        ``Korely.iter_audit``, each page fetched on a thread, so the event
+        loop never waits on the network."""
+        pages = self._sync._audit_pages(user_id=user_id, action=action, since=since,
+                                        until=until, page_size=page_size, offset=offset)
+        while True:
+            page = await self._run(next, pages, None)
+            if page is None:
+                return
+            for event in page.events:
+                yield event
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"AsyncKorely(base_url={self.base_url!r})"

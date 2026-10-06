@@ -670,3 +670,79 @@ test("ping() reads GET /v1/ping, the same shape on both products", async () => {
   assert.deepEqual(p, { ok: true, tier: "hobby", region: "eu-hel1", scopes: ["memories:read", "memories:write"] });
   await assert.rejects(() => k.ping(), AuthenticationError);
 });
+
+const auditEvent = (ts, extra = {}) => ({
+  ts, actor: "rest", action: "read", result: "ok", user_id: "maria",
+  target_id: null, meta: null, ip: null, read: null, ...extra,
+});
+
+test("audit() reads GET /v1/audit: filters, defaults, an iterable page", async () => {
+  const { k, f } = client([
+    {
+      status: 200,
+      body: {
+        events: [
+          auditEvent("2026-10-06T10:00:00.123456Z", { meta: { memories_read: 2 }, read: { memories: ["mem_1", "mem_2"], facts: ["fct_1"] } }),
+          auditEvent("2026-10-06T09:00:00Z", { action: "tenant_create", actor: "manage" }),
+        ],
+        total: 57,
+      },
+    },
+    { status: 200, body: { events: [], total: 0 } },
+  ]);
+  const page = await k.audit({ user_id: "maria", action: "read", since: "2026-10-01", until: new Date("2026-10-06T12:00:00Z"), limit: 2, offset: 4 });
+  const url = new URL(f.calls[0].url);
+  assert.equal(f.calls[0].init.method, "GET");
+  assert.equal(url.pathname, "/v1/audit");
+  assert.deepEqual(Object.fromEntries(url.searchParams), {
+    user_id: "maria", action: "read", since: "2026-10-01", until: "2026-10-06T12:00:00.000Z", limit: "2", offset: "4",
+  });
+  assert.equal(page.total, 57);
+  assert.deepEqual(page.events[0].read, { memories: ["mem_1", "mem_2"], facts: ["fct_1"] });
+  // actor and action are open strings: the Self-hosted's manage / tenant_create come through
+  assert.deepEqual([...page].map((e) => [e.actor, e.action]), [["rest", "read"], ["manage", "tenant_create"]]);
+  await k.audit();
+  assert.deepEqual(Object.fromEntries(new URL(f.calls[1].url).searchParams), { limit: "100", offset: "0" });
+});
+
+test("audit() refuses an empty filter and what is not a moment, before sending", async () => {
+  // Both servers read `user_id=` as no filter: every end user's events.
+  for (const opts of [{ user_id: "" }, { action: "" }, { since: 1696118400 }, { until: new Date("nope") }]) {
+    const { k, f } = client([]);
+    await assert.rejects(() => k.audit(opts), KorelyError);
+    await assert.rejects(async () => { for await (const _ of k.iterAudit(opts)) { /* nothing */ } }, KorelyError);
+    assert.equal(f.calls.length, 0, JSON.stringify(opts));
+  }
+});
+
+test("iterAudit() walks every page, offset += page length, and pins until to the first page", async () => {
+  const { k, f } = client([
+    { status: 200, body: { events: [auditEvent("2026-10-06T10:00:00.5Z"), auditEvent("2026-10-06T09:00:00Z")], total: 5 } },
+    { status: 200, body: { events: [auditEvent("2026-10-06T08:00:00Z"), auditEvent("2026-10-06T07:00:00Z")], total: 5 } },
+    { status: 200, body: { events: [auditEvent("2026-10-06T06:00:00Z")], total: 5 } },
+  ]);
+  const seen = [];
+  for await (const e of k.iterAudit({ user_id: "maria", page_size: 2 })) seen.push(e.ts.slice(11, 13));
+  assert.deepEqual(seen, ["10", "09", "08", "07", "06"]);
+  const params = f.calls.map((c) => Object.fromEntries(new URL(c.url).searchParams));
+  assert.deepEqual(params.map((p) => p.offset), ["0", "2", "4"]);
+  assert.deepEqual(params.map((p) => p.limit), ["2", "2", "2"]);
+  assert.equal(params[0].until, undefined);
+  assert.equal(params[1].until, "2026-10-06T10:00:00.5Z");
+  assert.equal(params[2].until, "2026-10-06T10:00:00.5Z");
+});
+
+test("iterAudit() keeps an until given, resumes at an offset, stops on an empty page", async () => {
+  const { k, f } = client([
+    { status: 200, body: { events: [auditEvent("2026-10-05T09:00:00Z")], total: 10 } },
+    { status: 200, body: { events: [], total: 10 } },
+  ]);
+  const seen = [];
+  for await (const e of k.iterAudit({ until: "2026-10-05T12:00:00Z", offset: 3 })) seen.push(e);
+  assert.equal(seen.length, 1);
+  const params = f.calls.map((c) => Object.fromEntries(new URL(c.url).searchParams));
+  assert.deepEqual(params.map((p) => [p.until, p.offset, p.limit]), [
+    ["2026-10-05T12:00:00Z", "3", "1000"],
+    ["2026-10-05T12:00:00Z", "4", "1000"],
+  ]);
+});
