@@ -39,6 +39,7 @@ from typing import Any, AsyncIterator, List, Optional
 
 from .client import Korely
 from .models import (
+    AccountDeleteReceipt,
     AgentDeleteReceipt,
     AgentsPage,
     AuditEvent,
@@ -90,9 +91,12 @@ class AsyncKorely:
     async def _run(self, fn, *args, **kwargs):
         return await asyncio.to_thread(fn, *args, **kwargs)
 
-    # ── the key ───────────────────────────────────────────────────────────
+    # ── the key and its account ───────────────────────────────────────────
     async def ping(self) -> PingResponse:
         return await self._run(self._sync.ping)
+
+    async def delete_account(self, **kw) -> AccountDeleteReceipt:
+        return await self._run(lambda: self._sync.delete_account(**kw))
 
     # ── write ─────────────────────────────────────────────────────────────
     async def add(self, content: "str | list", **kw) -> Memory:

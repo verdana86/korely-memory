@@ -115,6 +115,7 @@ Every method maps to one REST endpoint.
 | `batch(memories)` | `POST /v1/batch` | Bulk import, for migrations. Each item takes `timestamp`, as `add()` does. |
 | `batchStatus(jobId)` | `GET /v1/batch/:id` | Poll an import job. |
 | `ping()` | `GET /v1/ping` | Check a key without spending anything (no scope, rate limit or quota): its `tier`, `region` and `scopes`. Both products. |
+| `deleteAccount({ confirm: true })` | `DELETE /v1/account` | Cloud only. Delete the key's account for good, every key, memory and fact; for an account `korely init --agent` made, which nobody signs in to. One with a login rejects with `ConflictError` (`account_has_login`). Without `confirm: true` nothing is sent. The Self-hosted answers 404 (405 where it serves its dashboard). |
 | `audit(opts?)` | `GET /v1/audit` | The trail of the key's project, newest first: `user_id`, `action`, `since` / `until` (ISO text or `Date`), `limit` up to 1000. Ids, never content. Both products; needs `memories:read`, costs no quota. |
 | `iterAudit(opts?)` | `GET /v1/audit`, every page | `for await (const e of korely.iterAudit({ user_id }))`: an export, `page_size` events per request, `until` pinned when it starts. |
 

@@ -746,3 +746,33 @@ test("iterAudit() keeps an until given, resumes at an offset, stops on an empty 
     ["2026-10-05T12:00:00Z", "4", "1000"],
   ]);
 });
+
+test("deleteAccount() needs { confirm: true } before anything leaves, then DELETE /v1/account?confirm=true", async () => {
+  for (const opts of [undefined, {}, { confirm: false }, { confirm: "yes" }, { confirm: 1 }]) {
+    const { k, f } = client([]);
+    await assert.rejects(() => k.deleteAccount(opts), (e) => {
+      assert.ok(e instanceof KorelyError);
+      assert.ok(!(e instanceof APIError));
+      assert.equal(e.code, "confirmation_required");
+      return true;
+    });
+    assert.equal(f.calls.length, 0);
+  }
+  const { k, f } = client([
+    { status: 200, body: { deleted: true, removed: { memories: 12, facts: 30, keys: 1 } } },
+    { status: 409, body: { code: "account_has_login", message: "This key belongs to an account with a Korely login." } },
+    { status: 405, body: { detail: "Method Not Allowed", code: "method_not_allowed", message: "Method Not Allowed" } },
+  ]);
+  const r = await k.deleteAccount({ confirm: true });
+  assert.equal(f.calls[0].init.method, "DELETE");
+  assert.equal(f.calls[0].url, "https://api.test/v1/account?confirm=true");
+  assert.deepEqual(r, { deleted: true, removed: { memories: 12, facts: 30, keys: 1 } });
+  await assert.rejects(() => k.deleteAccount({ confirm: true }), (e) => {
+    assert.ok(e instanceof ConflictError);
+    assert.ok(!(e instanceof StaleWriteError));
+    assert.equal(e.code, "account_has_login");
+    return true;
+  });
+  // The Self-hosted has no such route: 405 where it serves its dashboard.
+  await assert.rejects(() => k.deleteAccount({ confirm: true }), (e) => e instanceof APIError && e.code === "method_not_allowed");
+});

@@ -38,6 +38,12 @@ Both clients:
   on `AsyncKorely`) and `iterAudit()` (JS) walk every page for an export,
   with `until` pinned to the newest event when they start, so events written
   meanwhile do not shift the pages.
+- `delete_account(confirm=True)` / `deleteAccount({ confirm: true })`,
+  `DELETE /v1/account?confirm=true`, Cloud only: deletes the account of the
+  key for good, the way to close an account `korely init --agent` made.
+  Without the confirmation nothing is sent (`code` is
+  `confirmation_required`, as the server's own refusal); an account with a
+  login is a `ConflictError` (`account_has_login`).
 
 ## Python 0.1.17 and npm 0.1.9 (2026-10-06)
 

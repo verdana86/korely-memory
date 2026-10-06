@@ -20,6 +20,7 @@ import {
   TooManyBatchesError,
 } from "./errors.js";
 import type {
+  AccountDeleteReceipt,
   AddFactTripleOptions,
   AddOptions,
   AgentDeleteReceipt,
@@ -459,7 +460,7 @@ export class Korely {
     throw new APIError(msg, opts);
   }
 
-  // ── the key ───────────────────────────────────────────────────────────────
+  // ── the key and its account ───────────────────────────────────────────────
   /**
    * GET /v1/ping: does this key work, and what may it do? Both products answer
    * it, with the same shape.
@@ -471,6 +472,34 @@ export class Korely {
    */
   async ping(): Promise<PingResponse> {
     return this.request("GET", "/v1/ping");
+  }
+
+  /**
+   * DELETE /v1/account?confirm=true: delete the account of this key for good,
+   * with every key, project, memory, fact and webhook of it; the key stops
+   * working. Cloud only, for an account made by `Korely.initAgent()` or
+   * `korely init --agent`, which nobody signs in to: the key is the account,
+   * and this is how it is closed (GDPR Art. 17).
+   *
+   * `{ confirm: true }` is required, and checked here, before anything is
+   * sent: without it, a KorelyError whose `code` is `confirmation_required`,
+   * the code the server gives the same refusal.
+   *
+   * An account with a Korely login rejects with 409 `account_has_login`
+   * (ConflictError): a key that ended up in a log must not be able to delete
+   * it, so it is closed from the app (Settings, Account). The Self-hosted has
+   * no such route and answers 404 (NotFoundError), or 405 where it serves its
+   * dashboard. No audit event survives: the trail is part of what goes.
+   */
+  async deleteAccount(opts: { confirm?: boolean } = {}): Promise<AccountDeleteReceipt> {
+    if (opts?.confirm !== true) {
+      throw new KorelyError(
+        "deleteAccount() deletes this key's account, every key, memory and fact " +
+          "of it, for good. Pass { confirm: true } to mean it.",
+        { code: "confirmation_required" },
+      );
+    }
+    return this.request("DELETE", "/v1/account", { params: { confirm: "true" } });
   }
 
   // ── audit ─────────────────────────────────────────────────────────────────

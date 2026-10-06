@@ -73,6 +73,7 @@ Every method wraps exactly one REST endpoint.
 | `batch(memories)` | `POST /v1/batch` |
 | `batch_status(job_id)` | `GET /v1/batch/:id` |
 | `ping()` | `GET /v1/ping` |
+| `delete_account(*, confirm=True)` | `DELETE /v1/account` (Cloud only) |
 | `audit(*, user_id=, action=, since=, until=, limit=, offset=)` | `GET /v1/audit` |
 | `iter_audit(*, user_id=, action=, since=, until=, page_size=, offset=)` | `GET /v1/audit`, every page |
 
@@ -82,6 +83,13 @@ Every method wraps exactly one REST endpoint.
 `ping()` checks a key without spending anything (no scope, no rate limit, no
 quota) and answers its `tier`, `region` and `scopes`, on the Cloud and on the
 Self-hosted alike.
+
+`delete_account(confirm=True)` deletes the account of the key, for good, with
+every key, memory and fact of it. It is for an account `korely init --agent`
+made, which nobody signs in to; one with a Korely login answers
+`ConflictError` (`account_has_login`) and is closed from the app. Without
+`confirm=True` nothing is sent. Cloud only: the Self-hosted answers 404 (405
+where it serves its dashboard).
 
 `audit()` reads the trail of the key's project, newest first: who acted
 (`actor`), what (`action`: `read`, `write`, `fact_write`, `fact_invalidate`,

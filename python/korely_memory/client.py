@@ -27,6 +27,7 @@ from .exceptions import (
     TooManyBatchesError,
 )
 from .models import (
+    AccountDeleteReceipt,
     AgentDeleteReceipt,
     AgentsPage,
     AuditEvent,
@@ -539,7 +540,7 @@ class Korely:
             raise cls(msg, status=status, code=code, retry_after=ra, body=server_body)
         raise APIError(msg, status=status, code=code, body=server_body, retry_after=ra)
 
-    # ── the key ────────────────────────────────────────────────────────────
+    # ── the key and its account ────────────────────────────────────────────
     def ping(self) -> PingResponse:
         """GET /v1/ping: does this key work, and what may it do? Both
         products answer it, with the same shape.
@@ -549,6 +550,31 @@ class Korely:
         without spending anything. ``users()`` was the usual stand-in, and it
         needs ``memories:read`` and counts as a query."""
         return PingResponse.from_dict(self._call("GET", "/v1/ping"))
+
+    def delete_account(self, *, confirm: bool = False) -> AccountDeleteReceipt:
+        """DELETE /v1/account?confirm=true: delete the account of this key for
+        good, with every key, project, memory, fact and webhook of it; the key
+        stops working. Cloud only, for an account made by ``init_agent()`` or
+        ``korely init --agent``, which nobody signs in to: the key is the
+        account, and this is how it is closed (GDPR Art. 17).
+
+        ``confirm=True`` is required, and checked here, before anything is
+        sent: without it, a KorelyError whose ``code`` is
+        ``confirmation_required``, the code the server gives the same refusal.
+
+        An account with a Korely login answers 409 ``account_has_login``
+        (ConflictError): a key that ended up in a log must not be able to
+        delete it, so it is closed from the app (Settings, Account). The
+        Self-hosted has no such route and answers 404 (NotFoundError), or 405
+        where it serves its dashboard. No audit event survives: the trail is
+        part of what goes."""
+        if confirm is not True:
+            raise KorelyError(
+                "delete_account() deletes this key's account, every key, memory and "
+                "fact of it, for good. Pass confirm=True to mean it.",
+                code="confirmation_required")
+        return AccountDeleteReceipt.from_dict(
+            self._call("DELETE", "/v1/account", params={"confirm": "true"}))
 
     # ── audit ──────────────────────────────────────────────────────────────
     def audit(self, *, user_id: Optional[str] = None, action: Optional[str] = None,

@@ -51,6 +51,7 @@ export type {
   AgentDeleteReceipt,
   ForgetReceipt,
   PingResponse,
+  AccountDeleteReceipt,
   AuditActor,
   AuditAction,
   AuditRead,

@@ -310,6 +310,16 @@ export interface PingResponse {
 }
 
 /**
+ * What `deleteAccount()` removed. `deleted` is true: the account and every key
+ * of it are gone, the one this client holds included.
+ */
+export interface AccountDeleteReceipt {
+  deleted: boolean;
+  /** Rows removed per kind (memories, facts, keys...), only the kinds that had any. */
+  removed: Record<string, number>;
+}
+
+/**
  * Who acted, in an audit event. An open string, not a closed set: one client
  * reads two products whose lists differ, and a server may add a value.
  * "dashboard" is the Cloud's only, "manage" the Self-hosted's only.

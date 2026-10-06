@@ -24,6 +24,7 @@ from .exceptions import (
     TooManyBatchesError,
 )
 from .models import (
+    AccountDeleteReceipt,
     AgentDeleteReceipt,
     AgentScope,
     AgentsPage,
@@ -85,4 +86,5 @@ __all__ = [
     "AuditEvent",
     "AuditPage",
     "AuditRead",
+    "AccountDeleteReceipt",
 ]

@@ -1609,3 +1609,63 @@ class ExportingTheAuditTrail(unittest.TestCase):
 
         self.assertEqual(asyncio.run(export()), ["2026-10-06T10:00:00Z", "2026-10-06T09:00:00Z"])
         self.assertEqual(rec.calls[1]["params"]["until"], "2026-10-06T10:00:00Z")
+
+
+class DeletingTheAccountOfAKey(unittest.TestCase):
+    """DELETE /v1/account?confirm=true (Cloud only, GordonPro
+    app/api/v1_account.py): an account made by `korely init --agent` has no
+    login, its key is the account, and this is how it is closed."""
+
+    def test_nothing_leaves_without_confirm_true(self):
+        for kw in ({}, {"confirm": False}, {"confirm": "yes"}, {"confirm": 1}):
+            with self.subTest(**{k: repr(v) for k, v in kw.items()}):
+                rec = _Recorder()
+                with self.assertRaises(KorelyError) as caught:
+                    _client(rec).delete_account(**kw)
+                self.assertNotIsInstance(caught.exception, APIError)
+                self.assertEqual(caught.exception.code, "confirmation_required")
+                self.assertEqual(rec.calls, [])
+
+    def test_the_request_and_the_receipt(self):
+        from korely_memory import AccountDeleteReceipt
+
+        rec = _Recorder().queue(200, {"deleted": True,
+                                      "removed": {"memories": 12, "facts": 30, "keys": 1}})
+        r = _client(rec).delete_account(confirm=True)
+        self.assertEqual((rec.last["method"], rec.last["path"]), ("DELETE", "/v1/account"))
+        self.assertEqual(rec.last["params"], {"confirm": "true"})
+        self.assertIsNone(rec.last["json"])
+        self.assertIsInstance(r, AccountDeleteReceipt)
+        self.assertIs(r.deleted, True)
+        self.assertEqual(r.removed, {"memories": 12, "facts": 30, "keys": 1})
+
+    def test_an_account_with_a_login_is_a_conflict(self):
+        from korely_memory import ConflictError
+
+        rec = _Recorder().queue(409, {"code": "account_has_login",
+                                      "message": "This key belongs to an account with a Korely login."})
+        with self.assertRaises(ConflictError) as caught:
+            _client(rec).delete_account(confirm=True)
+        self.assertNotIsInstance(caught.exception, StaleWriteError)
+        self.assertEqual(caught.exception.code, "account_has_login")
+
+    def test_the_server_s_own_refusal_keeps_its_code(self):
+        rec = _Recorder().queue(400, {"code": "confirmation_required",
+                                      "message": "Add ?confirm=true."})
+        with self.assertRaises(APIError) as caught:
+            _client(rec).delete_account(confirm=True)
+        self.assertEqual((caught.exception.status, caught.exception.code),
+                         (400, "confirmation_required"))
+
+    def test_the_self_hosted_has_no_such_route(self):
+        """404, or 405 where it serves its dashboard (its GET catch-all
+        matches the path for another method)."""
+        rec = _Recorder().queue(404, {"detail": "Not Found", "code": "not_found",
+                                      "message": "Not Found"})
+        with self.assertRaises(NotFoundError):
+            _client(rec).delete_account(confirm=True)
+        rec.queue(405, {"detail": "Method Not Allowed", "code": "method_not_allowed",
+                        "message": "Method Not Allowed"})
+        with self.assertRaises(APIError) as caught:
+            _client(rec).delete_account(confirm=True)
+        self.assertEqual(caught.exception.code, "method_not_allowed")

@@ -4,7 +4,7 @@ anything new, so a server that returns a superset never breaks an old SDK."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field, fields
-from typing import Any, List, Optional, TypedDict
+from typing import Any, Dict, List, Optional, TypedDict
 
 
 def _take(cls, d: Optional[dict]) -> dict:
@@ -495,3 +495,17 @@ class AuditPage:
             events=[AuditEvent.from_dict(e) for e in (d.get("events") or [])],
             total=int(d.get("total", 0)),
         )
+
+
+@dataclass
+class AccountDeleteReceipt:
+    """What ``delete_account()`` removed. ``deleted`` is True: the account and
+    every key of it are gone, the one this client holds included. ``removed``
+    counts the rows per kind (``memories``, ``facts``, ``keys``...), only the
+    kinds that had any."""
+    deleted: Optional[bool] = None
+    removed: Dict[str, int] = field(default_factory=dict)
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "AccountDeleteReceipt":
+        return cls(**_take(cls, d))
