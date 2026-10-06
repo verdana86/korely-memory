@@ -181,6 +181,7 @@ except QuotaExceededError as err:   # 429
 | `ConflictError` | 409 | `account_has_login` (Cloud), `conflict` (Self-hosted) |
 | `StaleWriteError` (a `ConflictError`) | 409 | `stale_write` |
 | `QuotaExceededError` | 429 | `rate_limit_exceeded` (has `retry_after`), `quota_exceeded` (monthly, `retry_after` is None) |
+| `TooManyBatchesError` (a `QuotaExceededError`) | 429 | `too_many_batches` (`batch()`, Cloud only: three imports still running; send again when one finishes) |
 | `APIError` | any other, and the base of all of the above | `invalid_request` (422), `search_unavailable` / `model_unavailable` (503, safe to retry), `writes_paused` (503, Cloud only, has `retry_after`) |
 
 Every `APIError` has `retry_after`: the seconds of the server's `Retry-After`

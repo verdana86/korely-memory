@@ -22,6 +22,7 @@ export {
   ConflictError,
   StaleWriteError,
   QuotaExceededError,
+  TooManyBatchesError,
   APIError,
 } from "./errors.js";
 

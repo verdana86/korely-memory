@@ -23,6 +23,7 @@ from .exceptions import (
     NotFoundError,
     QuotaExceededError,
     StaleWriteError,
+    TooManyBatchesError,
 )
 from .models import (
     AgentDeleteReceipt,
@@ -490,8 +491,11 @@ class Korely:
             cls = StaleWriteError if code == "stale_write" else ConflictError
             raise cls(msg, status=status, code=code, body=server_body, retry_after=ra)
         if status == 429:
-            raise QuotaExceededError(msg, status=status, code=code, retry_after=ra,
-                                     body=server_body)
+            # `too_many_batches` has its own class (2026-10-06): with no
+            # Retry-After it was indistinguishable by class from a monthly
+            # `quota_exceeded`, and it clears as soon as a batch finishes.
+            cls = TooManyBatchesError if code == "too_many_batches" else QuotaExceededError
+            raise cls(msg, status=status, code=code, retry_after=ra, body=server_body)
         raise APIError(msg, status=status, code=code, body=server_body, retry_after=ra)
 
     # ── memories ───────────────────────────────────────────────────────────
@@ -800,7 +804,14 @@ class Korely:
         datetime refuses the whole batch before anything is queued: a 422
         (APIError, ``code == "invalid_request"``) whose message names the item,
         e.g. ``memories[3].timestamp``. Any key not listed above is refused the
-        same way. Servers older than 2026-09-28 refuse ``timestamp`` itself."""
+        same way. Servers older than 2026-09-28 refuse ``timestamp`` itself.
+
+        On the Cloud a batch is also refused, before anything is stored, with
+        a 429: ``quota_exceeded`` (QuotaExceededError) when its memories do not
+        fit in what is left of the month, batches already queued included, and
+        ``too_many_batches`` (TooManyBatchesError) while three batches are
+        still being imported. The Self-hosted meters nothing and refuses
+        neither."""
         body = self._call("POST", "/v1/batch", json_body={"memories": list(memories)})
         return BatchJob.from_dict(body)
 

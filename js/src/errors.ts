@@ -133,13 +133,34 @@ export class StaleWriteError extends ConflictError {
  * 429. `code === "rate_limit_exceeded"`: too many requests in a minute, hour
  * or day, and `retryAfter` holds the seconds the server asked to wait.
  * `code === "quota_exceeded"`: the monthly quota is used up, there is nothing
- * to wait for this month, and `retryAfter` is undefined. `retryAfter` comes
- * from APIError, which every error the server answers with carries.
+ * to wait for this month, and `retryAfter` is undefined.
+ * `code === "too_many_batches"`: thrown as the subclass TooManyBatchesError.
+ * `retryAfter` comes from APIError, which every error the server answers with
+ * carries.
  */
 export class QuotaExceededError extends APIError {
   constructor(message = "", opts: APIErrorOptions = {}) {
     super(message, opts);
     this.name = "QuotaExceededError";
     Object.setPrototypeOf(this, new.target.prototype);
+  }
+}
+
+/**
+ * 429 `too_many_batches` (Cloud only): three `batch()` imports of the account
+ * are still running, and the Cloud takes no fourth until one of them
+ * finishes. Nothing was stored. Wait for a job to finish (`batchStatus()`) and
+ * send the batch again. There is no Retry-After, because the wait is a job and
+ * not a clock, so `retryAfter` is undefined.
+ *
+ * Its own class since 2026-10-06. It was a plain QuotaExceededError with no
+ * `retryAfter`, exactly what a monthly `quota_exceeded` looks like, and the
+ * docs tell you to stop on that one, while this one clears in minutes.
+ */
+export class TooManyBatchesError extends QuotaExceededError {
+  constructor(message = "", opts: APIErrorOptions = {}) {
+    super(message, opts);
+    this.name = "TooManyBatchesError";
+    Object.setPrototypeOf(this, TooManyBatchesError.prototype);
   }
 }

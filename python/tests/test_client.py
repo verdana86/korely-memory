@@ -1379,3 +1379,35 @@ class TheRetryAfterOfAPausedWrite(unittest.TestCase):
         self.assertEqual((e.retry_after, e.code, e.body), (3, "rate_limit_exceeded",
                                                            {"code": "rate_limit_exceeded"}))
         self.assertIsNone(APIError("m").retry_after)
+
+
+class TooManyBatchesIsNotTheMonthlyQuota(unittest.TestCase):
+    """The Cloud refuses a fourth batch while three are still being imported:
+    429 `too_many_batches`, no Retry-After (GordonPro services/agent_batch.py).
+    As a plain QuotaExceededError with `retry_after` None it looked exactly
+    like the monthly quota used up, which the docs say to stop on."""
+
+    def test_its_own_class_still_a_quota_error(self):
+        from korely_memory import TooManyBatchesError
+
+        rec = _Recorder().queue(429, {"code": "too_many_batches",
+                                      "message": "3 batches are still being imported; "
+                                                 "wait for one to finish."})
+        with self.assertRaises(TooManyBatchesError) as caught:
+            _client(rec).batch([{"content": "a"}])
+        e = caught.exception
+        self.assertIsInstance(e, QuotaExceededError)
+        self.assertIsInstance(e, APIError)
+        self.assertEqual((e.status, e.code), (429, "too_many_batches"))
+        self.assertIsNone(e.retry_after)
+
+    def test_the_monthly_quota_is_not_called_too_many_batches(self):
+        from korely_memory import TooManyBatchesError
+
+        for code in ("quota_exceeded", "rate_limit_exceeded"):
+            with self.subTest(code=code):
+                rec = _Recorder().queue(429, {"code": code, "message": "m"})
+                with self.assertRaises(QuotaExceededError) as caught:
+                    _client(rec).batch([{"content": "a"}])
+                self.assertNotIsInstance(caught.exception, TooManyBatchesError)
+                self.assertEqual(caught.exception.code, code)

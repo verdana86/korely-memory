@@ -21,6 +21,10 @@ Both clients:
   (`retry_after` in Python, `retryAfter` in JS), whatever the status. Only a
   429 kept it, so the Cloud's 503 `writes_paused` (writes that need a model
   are paused until 00:00 UTC) lost the one number that says when to retry.
+- `TooManyBatchesError`, a `QuotaExceededError`: the Cloud's 429
+  `too_many_batches` from `batch()`, while three imports are still running.
+  With no Retry-After it looked exactly like a monthly `quota_exceeded`, which
+  the docs say to stop on, and it clears as soon as one batch finishes.
 
 ## Python 0.1.17 and npm 0.1.9 (2026-10-06)
 

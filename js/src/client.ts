@@ -17,6 +17,7 @@ import {
   NotFoundError,
   QuotaExceededError,
   StaleWriteError,
+  TooManyBatchesError,
 } from "./errors.js";
 import type {
   AddFactTripleOptions,
@@ -404,7 +405,13 @@ export class Korely {
       if (code === "stale_write") throw new StaleWriteError(msg, opts);
       throw new ConflictError(msg, opts);
     }
-    if (status === 429) throw new QuotaExceededError(msg, opts);
+    if (status === 429) {
+      // `too_many_batches` has its own class (2026-10-06): with no Retry-After
+      // it was indistinguishable by class from a monthly `quota_exceeded`, and
+      // it clears as soon as a batch finishes.
+      if (code === "too_many_batches") throw new TooManyBatchesError(msg, opts);
+      throw new QuotaExceededError(msg, opts);
+    }
     throw new APIError(msg, opts);
   }
 
@@ -765,6 +772,12 @@ export class Korely {
    * `code === "invalid_request"`) whose message names the item, e.g.
    * `memories[3].timestamp`. Any key not listed above is refused the same
    * way. Servers older than 2026-09-28 refuse `timestamp` itself.
+   *
+   * On the Cloud a batch is also refused, before anything is stored, with a
+   * 429: `quota_exceeded` (QuotaExceededError) when its memories do not fit in
+   * what is left of the month, batches already queued included, and
+   * `too_many_batches` (TooManyBatchesError) while three batches are still
+   * being imported. The Self-hosted meters nothing and refuses neither.
    */
   async batch(memories: Array<BatchMemory | Record<string, unknown>>): Promise<BatchJob> {
     return this.request("POST", "/v1/batch", { body: { memories } });

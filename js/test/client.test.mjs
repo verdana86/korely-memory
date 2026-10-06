@@ -14,6 +14,7 @@ import {
   ConflictError,
   StaleWriteError,
   QuotaExceededError,
+  TooManyBatchesError,
   APIError,
   VERSION,
 } from "../dist/index.js";
@@ -628,6 +629,31 @@ test("a 503 writes_paused keeps its Retry-After, like a 429", async () => {
   await assert.rejects(() => k.search("q"), (e) => {
     assert.equal(e.code, "search_unavailable");
     assert.equal(e.retryAfter, undefined);
+    return true;
+  });
+});
+
+test("too_many_batches is a TooManyBatchesError, not the monthly quota", async () => {
+  // The Cloud refuses a fourth batch while three are still being imported,
+  // with no Retry-After: as a plain QuotaExceededError it looked exactly like
+  // the monthly quota used up.
+  const { k } = client([
+    { status: 429, body: { code: "too_many_batches", message: "3 batches are still being imported; wait for one to finish." } },
+    { status: 429, body: { code: "quota_exceeded", message: "limit" } },
+  ]);
+  await assert.rejects(() => k.batch([{ content: "a" }]), (e) => {
+    assert.ok(e instanceof TooManyBatchesError);
+    assert.ok(e instanceof QuotaExceededError);
+    assert.ok(e instanceof APIError);
+    assert.equal(e.name, "TooManyBatchesError");
+    assert.equal(e.code, "too_many_batches");
+    assert.equal(e.retryAfter, undefined);
+    return true;
+  });
+  await assert.rejects(() => k.batch([{ content: "a" }]), (e) => {
+    assert.ok(e instanceof QuotaExceededError);
+    assert.ok(!(e instanceof TooManyBatchesError));
+    assert.equal(e.code, "quota_exceeded");
     return true;
   });
 });

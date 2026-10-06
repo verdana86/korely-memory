@@ -21,6 +21,7 @@ from .exceptions import (
     NotFoundError,
     QuotaExceededError,
     StaleWriteError,
+    TooManyBatchesError,
 )
 from .models import (
     AgentDeleteReceipt,
@@ -55,6 +56,7 @@ __all__ = [
     "ConflictError",
     "StaleWriteError",
     "QuotaExceededError",
+    "TooManyBatchesError",
     "APIError",
     # models
     "Memory",

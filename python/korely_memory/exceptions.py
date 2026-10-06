@@ -104,13 +104,28 @@ class StaleWriteError(ConflictError):
 
 
 class QuotaExceededError(APIError):
-    """429. Two causes, told apart by ``code``:
+    """429. Three causes, told apart by ``code``:
 
     - ``rate_limit_exceeded``: too many requests in a minute, hour or day. The
       server sends Retry-After, so ``retry_after`` holds the seconds to wait.
     - ``quota_exceeded``: the monthly write or query quota is used up. There is
       nothing to wait for short of the next month, so ``retry_after`` is None.
+    - ``too_many_batches``: raised as the subclass :class:`TooManyBatchesError`.
 
     ``retry_after`` comes from :class:`APIError`, which every error the server
     answers with now carries.
+    """
+
+
+class TooManyBatchesError(QuotaExceededError):
+    """429 ``too_many_batches`` (Cloud only): three ``batch()`` imports of the
+    account are still running, and the Cloud takes no fourth until one of them
+    finishes. Nothing was stored. Wait for a job to finish (``batch_status()``)
+    and send the batch again. There is no Retry-After, because the wait is a
+    job and not a clock, so ``retry_after`` is None.
+
+    Its own class since 2026-10-06. It was a plain QuotaExceededError with
+    ``retry_after`` None, exactly what a monthly ``quota_exceeded`` looks like,
+    and the docs tell you to stop on that one, while this one clears in
+    minutes.
     """
