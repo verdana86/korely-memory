@@ -17,6 +17,10 @@ Both clients:
   the server's code: `account_has_login` on the Cloud, `conflict` on the
   Self-hosted. Every 409 used to be a `StaleWriteError`, so a refusal that has
   nothing to do with an update read as a lost write.
+- Every `APIError` carries the server's `Retry-After`, in seconds
+  (`retry_after` in Python, `retryAfter` in JS), whatever the status. Only a
+  429 kept it, so the Cloud's 503 `writes_paused` (writes that need a model
+  are paused until 00:00 UTC) lost the one number that says when to retry.
 
 ## Python 0.1.17 and npm 0.1.9 (2026-10-06)
 

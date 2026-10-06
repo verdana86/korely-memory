@@ -49,7 +49,22 @@ class APIError(KorelyError):
     The subclasses were siblings of this class in 0.1.14 and earlier, so the pattern the
     public docs teach, ``except APIError`` and branch on ``err.code``, let a
     401, a 404 or a 429 straight through.
+
+    ``retry_after`` is the server's Retry-After header in whole seconds,
+    rounded up, or None when it sent none. Two answers carry it: a rate limit
+    (429 ``rate_limit_exceeded``) and the pause of the writes that need a
+    model (503 ``writes_paused``, Cloud only), which lasts until 00:00 UTC.
     """
+
+    def __init__(self, message: str = "", *, status: Optional[int] = None,
+                 code: Optional[str] = None, body: Optional[dict] = None,
+                 retry_after: Optional[int] = None):
+        super().__init__(message, status=status, code=code, body=body)
+        # On every status since 2026-10-06. Only QuotaExceededError kept it,
+        # so the 503 `writes_paused` the Cloud answers when its daily model
+        # budget is spent lost the one number that says when to come back,
+        # although the transport had read the header.
+        self.retry_after = retry_after
 
 
 class AuthenticationError(APIError):
@@ -95,10 +110,7 @@ class QuotaExceededError(APIError):
       server sends Retry-After, so ``retry_after`` holds the seconds to wait.
     - ``quota_exceeded``: the monthly write or query quota is used up. There is
       nothing to wait for short of the next month, so ``retry_after`` is None.
-    """
 
-    def __init__(self, message: str = "", *, status: Optional[int] = None,
-                 code: Optional[str] = None, retry_after: Optional[int] = None,
-                 body: Optional[dict] = None):
-        super().__init__(message, status=status, code=code, body=body)
-        self.retry_after = retry_after
+    ``retry_after`` comes from :class:`APIError`, which every error the server
+    answers with now carries.
+    """

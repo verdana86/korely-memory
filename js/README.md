@@ -161,7 +161,10 @@ try {
 `account_has_login`; `stale_write` is its subclass `StaleWriteError`) ·
 `QuotaExceededError` (429: `retryAfter` is set for `rate_limit_exceeded`,
 undefined for the monthly `quota_exceeded`) · `APIError` (the base of all of
-these, and everything else: 422, 503). The SDK does not retry on its own.
+these, and everything else: 422, 503). Every `APIError` has `retryAfter` when
+the server sent `Retry-After`: a rate limit, and the Cloud's 503
+`writes_paused` (writes that need a model are paused until 00:00 UTC). The SDK
+does not retry on its own.
 
 ## Configuration
 

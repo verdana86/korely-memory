@@ -180,10 +180,14 @@ except QuotaExceededError as err:   # 429
 | `NotFoundError` | 404 | `not_found` |
 | `ConflictError` | 409 | `account_has_login` (Cloud), `conflict` (Self-hosted) |
 | `StaleWriteError` (a `ConflictError`) | 409 | `stale_write` |
-| `QuotaExceededError` (`.retry_after`) | 429 | `rate_limit_exceeded` (has `retry_after`), `quota_exceeded` (monthly, `retry_after` is None) |
-| `APIError` | any other, and the base of all of the above | `invalid_request` (422), `search_unavailable` / `model_unavailable` (503, safe to retry) |
+| `QuotaExceededError` | 429 | `rate_limit_exceeded` (has `retry_after`), `quota_exceeded` (monthly, `retry_after` is None) |
+| `APIError` | any other, and the base of all of the above | `invalid_request` (422), `search_unavailable` / `model_unavailable` (503, safe to retry), `writes_paused` (503, Cloud only, has `retry_after`) |
 
-The SDK does not retry on its own.
+Every `APIError` has `retry_after`: the seconds of the server's `Retry-After`
+header, or None when it sent none. A rate limit sends it, and so does
+`writes_paused`, the Cloud's pause of the writes that need a model once its
+daily model budget is spent (until 00:00 UTC). The SDK does not retry on its
+own.
 
 ## LangGraph
 

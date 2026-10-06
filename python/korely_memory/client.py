@@ -467,12 +467,18 @@ class Korely:
         # the server's response verbatim, so it leaves here.
         server_body = {k: v for k, v in body.items() if k != "_retry_after"}
         code, msg = Korely._error_fields(status, body)
+        # Retry-After on every status (2026-10-06), not only on a 429: the
+        # Cloud's 503 `writes_paused` sends it too, and it is the one number
+        # that says when writes resume.
+        ra = _retry_after_seconds(body.get("_retry_after") or body.get("retry_after"))
         if status == 401:
-            raise AuthenticationError(msg, status=status, code=code, body=server_body)
+            raise AuthenticationError(msg, status=status, code=code, body=server_body,
+                                      retry_after=ra)
         if status == 403:
-            raise NamespaceForbiddenError(msg, status=status, code=code, body=server_body)
+            raise NamespaceForbiddenError(msg, status=status, code=code, body=server_body,
+                                          retry_after=ra)
         if status == 404:
-            raise NotFoundError(msg, status=status, code=code, body=server_body)
+            raise NotFoundError(msg, status=status, code=code, body=server_body, retry_after=ra)
         if status == 409:
             # Only `stale_write` is a stale write (2026-10-06). Every 409 was
             # raised as StaleWriteError, so `delete_account()`'s
@@ -482,12 +488,11 @@ class Korely:
             # _error_fields reads), so nothing a stale write sends lands in
             # the generic branch.
             cls = StaleWriteError if code == "stale_write" else ConflictError
-            raise cls(msg, status=status, code=code, body=server_body)
+            raise cls(msg, status=status, code=code, body=server_body, retry_after=ra)
         if status == 429:
-            ra = _retry_after_seconds(body.get("_retry_after") or body.get("retry_after"))
             raise QuotaExceededError(msg, status=status, code=code, retry_after=ra,
                                      body=server_body)
-        raise APIError(msg, status=status, code=code, body=server_body)
+        raise APIError(msg, status=status, code=code, body=server_body, retry_after=ra)
 
     # ── memories ───────────────────────────────────────────────────────────
     def add(self, content: "str | list", *, agent_id: Optional[str] = None,

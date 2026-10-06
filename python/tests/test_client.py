@@ -1327,3 +1327,55 @@ class OnlyAStaleWriteIsAStaleWrite(unittest.TestCase):
                                         expected_updated_at="2000-01-01T00:00:00Z")
                 self.assertIsInstance(caught.exception, ConflictError)
                 self.assertEqual(caught.exception.code, "stale_write")
+
+
+class TheRetryAfterOfAPausedWrite(unittest.TestCase):
+    """The Cloud answers 503 `writes_paused`, with Retry-After, when its daily
+    model budget is spent (GordonPro services/agent_spesa.py). The transport
+    read the header on every error and only a 429 kept it, so the one number
+    that says when writes resume was thrown away."""
+
+    _PAUSED = {"code": "writes_paused",
+               "message": "Writes that need a model are paused until 00:00 UTC."}
+
+    def test_a_503_keeps_its_retry_after(self):
+        with self.assertRaises(APIError) as caught:
+            Korely._raise(503, dict(self._PAUSED, _retry_after="41234"))
+        e = caught.exception
+        self.assertNotIsInstance(e, QuotaExceededError)
+        self.assertEqual((e.status, e.code, e.retry_after), (503, "writes_paused", 41234))
+        self.assertEqual(e.body, self._PAUSED)
+
+    def test_through_the_real_transport(self):
+        import io
+        from email.message import Message
+        from unittest import mock
+        from urllib.error import HTTPError
+
+        headers = Message()
+        headers["Retry-After"] = "41234"
+
+        def paused(req, timeout):
+            raise HTTPError(req.full_url, 503, "Service Unavailable", headers,
+                            io.BytesIO(json.dumps(self._PAUSED).encode("utf-8")))
+
+        os.environ.pop("KORELY_BASE_URL", None)
+        with mock.patch("korely_memory.client._urlrequest.urlopen", paused):
+            with self.assertRaises(APIError) as caught:
+                Korely(api_key="kor_live_transport").update("mem_1", content="x")
+        self.assertEqual(caught.exception.code, "writes_paused")
+        self.assertEqual(caught.exception.retry_after, 41234)
+
+    def test_an_error_without_the_header_says_none(self):
+        for status in (401, 404, 409, 422, 500, 503):
+            with self.subTest(status=status):
+                with self.assertRaises(APIError) as caught:
+                    Korely._raise(status, {"code": "x", "message": "m"})
+                self.assertIsNone(caught.exception.retry_after)
+
+    def test_the_429_signature_still_works(self):
+        e = QuotaExceededError("slow", status=429, code="rate_limit_exceeded",
+                               retry_after=3, body={"code": "rate_limit_exceeded"})
+        self.assertEqual((e.retry_after, e.code, e.body), (3, "rate_limit_exceeded",
+                                                           {"code": "rate_limit_exceeded"}))
+        self.assertIsNone(APIError("m").retry_after)

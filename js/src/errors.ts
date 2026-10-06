@@ -43,17 +43,33 @@ export class KorelyError extends Error {
  * public docs teach, `err instanceof APIError` and branch on `err.code`, let a
  * 401, a 404 or a 429 through.
  */
+export interface APIErrorOptions extends KorelyErrorOptions {
+  retryAfter?: number;
+}
+
 export class APIError extends KorelyError {
-  constructor(message = "", opts: KorelyErrorOptions = {}) {
+  /**
+   * The server's Retry-After header in whole seconds, rounded up; undefined
+   * when it sent none. Two answers carry it: a rate limit (429
+   * `rate_limit_exceeded`) and the pause of the writes that need a model (503
+   * `writes_paused`, Cloud only), which lasts until 00:00 UTC.
+   *
+   * On every status since 2026-10-06. Only QuotaExceededError kept it, so the
+   * 503 `writes_paused` lost the one number that says when to come back.
+   */
+  readonly retryAfter?: number;
+
+  constructor(message = "", opts: APIErrorOptions = {}) {
     super(message, opts);
     this.name = "APIError";
+    this.retryAfter = opts.retryAfter;
     Object.setPrototypeOf(this, new.target.prototype);
   }
 }
 
 /** 401: missing, malformed, or revoked API key. */
 export class AuthenticationError extends APIError {
-  constructor(message = "", opts: KorelyErrorOptions = {}) {
+  constructor(message = "", opts: APIErrorOptions = {}) {
     super(message, opts);
     this.name = "AuthenticationError";
     Object.setPrototypeOf(this, AuthenticationError.prototype);
@@ -65,7 +81,7 @@ export class AuthenticationError extends APIError {
  * namespace past the plan's cap (`code === "agent_cap_exceeded"`).
  */
 export class NamespaceForbiddenError extends APIError {
-  constructor(message = "", opts: KorelyErrorOptions = {}) {
+  constructor(message = "", opts: APIErrorOptions = {}) {
     super(message, opts);
     this.name = "NamespaceForbiddenError";
     Object.setPrototypeOf(this, NamespaceForbiddenError.prototype);
@@ -74,7 +90,7 @@ export class NamespaceForbiddenError extends APIError {
 
 /** 404: memory or fact id does not exist, or was forgotten. */
 export class NotFoundError extends APIError {
-  constructor(message = "", opts: KorelyErrorOptions = {}) {
+  constructor(message = "", opts: APIErrorOptions = {}) {
     super(message, opts);
     this.name = "NotFoundError";
     Object.setPrototypeOf(this, NotFoundError.prototype);
@@ -94,7 +110,7 @@ export class NotFoundError extends APIError {
  * changes.
  */
 export class ConflictError extends APIError {
-  constructor(message = "", opts: KorelyErrorOptions = {}) {
+  constructor(message = "", opts: APIErrorOptions = {}) {
     super(message, opts);
     this.name = "ConflictError";
     Object.setPrototypeOf(this, new.target.prototype);
@@ -106,7 +122,7 @@ export class ConflictError extends APIError {
  * record. A ConflictError, so `instanceof ConflictError` is true for it too.
  */
 export class StaleWriteError extends ConflictError {
-  constructor(message = "", opts: KorelyErrorOptions = {}) {
+  constructor(message = "", opts: APIErrorOptions = {}) {
     super(message, opts);
     this.name = "StaleWriteError";
     Object.setPrototypeOf(this, StaleWriteError.prototype);
@@ -117,18 +133,13 @@ export class StaleWriteError extends ConflictError {
  * 429. `code === "rate_limit_exceeded"`: too many requests in a minute, hour
  * or day, and `retryAfter` holds the seconds the server asked to wait.
  * `code === "quota_exceeded"`: the monthly quota is used up, there is nothing
- * to wait for this month, and `retryAfter` is undefined.
+ * to wait for this month, and `retryAfter` is undefined. `retryAfter` comes
+ * from APIError, which every error the server answers with carries.
  */
 export class QuotaExceededError extends APIError {
-  readonly retryAfter?: number;
-
-  constructor(
-    message = "",
-    opts: KorelyErrorOptions & { retryAfter?: number } = {},
-  ) {
+  constructor(message = "", opts: APIErrorOptions = {}) {
     super(message, opts);
     this.name = "QuotaExceededError";
-    this.retryAfter = opts.retryAfter;
-    Object.setPrototypeOf(this, QuotaExceededError.prototype);
+    Object.setPrototypeOf(this, new.target.prototype);
   }
 }

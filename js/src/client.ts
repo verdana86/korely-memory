@@ -159,6 +159,13 @@ function errorFields(status: number, body: any): { code?: string; message: strin
   return { code, message };
 }
 
+/** Retry-After in whole seconds, rounded up; undefined when absent or unreadable. */
+function retryAfterSeconds(raw: unknown): number | undefined {
+  if (raw == null) return undefined;
+  const n = Math.ceil(Number(raw));
+  return Number.isFinite(n) && n >= 0 ? n : undefined;
+}
+
 /** Fill a renamed field from its deprecated twin, and the twin from it, so
  *  either name reads the number whichever of the two the server sent. */
 function fillPair(obj: Record<string, unknown>, current: string, deprecated: string): void {
@@ -377,28 +384,28 @@ export class Korely {
 
   private raise(status: number, body: any, retryAfter: string | null): never {
     const { code, message: msg } = errorFields(status, body);
-    if (status === 401) throw new AuthenticationError(msg, { status, code });
-    if (status === 403) throw new NamespaceForbiddenError(msg, { status, code });
-    if (status === 404) throw new NotFoundError(msg, { status, code });
+    // Retry-After on every status (2026-10-06), not only on a 429: the Cloud's
+    // 503 `writes_paused` sends it too, and it is the one number that says
+    // when writes resume.
+    const opts = {
+      status,
+      code,
+      retryAfter: retryAfterSeconds(retryAfter ?? body?.retry_after ?? body?._retry_after),
+    };
+    if (status === 401) throw new AuthenticationError(msg, opts);
+    if (status === 403) throw new NamespaceForbiddenError(msg, opts);
+    if (status === 404) throw new NotFoundError(msg, opts);
     if (status === 409) {
       // Only `stale_write` is a stale write (2026-10-06). Every 409 was thrown
       // as StaleWriteError, so `deleteAccount()`'s `account_has_login` read as
       // a lost update. Both servers name `stale_write` on every stale update,
       // the self-hosted one since its first release (inside `detail` on an
       // older install, which errorFields reads).
-      if (code === "stale_write") throw new StaleWriteError(msg, { status, code });
-      throw new ConflictError(msg, { status, code });
+      if (code === "stale_write") throw new StaleWriteError(msg, opts);
+      throw new ConflictError(msg, opts);
     }
-    if (status === 429) {
-      const raw = retryAfter ?? body?.retry_after ?? body?._retry_after;
-      let ra: number | undefined;
-      if (raw != null) {
-        const n = Math.ceil(Number(raw));
-        ra = Number.isFinite(n) && n >= 0 ? n : undefined;
-      }
-      throw new QuotaExceededError(msg, { status, code, retryAfter: ra });
-    }
-    throw new APIError(msg, { status, code });
+    if (status === 429) throw new QuotaExceededError(msg, opts);
+    throw new APIError(msg, opts);
   }
 
   // ── memories ────────────────────────────────────────────────────────────

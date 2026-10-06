@@ -610,3 +610,24 @@ test("only a stale_write 409 is a StaleWriteError; any other 409 is a ConflictEr
     });
   }
 });
+
+test("a 503 writes_paused keeps its Retry-After, like a 429", async () => {
+  // The Cloud answers 503 writes_paused with Retry-After when its daily model
+  // budget is spent; only a 429 kept the header.
+  const { k } = client([
+    { status: 503, body: { code: "writes_paused", message: "Writes that need a model are paused until 00:00 UTC." }, headers: { "retry-after": "41234" } },
+    { status: 503, body: { code: "search_unavailable", message: "retry" } },
+  ]);
+  await assert.rejects(() => k.update("mem_1", { content: "x" }), (e) => {
+    assert.ok(e instanceof APIError);
+    assert.ok(!(e instanceof QuotaExceededError));
+    assert.equal(e.code, "writes_paused");
+    assert.equal(e.retryAfter, 41234);
+    return true;
+  });
+  await assert.rejects(() => k.search("q"), (e) => {
+    assert.equal(e.code, "search_unavailable");
+    assert.equal(e.retryAfter, undefined);
+    return true;
+  });
+});
