@@ -609,3 +609,16 @@ class AuthSpendsNothing(unittest.TestCase):
             rc = cli.main(["auth", "--api-key", "kor_live_test"])
         self.assertEqual(rc, 1)
         self.assertIn("[invalid_key]", err.getvalue())
+
+
+class SearchTakesTheApiDefault(unittest.TestCase):
+    """`korely search` sent limit=10 when the API's default is 15 (both
+    servers, SearchBody): the same search answered fewer hits than over REST."""
+
+    def test_no_limit_is_sent_unless_asked(self):
+        rec = _Recorder().queue(200, {"results": []}).queue(200, {"results": []})
+        with redirect_stdout(io.StringIO()):
+            cli.cmd_search(_client(rec), _args(["search", "plan"]))
+            cli.cmd_search(_client(rec), _args(["search", "plan", "--limit", "5"]))
+        self.assertNotIn("limit", rec.calls[0]["json"])
+        self.assertEqual(rec.calls[1]["json"]["limit"], 5)

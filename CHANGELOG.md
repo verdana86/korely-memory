@@ -77,6 +77,8 @@ Python:
   region and scopes. It called `GET /v1/users`, which needs `memories:read`
   (a write-only key failed the check) and counts as a query. `--json` has
   `tier`, `region` and `scopes` instead of `end_users`.
+- `korely search` sends no `--limit` unless given, so the server applies the
+  API's default, 15. It sent 10.
 
 ## Python 0.1.17 and npm 0.1.9 (2026-10-06)
 

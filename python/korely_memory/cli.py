@@ -455,7 +455,11 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("search", parents=[common], help="semantic search over memories")
     sp.add_argument("query")
     sp.add_argument("--run-id", help="scope to one run/session")
-    sp.add_argument("--limit", type=int, default=10)
+    # No default of our own (2026-10-06): it was 10 against the API's 15, so
+    # the same search answered fewer hits here than in the SDK or over REST.
+    # Not sent, the server applies its own, which is the API's by definition.
+    sp.add_argument("--limit", type=int, default=None,
+                    help="max hits (default: the server's, 15; max 50)")
     sp.set_defaults(func=cmd_search)
 
     sp = sub.add_parser("context", parents=[common],
