@@ -126,6 +126,37 @@ def _utc_day(value: Optional[str]) -> str:
     return dt.date().isoformat()
 
 
+def _utc_moment(value: Optional[str]) -> str:
+    """An ISO moment as its UTC time, `YYYY-MM-DD HH:MM:SS` ("" when absent):
+    the timelines (`history`, `events`, `audit`) in one zone whatever offset
+    the server wrote, as `_utc_day` does for fact dates. A string that is not
+    ISO keeps its first nineteen characters."""
+    from datetime import datetime, timezone
+
+    if not value:
+        return ""
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except ValueError:
+        return str(value)[:19].replace("T", " ")
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc)
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _snippet(text: Optional[str], width: int = 80) -> str:
+    """A memory on one line of a listing: whitespace folded, cut at `width`."""
+    one = " ".join((text or "").split())
+    return one if len(one) <= width else one[:width - 1] + "…"
+
+
+def _read_content(value: Optional[str]) -> Optional[str]:
+    """The text of `add` and `update`: the argument, or stdin for '-' or a pipe."""
+    if value == "-" or (value is None and not sys.stdin.isatty()):
+        return sys.stdin.read()
+    return value
+
+
 def _fact_line(f) -> str:
     """One fact, and the right tense for its dates.
 
@@ -158,9 +189,7 @@ def cmd_auth(k: Korely, a) -> int:
 
 
 def cmd_add(k: Korely, a) -> int:
-    content = a.content
-    if content == "-" or (content is None and not sys.stdin.isatty()):
-        content = sys.stdin.read()
+    content = _read_content(a.content)
     if not content or not content.strip():
         print("error: no content (pass text, '-' for stdin, or pipe it).", file=sys.stderr)
         return 2
@@ -174,6 +203,69 @@ def cmd_add(k: Korely, a) -> int:
             print(f"  extracted {len(m.facts)} fact(s):")
             for f in m.facts:
                 print("   ·", _fact_line(f))
+    return 0
+
+
+def cmd_update(k: Korely, a) -> int:
+    content = _read_content(a.content)
+    if not content or not content.strip():
+        print("error: no content (pass text, '-' for stdin, or pipe it).", file=sys.stderr)
+        return 2
+    m = k.update(a.memory_id, content=content, expected_updated_at=a.expected_updated_at)
+    if a.json:
+        _emit_json(m)
+    else:
+        print(f"updated  {m.id}")
+        if m.facts:
+            print(f"  extracted {len(m.facts)} fact(s):")
+            for f in m.facts:
+                print("   ·", _fact_line(f))
+    return 0
+
+
+def cmd_list(k: Korely, a) -> int:
+    page = k.get_all(user_id=a.user_id, agent_id=a.agent_id, run_id=a.run_id,
+                     limit=a.limit, offset=a.offset)
+    if a.json:
+        _emit_json(page)  # {"memories": [...], "total": n}, the API's shape
+        return 0
+    if not len(page):
+        print("no memories." + (f" (offset {a.offset} of {page.total})" if a.offset else ""))
+        return 0
+    if a.offset or len(page) < page.total:
+        print(f"{a.offset + 1}-{a.offset + len(page)} of {page.total} memory(ies):")
+    else:
+        print(f"{page.total} memory(ies):")
+    for m in page:
+        print(f"  {m.id}  {_utc_day(m.created_at)}  {(m.status or ''):<10}  {_snippet(m.content)}")
+    return 0
+
+
+def cmd_history(k: Korely, a) -> int:
+    h = k.history(a.memory_id)
+    if a.json:
+        _emit_json(h)
+        return 0
+    print(f"{h.id}  ({len(h.events)} event(s))")
+    for e in h.events:
+        line = f"  {_utc_moment(e.at):<19}  {e.event or ''}"
+        if e.fact:
+            line += f"  {e.fact}"
+        if e.fact_id:
+            line += f"  ({e.fact_id})"
+        print(line)
+    return 0
+
+
+def cmd_events(k: Korely, a) -> int:
+    r = k.events(user_id=a.user_id, status=a.status, limit=a.limit)
+    if a.json:
+        _emit_json(r)  # still the API's dict: {"events": [...], "processing": n}
+        return 0
+    scope = f" for {a.user_id}" if a.user_id else ""
+    print(f"{r.processing} write(s) still processing{scope}.")
+    for e in r.events:
+        print(f"  {e.memory_id}  {(e.status or ''):<10}  {_utc_moment(e.created_at)}")
     return 0
 
 
@@ -452,6 +544,14 @@ def build_parser() -> argparse.ArgumentParser:
                     help="ISO date the events happened (backfill): the facts take it as valid_from")
     sp.set_defaults(func=cmd_add)
 
+    sp = sub.add_parser("update", parents=[common],
+                        help="replace a memory's text and re-run extraction ('-' or pipe for stdin)")
+    sp.add_argument("memory_id")
+    sp.add_argument("content", nargs="?", help="the new text; '-' reads stdin")
+    sp.add_argument("--expected-updated-at",
+                    help="the updated_at you read: refused (stale_write) if it changed since")
+    sp.set_defaults(func=cmd_update)
+
     sp = sub.add_parser("search", parents=[common], help="semantic search over memories")
     sp.add_argument("query")
     sp.add_argument("--run-id", help="scope to one run/session")
@@ -488,9 +588,27 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--limit", type=int, default=50)
     sp.set_defaults(func=cmd_users)
 
+    sp = sub.add_parser("list", parents=[common], help="the memories of a scope, newest first")
+    sp.add_argument("--run-id", help="one run/session")
+    sp.add_argument("--limit", type=int, default=50, help="up to 200 (default 50)")
+    sp.add_argument("--offset", type=int, default=0)
+    sp.set_defaults(func=cmd_list)
+
     sp = sub.add_parser("get", parents=[common], help="one memory by id")
     sp.add_argument("memory_id")
     sp.set_defaults(func=cmd_get)
+
+    sp = sub.add_parser("history", parents=[common],
+                        help="a memory's timeline, and every fact it produced")
+    sp.add_argument("memory_id")
+    sp.set_defaults(func=cmd_history)
+
+    sp = sub.add_parser("events", parents=[common],
+                        help="which writes are still being extracted (status per memory)")
+    sp.add_argument("--status", choices=["processing", "ready", "error"],
+                    help="only this state, before --limit")
+    sp.add_argument("--limit", type=int, default=50, help="up to 200 (default 50)")
+    sp.set_defaults(func=cmd_events)
 
     sp = sub.add_parser("delete", parents=[common], help="forget one memory (audited)")
     sp.add_argument("memory_id")

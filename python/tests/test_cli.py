@@ -155,6 +155,7 @@ class TestParserWiring(unittest.TestCase):
             ["auth"], ["add", "hi"], ["search", "q"], ["context", "q"],
             ["facts"], ["profile"], ["users"], ["get", "mem_1"],
             ["delete", "mem_1"], ["delete-all", "--user-id", "x", "--yes"],
+            ["list"], ["update", "mem_1", "new text"], ["history", "mem_1"], ["events"],
         ):
             with self.subTest(cmd=argv[0]):
                 a = _args(argv)
@@ -622,3 +623,114 @@ class SearchTakesTheApiDefault(unittest.TestCase):
             cli.cmd_search(_client(rec), _args(["search", "plan", "--limit", "5"]))
         self.assertNotIn("limit", rec.calls[0]["json"])
         self.assertEqual(rec.calls[1]["json"]["limit"], 5)
+
+
+class TheMemoryCommands(unittest.TestCase):
+    """list, update, history and events: routes the SDK had and the CLI did
+    not (window A's comparison of every /v1 route, 2026-10-06)."""
+
+    def _run(self, rec, argv, stdin=None):
+        """One command against the recorder: (exit code, stdout, parsed with --json)."""
+        import json as _json
+        from contextlib import ExitStack
+        from unittest import mock
+
+        out = io.StringIO()
+        with ExitStack() as stack:
+            stack.enter_context(redirect_stdout(out))
+            if stdin is not None:
+                stack.enter_context(mock.patch.object(sys, "stdin", io.StringIO(stdin)))
+            a = _args(argv)
+            rc = a.func(_client(rec), a)
+        text = out.getvalue()
+        return rc, (_json.loads(text) if "--json" in argv else text)
+
+    def test_list(self):
+        rec = _Recorder().queue(200, {"memories": [
+            {"id": "mem_2", "content": "Maria moved to   Milan.\nShe likes it.",
+             "status": "ready", "created_at": "2026-10-06T10:00:00+00:00"},
+            {"id": "mem_1", "content": "x" * 120, "status": "processing",
+             "created_at": "2026-10-05T23:30:00-02:00"},
+        ], "total": 9})
+        rc, out = self._run(rec, ["list", "--user-id", "maria", "--run-id", "r1",
+                                  "--limit", "2", "--offset", "2"])
+        self.assertEqual(rc, 0)
+        self.assertEqual((rec.last["method"], rec.last["path"]), ("GET", "/v1/memories"))
+        self.assertEqual(rec.last["params"], {"user_id": "maria", "run_id": "r1",
+                                              "limit": 2, "offset": 2})
+        self.assertIn("3-4 of 9 memory(ies):", out)
+        self.assertIn("mem_2  2026-10-06  ready       Maria moved to Milan. She likes it.", out)
+        self.assertIn("mem_1  2026-10-06  processing", out)  # 23:30 at -02:00 is 6 Oct, UTC
+        self.assertIn("x" * 79 + "…", out)
+
+    def test_list_json_and_empty(self):
+        rec = _Recorder().queue(200, {"memories": [{"id": "mem_1"}], "total": 1})
+        rc, data = self._run(rec, ["list", "--json"])
+        self.assertEqual((data["total"], data["memories"][0]["id"]), (1, "mem_1"))
+        rec.queue(200, {"memories": [], "total": 0})
+        rc, out = self._run(rec, ["list"])
+        self.assertEqual((rc, out.strip()), (0, "no memories."))
+
+    def test_update(self):
+        rec = _Recorder().queue(200, {"id": "mem_1", "content": "Maria lives in Rome.",
+                                      "facts": [{"subject": "Maria", "predicate": "lives_in",
+                                                 "object": "Rome"}]})
+        rc, out = self._run(rec, ["update", "mem_1", "Maria lives in Rome.",
+                                  "--expected-updated-at", "2026-10-06T10:00:00Z"])
+        self.assertEqual(rc, 0)
+        self.assertEqual((rec.last["method"], rec.last["path"]), ("PATCH", "/v1/memories/mem_1"))
+        self.assertEqual(rec.last["json"], {"content": "Maria lives in Rome.",
+                                            "expected_updated_at": "2026-10-06T10:00:00Z"})
+        self.assertIn("updated  mem_1", out)
+        self.assertIn("Maria · lives_in · Rome", out)
+
+    def test_update_reads_stdin_and_refuses_nothing(self):
+        rec = _Recorder().queue(200, {"id": "mem_1", "content": "from stdin"})
+        rc, _ = self._run(rec, ["update", "mem_1", "-"], stdin="from stdin\n")
+        self.assertEqual(rec.last["json"], {"content": "from stdin\n"})
+        rec2 = _Recorder()
+        err = io.StringIO()
+        with redirect_stderr(err):
+            rc, _ = self._run(rec2, ["update", "mem_1", "   "])
+        self.assertEqual(rc, 2)
+        self.assertEqual(rec2.calls, [])
+
+    def test_a_stale_update_names_its_code(self):
+        from unittest import mock
+
+        rec = _Recorder().queue(409, {"code": "stale_write",
+                                      "message": "expected_updated_at does not match the current record."})
+        err = io.StringIO()
+        with mock.patch.object(cli, "Korely", side_effect=lambda **kw: _client(rec)), \
+                redirect_stderr(err), redirect_stdout(io.StringIO()):
+            rc = cli.main(["update", "mem_1", "x", "--expected-updated-at", "2000-01-01",
+                           "--api-key", "kor_live_test"])
+        self.assertEqual(rc, 1)
+        self.assertIn("[stale_write]", err.getvalue())
+
+    def test_history(self):
+        rec = _Recorder().queue(200, {"id": "mem_1", "events": [
+            {"event": "created", "at": "2026-10-06T10:00:00+00:00"},
+            {"event": "fact_extracted", "at": "2026-10-06T12:00:05+02:00",
+             "fact": "Maria lives_in Rome", "fact_id": "fct_1"},
+        ]})
+        rc, out = self._run(rec, ["history", "mem_1"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(rec.last["path"], "/v1/memories/mem_1/history")
+        self.assertIn("mem_1  (2 event(s))", out)
+        self.assertIn("2026-10-06 10:00:00  created", out)
+        self.assertIn("2026-10-06 10:00:05  fact_extracted  Maria lives_in Rome  (fct_1)", out)
+
+    def test_events(self):
+        rec = _Recorder().queue(200, {"events": [
+            {"memory_id": "mem_1", "status": "error", "created_at": "2026-10-06T10:00:00+00:00"},
+        ], "processing": 4})
+        rc, out = self._run(rec, ["events", "--user-id", "maria", "--status", "error",
+                                  "--limit", "200"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(rec.last["params"], {"user_id": "maria", "status": "error", "limit": 200})
+        self.assertIn("4 write(s) still processing for maria.", out)
+        self.assertIn("mem_1  error       2026-10-06 10:00:00", out)
+        rec.queue(200, {"events": [], "processing": 0})
+        rc, data = self._run(rec, ["events", "--json"])
+        self.assertEqual(data, {"events": [], "processing": 0})

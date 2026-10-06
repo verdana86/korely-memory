@@ -239,6 +239,30 @@ header, or None when it sent none. A rate limit sends it, and so does
 daily model budget is spent (until 00:00 UTC). The SDK does not retry on its
 own.
 
+## CLI
+
+`pip install korely-memory` also installs `korely`, one command per API call,
+reading the key from `KORELY_API_KEY` or from the file `korely init` saved.
+Every command takes `--json` (the API's own shape; an error is a JSON object on
+stderr), `--api-key` and `--base-url`; `--user-id` and `--agent-id` scope the
+ones that read or write memories.
+
+| Command | Call |
+|---|---|
+| `korely init [--agent] [--api-key KEY] [--force]` | `POST /v1/agents/init`, or save a key you have; `--force` to replace a saved one |
+| `korely auth` | `GET /v1/ping` |
+| `korely add TEXT` / `korely update ID TEXT` | `POST /v1/memories` / `PATCH /v1/memories/:id` (`-` or a pipe reads stdin) |
+| `korely search QUERY` | `POST /v1/memories/search` |
+| `korely context QUERY` | `GET /v1/context` |
+| `korely list [--limit] [--offset]` | `GET /v1/memories` |
+| `korely get ID` / `korely history ID` | `GET /v1/memories/:id` / `.../history` |
+| `korely events [--status error]` | `GET /v1/events` |
+| `korely facts [--as-of DATE]` | `GET /v1/facts` |
+| `korely profile --user-id U` | `GET /v1/profile` |
+| `korely users` | `GET /v1/users` |
+| `korely delete ID` | `DELETE /v1/memories/:id` |
+| `korely delete-all --user-id U --yes` | `DELETE /v1/users/:user_id/memories` |
+
 ## LangGraph
 
 ```bash

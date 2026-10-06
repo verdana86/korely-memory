@@ -79,6 +79,10 @@ Python:
   `tier`, `region` and `scopes` instead of `end_users`.
 - `korely search` sends no `--limit` unless given, so the server applies the
   API's default, 15. It sent 10.
+- New commands for the memory routes the CLI lacked: `list` (`GET
+  /v1/memories`, `--limit`, `--offset`, `--run-id`), `update ID TEXT` (`PATCH`,
+  stdin with `-`, `--expected-updated-at`), `history ID` and `events`
+  (`--status`, `--limit`). Timelines print UTC times.
 
 `korely-mcp`:
 
