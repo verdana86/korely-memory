@@ -163,7 +163,9 @@ try {
 
 `AuthenticationError` (401) · `NamespaceForbiddenError` (403, e.g.
 `agent_cap_exceeded`) · `NotFoundError` (404) · `ConflictError` (409, e.g.
-`account_has_login`; `stale_write` is its subclass `StaleWriteError`) ·
+`account_has_login`; `fact_not_current` from `correctFact()` of a fact that is
+history, with `currentFactId` the fact to correct instead; `stale_write` is its
+subclass `StaleWriteError`) ·
 `QuotaExceededError` (429: `retryAfter` is set for `rate_limit_exceeded`,
 undefined for the monthly `quota_exceeded`) · `TooManyBatchesError` (a
 `QuotaExceededError`: `too_many_batches` from `batch()`, Cloud only, three

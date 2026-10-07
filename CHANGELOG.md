@@ -12,6 +12,13 @@ and a batch `timestamp` is refused there with a 422.
 
 Both clients:
 
+- `ConflictError` carries `current_fact_id` (`currentFactId` in JS) on a
+  409 `fact_not_current`: `correct_fact()` of a fact that is history answers
+  with the id of the fact that holds now, the one to correct instead; None or
+  undefined when nothing replaced it (write the value of now with
+  `add_fact_triple()`), on any other conflict, and from a server that does
+  not send it. Both servers send it from their next release.
+
 - `QuotaExceededError` carries the Cloud's machine fields of a monthly
   `quota_exceeded`: `limit` (the month's allowance, the plan plus the month's
   top-ups), `used` and `resets_at` (`resetsAt` in JS), None or undefined from

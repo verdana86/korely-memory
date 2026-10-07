@@ -228,7 +228,7 @@ except QuotaExceededError as err:   # 429
 | `AuthenticationError` | 401 | `invalid_key` |
 | `NamespaceForbiddenError` | 403 | `agent_cap_exceeded`, missing scope |
 | `NotFoundError` | 404 | `not_found` |
-| `ConflictError` | 409 | `account_has_login` (Cloud), `conflict` (Self-hosted) |
+| `ConflictError` | 409 | `account_has_login` (Cloud), `fact_not_current` (`correct_fact()` of a fact that is history; `current_fact_id` is the fact to correct instead, None when nothing replaced it), `conflict` (Self-hosted) |
 | `StaleWriteError` (a `ConflictError`) | 409 | `stale_write` |
 | `QuotaExceededError` | 429 | `rate_limit_exceeded` (has `retry_after`), `quota_exceeded` (monthly, `retry_after` is None) |
 | `TooManyBatchesError` (a `QuotaExceededError`) | 429 | `too_many_batches` (`batch()`, Cloud only: three imports still running; send again when one finishes) |

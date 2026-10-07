@@ -623,6 +623,30 @@ test("only a stale_write 409 is a StaleWriteError; any other 409 is a ConflictEr
   }
 });
 
+test("a 409 fact_not_current carries the fact to correct as currentFactId", async () => {
+  // 2026-10-07, both servers: the id as a field (inside `detail` on the
+  // Self-hosted, either place allowed), so nobody reads it off the message.
+  const bodies = [
+    { detail: { code: "fact_not_current", message: "superseded by fct_new", current_fact_id: "fct_new" },
+      code: "fact_not_current", message: "superseded by fct_new" },
+    { code: "fact_not_current", message: "superseded by fct_new", current_fact_id: "fct_new" },
+  ];
+  for (const body of bodies) {
+    const { k } = client([{ status: 409, body }]);
+    await assert.rejects(() => k.correctFact("fct_old", { object: "Team plan" }), (e) => {
+      assert.ok(e instanceof ConflictError && !(e instanceof StaleWriteError));
+      assert.equal(e.code, "fact_not_current");
+      assert.equal(e.currentFactId, "fct_new");
+      return true;
+    });
+  }
+  const { k } = client([{ status: 409, body: { detail: { code: "fact_not_current", message: "write it", current_fact_id: null }, code: "fact_not_current", message: "write it" } }]);
+  await assert.rejects(() => k.correctFact("fct_old", { object: "Team plan" }), (e) => {
+    assert.equal(e.currentFactId, undefined);
+    return true;
+  });
+});
+
 test("a 503 writes_paused keeps its Retry-After, like a 429", async () => {
   // The Cloud answers 503 writes_paused with Retry-After when its daily model
   // budget is spent; only a 429 kept the header.

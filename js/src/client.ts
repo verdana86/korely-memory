@@ -263,6 +263,14 @@ function quotaFields(body: any): { limit?: number; used?: number; resetsAt?: str
            resetsAt: str(b.resets_at ?? d.resets_at) };
 }
 
+/** The fields of a 409 (2026-10-07), at the top or inside `detail`, as quotaFields. */
+function conflictFields(body: any): { currentFactId?: string } {
+  const b = body && typeof body === "object" ? body : {};
+  const d = b.detail && typeof b.detail === "object" && !Array.isArray(b.detail) ? b.detail : {};
+  const v = b.current_fact_id ?? d.current_fact_id;
+  return { currentFactId: typeof v === "string" && v ? v : undefined };
+}
+
 /** Retry-After in whole seconds, rounded up; undefined when absent or unreadable. */
 function retryAfterSeconds(raw: unknown): number | undefined {
   if (raw == null) return undefined;
@@ -468,7 +476,7 @@ function raiseFor(status: number, body: any, retryAfter: string | null): never {
     // the self-hosted one since its first release (inside `detail` on an
     // older install, which errorFields reads).
     if (code === "stale_write") throw new StaleWriteError(msg, opts);
-    throw new ConflictError(msg, opts);
+    throw new ConflictError(msg, { ...opts, ...conflictFields(body) });
   }
   if (status === 429) {
     // `too_many_batches` has its own class (2026-10-06): with no Retry-After

@@ -97,12 +97,19 @@ export class NotFoundError extends APIError {
   }
 }
 
+export interface ConflictErrorOptions extends APIErrorOptions {
+  currentFactId?: string;
+}
+
 /**
  * 409: the request conflicts with what the server holds. `code` names the
  * conflict: `stale_write` (update() with an expected_updated_at older than the
  * record, thrown as the subclass StaleWriteError), `account_has_login`
  * (`deleteAccount()` with the key of an account somebody signs in to, Cloud
- * only) or `conflict` (the Self-hosted's code for a 409 that names no other).
+ * only), `fact_not_current` (`correctFact()` of a fact that is history:
+ * superseded, forgotten or ended; `currentFactId` is the fact to correct
+ * instead) or `conflict` (the Self-hosted's code for a 409 that names no
+ * other).
  *
  * Until 2026-10-06 every 409 was a StaleWriteError, so a refusal that has
  * nothing to do with an update read as a lost write, and code written to
@@ -110,9 +117,19 @@ export class NotFoundError extends APIError {
  * changes.
  */
 export class ConflictError extends APIError {
-  constructor(message = "", opts: APIErrorOptions = {}) {
+  /**
+   * On `fact_not_current` (2026-10-07): the id of the fact that holds now, the
+   * one to correct instead. Undefined when nothing superseded the fact asked
+   * (it was forgotten or ended: write the value of now with `addFactTriple()`),
+   * on any other conflict, and from a server that does not send it. Read
+   * this, never the message.
+   */
+  readonly currentFactId?: string;
+
+  constructor(message = "", opts: ConflictErrorOptions = {}) {
     super(message, opts);
     this.name = "ConflictError";
+    this.currentFactId = opts.currentFactId;
     Object.setPrototypeOf(this, new.target.prototype);
   }
 }

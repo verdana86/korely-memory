@@ -66,6 +66,13 @@ class APIError(KorelyError):
         # although the transport had read the header.
         self.retry_after = retry_after
 
+    def _field(self, name: str):
+        """A machine field of the answer, at its top level or inside
+        ``detail`` (where the Self-hosted puts the fields of a refusal)."""
+        body = self.body if isinstance(self.body, dict) else {}
+        detail = body.get("detail") if isinstance(body.get("detail"), dict) else {}
+        return body.get(name, detail.get(name))
+
 
 class AuthenticationError(APIError):
     """401: missing, malformed, or revoked API key."""
@@ -88,6 +95,9 @@ class ConflictError(APIError):
       the record, raised as the subclass :class:`StaleWriteError`;
     - ``account_has_login``: ``delete_account()`` with the key of an account
       somebody signs in to (Cloud only);
+    - ``fact_not_current``: ``correct_fact()`` of a fact that is history
+      (superseded, forgotten or ended); :attr:`current_fact_id` is the fact
+      to correct instead;
     - ``conflict``: the Self-hosted's code for a 409 that names no other.
 
     Until 2026-10-06 every 409 was a ``StaleWriteError``, so a refusal that has
@@ -95,6 +105,16 @@ class ConflictError(APIError):
     and code written to re-read the record and retry a stale write retried a
     refusal that never changes.
     """
+
+    @property
+    def current_fact_id(self) -> Optional[str]:
+        """On ``fact_not_current`` (2026-10-07): the id of the fact that holds
+        now, the one to correct instead. None when nothing superseded the fact
+        asked (it was forgotten or ended: write the value of now with
+        ``add_fact_triple()``), on any other conflict, and from a server that
+        does not send it. Read this, never the message."""
+        v = self._field("current_fact_id")
+        return v if isinstance(v, str) and v else None
 
 
 class StaleWriteError(ConflictError):
@@ -121,11 +141,6 @@ class QuotaExceededError(APIError):
     them. Read these, never the message, which says the same in words that
     change.
     """
-
-    def _field(self, name: str):
-        body = self.body if isinstance(self.body, dict) else {}
-        detail = body.get("detail") if isinstance(body.get("detail"), dict) else {}
-        return body.get(name, detail.get(name))
 
     @property
     def limit(self) -> Optional[int]:

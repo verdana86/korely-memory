@@ -18,6 +18,7 @@ from korely_memory import (  # noqa: E402
     AuthenticationError,
     NotFoundError,
     StaleWriteError,
+    ConflictError,
     QuotaExceededError,
     APIError,
     KorelyError,
@@ -202,6 +203,29 @@ class TestErrorMapping(unittest.TestCase):
             _client(rec).add("x")
         e = cm.exception
         self.assertEqual((e.limit, e.used, e.resets_at), (2000, 2200, "2026-11-01"))
+
+    def test_409_fact_not_current_names_the_fact_to_correct(self):
+        """2026-10-07: the id as a field, inside `detail` (the Self-hosted) or
+        at the top (either server may), never read off the message."""
+        for body in ({"detail": {"code": "fact_not_current", "message": "superseded by fct_new",
+                                 "current_fact_id": "fct_new"},
+                      "code": "fact_not_current", "message": "superseded by fct_new"},
+                     {"code": "fact_not_current", "message": "superseded by fct_new",
+                      "current_fact_id": "fct_new"}):
+            rec = _Recorder().queue(409, body)
+            with self.assertRaises(ConflictError) as cm:
+                _client(rec).correct_fact("fct_old", object="Team plan")
+            self.assertNotIsInstance(cm.exception, StaleWriteError)
+            self.assertEqual((cm.exception.code, cm.exception.current_fact_id),
+                             ("fact_not_current", "fct_new"))
+
+    def test_409_fact_not_current_with_no_successor(self):
+        rec = _Recorder().queue(409, {"detail": {"code": "fact_not_current", "message": "write it",
+                                                 "current_fact_id": None},
+                                      "code": "fact_not_current", "message": "write it"})
+        with self.assertRaises(ConflictError) as cm:
+            _client(rec).correct_fact("fct_old", object="Team plan")
+        self.assertIsNone(cm.exception.current_fact_id)
 
     def test_422_is_generic_api_error(self):
         # non-empty content so the request actually reaches the server (empty
