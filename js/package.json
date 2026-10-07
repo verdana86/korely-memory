@@ -23,7 +23,7 @@
     "url": "https://github.com/verdana86/korely-memory/issues"
   },
   "license": "MIT",
-  "author": "Korely <hello@korely.ai>",
+  "author": "Korely <info@korely.ai>",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",

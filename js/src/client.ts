@@ -944,7 +944,7 @@ export class Korely {
     opts: AddFactTripleOptions = {},
   ): Promise<Fact> {
     checkOptions("addFactTriple", opts, TRIPLE_KEYS);
-    return this.request("POST", "/v1/facts", {
+    const fact: Fact = await this.request("POST", "/v1/facts", {
       body: {
         subject,
         predicate,
@@ -959,6 +959,13 @@ export class Korely {
         tense: opts.tense,
       },
     });
+    // Whose fact it is: servers since 2026-10-07 answer it; for an older one,
+    // what was sent is what it was stored under.
+    return {
+      ...fact,
+      user_id: fact.user_id !== undefined ? fact.user_id : opts.user_id,
+      agent_id: fact.agent_id !== undefined ? fact.agent_id : opts.agent_id,
+    };
   }
 
   /**

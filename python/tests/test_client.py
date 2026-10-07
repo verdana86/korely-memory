@@ -237,6 +237,19 @@ class TestMethodParity(unittest.TestCase):
         self.assertEqual(rec.last["json"]["valid_from"], "2026-01-01")
         self.assertEqual(f.subject, "Mario")
         self.assertEqual(f.invalidated, ["fct_old"])
+        # 2026-10-07: an older server left the owner out of the write shape,
+        # and the Fact said user_id None: what was sent is what it was stored under.
+        self.assertEqual(f.user_id, "mario")
+        self.assertIsNone(f.agent_id)
+
+    def test_add_fact_triple_takes_the_owner_the_server_answers(self):
+        rec = _Recorder().queue(201, {
+            "id": "fct_1", "subject": "Mario", "predicate": "works_at", "object": "Acme",
+            "user_id": "mario", "agent_id": None,
+        })
+        f = _client(rec).add_fact_triple("Mario", "works_at", "Acme", user_id="mario", agent_id="x")
+        self.assertEqual(f.user_id, "mario")
+        self.assertIsNone(f.agent_id, "the server's answer wins")
 
     def test_get_profile(self):
         rec = _Recorder().queue(200, {

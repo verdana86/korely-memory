@@ -902,3 +902,17 @@ test("new Korely() reads what `korely init` saved, as the Python client does (20
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("addFactTriple says whose fact it is, from the server or from what was sent (2026-10-07)", async () => {
+  const { k } = client([
+    { status: 201, body: { id: "f1", subject: "maria", predicate: "works_at", object: "Acme",
+                           user_id: "maria", agent_id: null } },
+    { status: 201, body: { id: "f2", subject: "maria", predicate: "works_at", object: "Acme" } },
+  ]);
+  const fromServer = await k.addFactTriple("maria", "works_at", "Acme", { user_id: "maria", agent_id: "x" });
+  assert.equal(fromServer.user_id, "maria");
+  assert.equal(fromServer.agent_id, null, "the server's answer wins");
+  const older = await k.addFactTriple("maria", "works_at", "Acme", { user_id: "maria" });
+  assert.equal(older.user_id, "maria", "an older server left it out: what was sent");
+  assert.equal(older.agent_id, undefined);
+});

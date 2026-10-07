@@ -891,6 +891,12 @@ class Korely:
             "subject_type": subject_type, "object_is_literal": object_is_literal,
             "confidence": confidence, "valid_from": valid_from, "tense": tense,
         }))
+        # Whose fact it is: servers since 2026-10-07 answer it; an older one
+        # left it out, and the Fact said user_id None for a fact written for an
+        # end user. What was sent is what it was stored under.
+        if isinstance(body, dict):
+            body.setdefault("user_id", user_id)
+            body.setdefault("agent_id", agent_id)
         return Fact.from_dict(body)
 
     def forget_fact(self, fact_id: str, *, at: Optional[str] = None) -> ForgetReceipt:
