@@ -181,19 +181,30 @@ def cmd_auth(k: Korely, a) -> int:
     if a.json:
         _emit_json({"authenticated": bool(p.ok), "key": _mask(k.api_key),
                     "base_url": k.base_url, "tier": p.tier, "region": p.region,
+                    **({"processing_region": p.processing_region} if p.processing_region else {}),
                     "scopes": p.scopes})
     else:
         print(f"Authenticated  key {_mask(k.api_key)}  base {k.base_url}")
-        print(f"tier {p.tier}  region {p.region}  scopes {', '.join(p.scopes) or '(none)'}")
+        print(f"tier {p.tier}  region {p.region}{_processing(p)}  scopes {', '.join(p.scopes) or '(none)'}")
     return 0
+
+
+def _processing(p) -> str:
+    """"  processing eu" when the server says where a memory is read by a
+    model (since 2026-10-07), nothing from an older one."""
+    return f"  processing {p.processing_region}" if getattr(p, "processing_region", None) else ""
 
 
 def cmd_ping(k: Korely, a) -> int:
     p = k.ping()
     if a.json:
-        _emit_json(p)  # {"ok", "tier", "region", "scopes"}, the API's shape
+        # The API's shape: processing_region only from a server that answers it.
+        out = dataclasses.asdict(p)
+        if out.get("processing_region") is None:
+            out.pop("processing_region", None)
+        _emit_json(out)
         return 0
-    print(f"ok  tier {p.tier}  region {p.region}  scopes {', '.join(p.scopes) or '(none)'}")
+    print(f"ok  tier {p.tier}  region {p.region}{_processing(p)}  scopes {', '.join(p.scopes) or '(none)'}")
     return 0
 
 
@@ -738,7 +749,7 @@ def cmd_init(args) -> int:
     q = result.quotas or {}
     print(f"You're set: a free hobby key was minted and saved to {path} (chmod 600).")
     print(f"  key     {_mask(key)}")
-    print(f"  tier    {result.tier}    region {result.region}")
+    print(f"  tier    {result.tier}    region {result.region}{_processing(result)}")
     if q:
         print(f"  quotas  {q.get('writes_per_month')} writes / "
               f"{q.get('queries_per_month')} queries per month · {q.get('agents')} agents")

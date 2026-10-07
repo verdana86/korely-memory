@@ -1730,6 +1730,18 @@ class SigningUpWithoutAKey(unittest.TestCase):
         self.assertEqual((r.api_key, r.tier, r.region), (self._MINTED["api_key"], "hobby", "eu-hel1"))
         self.assertEqual(r.quotas["agents"], 2)
 
+    def test_the_processing_region_is_sent_only_when_chosen(self):
+        """2026-10-07: where the new project's memories are read by a model."""
+        minted = dict(self._MINTED, processing_region="eu")
+        with self._answering(body=minted):
+            r = Korely.init_agent("app", processing_region="eu")
+        self.assertEqual(json.loads(self.seen[0].data),
+                         {"agent_caller": "app", "processing_region": "eu"})
+        self.assertEqual(r.processing_region, "eu")
+        with self.assertRaises(KorelyError):
+            Korely.init_agent("app", processing_region="us")
+        self.assertEqual(len(self.seen), 1, "a wrong region is refused before sending")
+
     def test_the_key_stays_out_of_repr(self):
         with self._answering():
             r = Korely.init_agent()

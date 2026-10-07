@@ -510,10 +510,15 @@ class PingResponse:
       (``eu-hel1`` on the Cloud; on the Self-hosted, what its operator set).
       Not where a memory is read by a model: on the Cloud that is the
       project's region, Europe or Global (Gemini, by Google).
+    - ``processing_region``: where a memory is read by a model, ``eu`` or
+      ``global``: the region of the key's project on the Cloud, of the
+      writer the install uses on the Self-hosted; None from a server older
+      than 2026-10-07, or with no writer.
     - ``scopes``: what the key may do, e.g. ``memories:read``."""
     ok: bool = False
     tier: Optional[str] = None
     region: Optional[str] = None
+    processing_region: Optional[str] = None
     scopes: List[str] = field(default_factory=list)
 
     @classmethod
@@ -622,6 +627,8 @@ class AgentInitResult:
     api_key: Optional[str] = field(default=None, repr=False)
     tier: Optional[str] = None
     region: Optional[str] = None
+    # Where the new project's memories are read by a model: "eu" or "global".
+    processing_region: Optional[str] = None
     scopes: List[str] = field(default_factory=list)
     quotas: dict = field(default_factory=dict)
 

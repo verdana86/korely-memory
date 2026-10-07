@@ -307,6 +307,12 @@ export interface PingResponse {
    * Global (Gemini, by Google).
    */
   region: string;
+  /**
+   * Where a memory is read by a model, "eu" or "global": the region of the
+   * key's project on the Cloud, of the writer the install uses on the
+   * Self-hosted. Absent from a server older than 2026-10-07; null with no writer.
+   */
+  processing_region?: "eu" | "global" | null;
   /** What the key may do, e.g. "memories:read". */
   scopes: string[];
 }
@@ -317,6 +323,8 @@ export interface AgentInitResult {
   api_key: string;
   tier: string;
   region: string;
+  /** Where the new project's memories are read by a model. */
+  processing_region?: "eu" | "global";
   scopes: string[];
   /** The hobby allowance: writes_per_month, queries_per_month, agents, the monthly AI budget. */
   quotas: Record<string, unknown>;

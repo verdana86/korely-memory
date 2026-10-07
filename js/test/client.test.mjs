@@ -916,3 +916,18 @@ test("addFactTriple says whose fact it is, from the server or from what was sent
   assert.equal(older.user_id, "maria", "an older server left it out: what was sent");
   assert.equal(older.agent_id, undefined);
 });
+
+test("processing_region: chosen at signup when given, read from ping (2026-10-07)", async () => {
+  const f = fakeFetch([
+    { status: 201, body: { api_key: "kor_live_x", tier: "hobby", region: "eu-hel1", processing_region: "eu", scopes: [], quotas: {} } },
+  ]);
+  const r = await Korely.initAgent("app", { fetch: f, baseUrl: "https://api.test", processingRegion: "eu" });
+  assert.deepEqual(JSON.parse(f.calls[0].init.body), { agent_caller: "app", processing_region: "eu" });
+  assert.equal(r.processing_region, "eu");
+  const none = fakeFetch([]);
+  await assert.rejects(() => Korely.initAgent("app", { fetch: none, processingRegion: "us" }),
+    (e) => e instanceof KorelyError && /processingRegion is "eu" or "global"/.test(e.message));
+  assert.equal(none.calls.length, 0);
+  const { k } = client([{ body: { ok: true, tier: "hobby", region: "eu-hel1", processing_region: "global", scopes: [] } }]);
+  assert.equal((await k.ping()).processing_region, "global");
+});

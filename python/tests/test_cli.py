@@ -898,6 +898,16 @@ class PingAndTheAuditTrail(_RunsCommands):
         rc, data = self._run(rec, ["ping", "--json"])
         self.assertEqual(data, body)
 
+    def test_ping_says_where_a_memory_is_read_when_the_server_does(self):
+        """2026-10-07: processing_region, from servers that answer it."""
+        body = {"ok": True, "tier": "hobby", "region": "eu-hel1", "processing_region": "global",
+                "scopes": ["memories:read"]}
+        rec = _Recorder().queue(200, dict(body)).queue(200, dict(body))
+        rc, out = self._run(rec, ["ping"])
+        self.assertEqual(out.strip(), "ok  tier hobby  region eu-hel1  processing global  scopes memories:read")
+        rc, data = self._run(rec, ["ping", "--json"])
+        self.assertEqual(data, body)
+
     def test_one_page(self):
         rec = _Recorder().queue(200, {"events": [
             _ev("2026-10-06T12:00:00+02:00", target_id="mem_1",

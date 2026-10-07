@@ -87,12 +87,19 @@ export interface KorelyOptions {
 
 /** Where and how `Korely.initAgent()` signs up: the client options a call
  *  without a key can use. */
-export type InitAgentOptions = Pick<KorelyOptions, "region" | "baseUrl" | "timeoutMs" | "fetch">;
+export interface InitAgentOptions extends Pick<KorelyOptions, "region" | "baseUrl" | "timeoutMs" | "fetch"> {
+  /**
+   * Where the new project's memories are read by a model: "eu" (gpt-oss-120b
+   * on Scaleway, Paris) or "global" (Gemini, by Google), the server's default
+   * when left out. Sent only when given (servers since 2026-10-07).
+   */
+  processingRegion?: "eu" | "global";
+}
 
 // The options each method reads (options.ts): the compiler holds every list to
 // its type, and every method refuses a key that is not on its list.
 const CLIENT_KEYS = keysOf<KorelyOptions>()("apiKey", "region", "baseUrl", "timeoutMs", "fetch");
-const INIT_KEYS = keysOf<InitAgentOptions>()("region", "baseUrl", "timeoutMs", "fetch");
+const INIT_KEYS = keysOf<InitAgentOptions>()("region", "baseUrl", "timeoutMs", "fetch", "processingRegion");
 const ADD_KEYS = keysOf<AddOptions>()("agent_id", "user_id", "run_id", "metadata", "timestamp");
 const SEARCH_KEYS = keysOf<SearchOptions>()("user_id", "agent_id", "run_id", "metadata", "limit");
 const LIST_KEYS = keysOf<ListOptions>()("user_id", "agent_id", "run_id", "limit", "offset");
@@ -570,6 +577,10 @@ export class Korely {
    */
   static async initAgent(agentCaller?: string, opts: InitAgentOptions = {}): Promise<AgentInitResult> {
     checkOptions("initAgent", opts, INIT_KEYS);
+    const where = opts.processingRegion;
+    if (where !== undefined && where !== "eu" && where !== "global") {
+      throw new KorelyError(`processingRegion is "eu" or "global", not ${JSON.stringify(where)}.`);
+    }
     if (agentCaller != null && typeof agentCaller !== "string") {
       // `initAgent({ baseUrl })` with the options first would send them as the
       // label, and the server would refuse a body it cannot read.
@@ -593,7 +604,9 @@ export class Korely {
       );
     }
     return exchange({ baseUrl, timeoutMs: opts.timeoutMs ?? 30000, fetchImpl },
-      "POST", "/v1/agents/init", { body: { agent_caller: agentCaller ?? undefined } });
+      "POST", "/v1/agents/init", {
+        body: { agent_caller: agentCaller ?? undefined, processing_region: opts.processingRegion },
+      });
   }
 
   // ── transport ─────────────────────────────────────────────────────────────

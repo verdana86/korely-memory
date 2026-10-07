@@ -377,6 +377,7 @@ class Korely:
 
     @classmethod
     def init_agent(cls, agent_caller: Optional[str] = None, *, region: str = "eu",
+                   processing_region: Optional[str] = None,
                    base_url: Optional[str] = None, timeout: float = 30.0,
                    ca_file: Optional[str] = None, verify: bool = True) -> AgentInitResult:
         """POST /v1/agents/init, with no key: sign up for a free hobby key.
@@ -388,6 +389,11 @@ class Korely:
         carries the key, shown once (save it), its ``tier``, ``region``,
         ``scopes`` and ``quotas``. The account it creates has no login: the
         key is the account, and ``delete_account(confirm=True)`` closes it.
+
+        ``processing_region`` chooses where the new project's memories are
+        read by a model: ``"eu"`` (gpt-oss-120b on Scaleway, Paris) or
+        ``"global"`` (Gemini, by Google), the server's default when it is left
+        out; it is sent only when given (servers since 2026-10-07).
 
         Cloud only. The server is ``base_url``, else ``KORELY_BASE_URL``, else
         the region's (the config file is not read: it holds what an earlier
@@ -401,11 +407,14 @@ class Korely:
         if agent_caller is not None and not isinstance(agent_caller, str):
             raise KorelyError("agent_caller is a label, a string, "
                               f"not {type(agent_caller).__name__}.")
+        if processing_region is not None and processing_region not in ("eu", "global"):
+            raise KorelyError(f"processing_region is \"eu\" or \"global\", not {processing_region!r}.")
         k = cls._without_key(
             base_url or os.environ.get("KORELY_BASE_URL") or _REGIONS.get(region)
             or _REGIONS["eu"], timeout=timeout, ca_file=ca_file, verify=verify)
         body = k._call("POST", "/v1/agents/init",
-                       json_body=_clean({"agent_caller": agent_caller}))
+                       json_body=_clean({"agent_caller": agent_caller,
+                                         "processing_region": processing_region}))
         return AgentInitResult.from_dict(body)
 
     @classmethod
