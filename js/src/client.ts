@@ -70,7 +70,12 @@ const REGIONS: Record<string, string> = { eu: "https://api.korely.ai" };
 export interface KorelyOptions {
   /** Your `kor_live_...` key. Falls back to the KORELY_API_KEY env var. */
   apiKey?: string;
-  /** EU only for now (data stored and processed in the EU). */
+  /**
+   * The API to call: "eu" (api.korely.ai), the only one today. The data is
+   * stored in the EU (Helsinki). The model that reads a memory is the
+   * project's region, set per project in the dashboard: Europe (gpt-oss-120b
+   * on Scaleway, in Paris) or Global (Gemini, by Google), the default.
+   */
   region?: "eu";
   /** Override the base URL (a self-hosted install, or testing). */
   baseUrl?: string;
@@ -457,6 +462,44 @@ function raiseFor(status: number, body: any, retryAfter: string | null): never {
   throw new APIError(msg, opts);
 }
 
+
+/**
+ * What `korely init` saved: the key and the server, in ~/.korely/config.json
+ * (or $KORELY_CONFIG_HOME/config.json). The Python client reads them; this one
+ * did not, so the documented path, `korely init` and then `new Korely()`,
+ * threw "No API key" in Node (window A's new-customer test, 2026-10-07). Node
+ * only and best effort: a browser or an edge runtime has no such file, and a
+ * file that cannot be read leaves the usual missing-key error.
+ */
+function savedConfig(): { api_key?: unknown; base_url?: unknown } {
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const proc = typeof process !== "undefined" ? (process as any) : undefined;
+    if (!proc?.versions?.node) return {};
+    // process.getBuiltinModule from Node 20.16 and 22.3, in ESM and CJS alike;
+    // `require` in the CJS build of an older Node.
+    const builtin = (id: string) =>
+      typeof proc.getBuiltinModule === "function"
+        ? proc.getBuiltinModule(id)
+        : typeof require === "function"
+          ? require(id)
+          : undefined;
+    const fs = builtin("node:fs");
+    const os = builtin("node:os");
+    const path = builtin("node:path");
+    if (!fs || !os || !path) return {};
+    const home = proc.env?.KORELY_CONFIG_HOME || path.join(os.homedir(), ".korely");
+    const data = JSON.parse(fs.readFileSync(path.join(home, "config.json"), "utf8"));
+    return data && typeof data === "object" ? data : {};
+  } catch {
+    return {};
+  }
+}
+
+function text(v: unknown): string | undefined {
+  return typeof v === "string" && v ? v : undefined;
+}
+
 export class Korely {
   readonly apiKey: string;
   readonly baseUrl: string;
@@ -469,10 +512,16 @@ export class Korely {
     checkOptions("Korely", opts, CLIENT_KEYS);
     const envKey =
       typeof process !== "undefined" ? process.env?.KORELY_API_KEY : undefined;
-    const key = opts.apiKey ?? envKey;
+    // Same order as the Python client: an argument is a decision, a variable
+    // a setting, the file what `korely init` was told once.
+    const envBase =
+      typeof process !== "undefined" ? process.env?.KORELY_BASE_URL : undefined;
+    const saved = opts.apiKey && (opts.baseUrl || envBase) ? {} : savedConfig();
+    const key = opts.apiKey ?? envKey ?? text(saved.api_key);
     if (!key) {
       throw new KorelyError(
-        "No API key. Pass { apiKey: 'kor_live_...' } or set KORELY_API_KEY.",
+        "No API key. Pass { apiKey: 'kor_live_...' }, set KORELY_API_KEY, " +
+          "or run `korely init`, which saves one to ~/.korely/config.json.",
       );
     }
     this.apiKey = key;
@@ -483,11 +532,10 @@ export class Korely {
     // a 401, so nothing is stored, but the memory travelled in the body of the
     // request before being refused. For a product sold on "your data stays on
     // your machine" that is the one failure that cannot be waved through.
-    const envBase =
-      typeof process !== "undefined" ? process.env?.KORELY_BASE_URL : undefined;
     this.baseUrl = (
       opts.baseUrl ??
       envBase ??
+      text(saved.base_url) ??
       REGIONS[opts.region ?? "eu"] ??
       REGIONS.eu
     ).replace(/\/+$/, "");

@@ -506,9 +506,10 @@ class PingResponse:
       AuthenticationError instead.
     - ``tier``: the plan of the key (hobby, developer, team, scale). On the
       Self-hosted every key says ``hobby``, and it limits nothing there.
-    - ``region``: where the key's data is stored and processed, as the server
-      declares it (``eu-hel1`` on the Cloud; on the Self-hosted, what its
-      operator set).
+    - ``region``: where the key's data is stored, as the server declares it
+      (``eu-hel1`` on the Cloud; on the Self-hosted, what its operator set).
+      Not where a memory is read by a model: on the Cloud that is the
+      project's region, Europe or Global (Gemini, by Google).
     - ``scopes``: what the key may do, e.g. ``memories:read``."""
     ok: bool = False
     tier: Optional[str] = None

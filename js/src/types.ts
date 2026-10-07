@@ -301,8 +301,10 @@ export interface PingResponse {
    */
   tier: string;
   /**
-   * Where the key's data is stored and processed, as the server declares it
-   * ("eu-hel1" on the Cloud; on the Self-hosted, what its operator set).
+   * Where the key's data is stored, as the server declares it ("eu-hel1" on
+   * the Cloud; on the Self-hosted, what its operator set). Not where a memory
+   * is read by a model: on the Cloud that is the project's region, Europe or
+   * Global (Gemini, by Google).
    */
   region: string;
   /** What the key may do, e.g. "memories:read". */

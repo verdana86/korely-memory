@@ -53,7 +53,10 @@ from .models import (
 
 __version__ = "0.1.18"
 
-# All keys are the EU region; data is stored and processed in the EU.
+# One API today, in the EU, where the data is stored (Helsinki). The model
+# that reads a memory is the project's region, set per project in the
+# dashboard: Europe (gpt-oss-120b on Scaleway, Paris) or Global (Gemini, by
+# Google), the default.
 _REGIONS = {"eu": "https://api.korely.ai"}
 
 

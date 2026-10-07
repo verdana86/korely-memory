@@ -178,10 +178,20 @@ SDK does not retry on its own.
 ```ts
 new Korely({
   apiKey: "kor_live_...",  // or the KORELY_API_KEY env var
-  region: "eu",             // EU only: data stored and processed in the EU
+  region: "eu",             // the API, api.korely.ai: data stored in the EU
   timeoutMs: 30000,         // covers the whole request, response body included
 });
 ```
+
+The data is stored in the EU (Helsinki). Which model reads a memory, and
+where, is the project's region, chosen per project in the dashboard: Europe
+(gpt-oss-120b on Scaleway, in Paris) or Global (Gemini, by Google), the
+default. A memory written to a Global project is read by Google's model.
+
+In Node, `new Korely()` with no key and no `KORELY_API_KEY` reads what
+`korely init` saved (the key and the server, in `~/.korely/config.json`, or
+`$KORELY_CONFIG_HOME/config.json`), as the Python client does. An argument
+comes first, then the environment, then that file.
 
 ### Your own server (korely-agent)
 

@@ -48,7 +48,18 @@ function client(queue) {
 }
 
 test("requires an api key", () => {
-  assert.throws(() => new Korely({ fetch: async () => ({}) }), KorelyError);
+  // Hermetic: no variable, and a config home with nothing in it, so a key
+  // saved by `korely init` on the machine running the tests does not count.
+  const saved = { ...process.env };
+  try {
+    delete process.env.KORELY_API_KEY;
+    process.env.KORELY_CONFIG_HOME = "/nonexistent-korely-config-home";
+    assert.throws(() => new Korely({ fetch: async () => ({}) }), KorelyError);
+  } finally {
+    for (const v of ["KORELY_API_KEY", "KORELY_CONFIG_HOME"]) {
+      if (saved[v] === undefined) delete process.env[v]; else process.env[v] = saved[v];
+    }
+  }
 });
 
 test("add builds POST /v1/memories", async () => {
@@ -859,4 +870,35 @@ test("the known options still go out as before", async () => {
   await k.add("x", { user_id: "node-user", agent_id: "sales" });
   assert.equal(JSON.parse(f.calls[0].init.body).user_id, "node-user");
   assert.equal(JSON.parse(f.calls[1].init.body).agent_id, "sales");
+});
+
+test("new Korely() reads what `korely init` saved, as the Python client does (2026-10-07)", async () => {
+  // The documented path, `korely init` and then the SDK, threw "No API key" in
+  // Node. The argument and the variables still come first.
+  const { mkdtempSync, writeFileSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = mkdtempSync(join(tmpdir(), "korely-config-"));
+  const saved = { ...process.env };
+  try {
+    writeFileSync(join(dir, "config.json"), JSON.stringify({
+      api_key: "kor_self_fromconfig", base_url: "https://memory.example.com/" }));
+    delete process.env.KORELY_API_KEY;
+    delete process.env.KORELY_BASE_URL;
+    process.env.KORELY_CONFIG_HOME = dir;
+    const k = new Korely({ fetch: fakeFetch([]) });
+    assert.equal(k.apiKey, "kor_self_fromconfig");
+    assert.equal(k.baseUrl, "https://memory.example.com");
+    process.env.KORELY_BASE_URL = "https://other.example.com";
+    assert.equal(new Korely({ fetch: fakeFetch([]) }).baseUrl, "https://other.example.com");
+    assert.equal(new Korely({ apiKey: "kor_self_arg", fetch: fakeFetch([]) }).apiKey, "kor_self_arg");
+    rmSync(join(dir, "config.json"));
+    delete process.env.KORELY_BASE_URL;
+    assert.throws(() => new Korely({ fetch: fakeFetch([]) }), /korely init/);
+  } finally {
+    for (const v of ["KORELY_API_KEY", "KORELY_BASE_URL", "KORELY_CONFIG_HOME"]) {
+      if (saved[v] === undefined) delete process.env[v]; else process.env[v] = saved[v];
+    }
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
