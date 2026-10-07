@@ -19,6 +19,7 @@ import {
   StaleWriteError,
   TooManyBatchesError,
 } from "./errors.js";
+import { keysOf, unknownOption } from "./options.js";
 import type {
   AccountDeleteReceipt,
   AddFactTripleOptions,
@@ -82,6 +83,35 @@ export interface KorelyOptions {
 /** Where and how `Korely.initAgent()` signs up: the client options a call
  *  without a key can use. */
 export type InitAgentOptions = Pick<KorelyOptions, "region" | "baseUrl" | "timeoutMs" | "fetch">;
+
+// The options each method reads (options.ts): the compiler holds every list to
+// its type, and every method refuses a key that is not on its list.
+const CLIENT_KEYS = keysOf<KorelyOptions>()("apiKey", "region", "baseUrl", "timeoutMs", "fetch");
+const INIT_KEYS = keysOf<InitAgentOptions>()("region", "baseUrl", "timeoutMs", "fetch");
+const ADD_KEYS = keysOf<AddOptions>()("agent_id", "user_id", "run_id", "metadata", "timestamp");
+const SEARCH_KEYS = keysOf<SearchOptions>()("user_id", "agent_id", "run_id", "metadata", "limit");
+const LIST_KEYS = keysOf<ListOptions>()("user_id", "agent_id", "run_id", "limit", "offset");
+const UPDATE_KEYS = keysOf<UpdateOptions>()("content", "expected_updated_at");
+const USERS_KEYS = keysOf<UsersOptions>()("agent_id", "limit", "offset");
+const AGENTS_KEYS = keysOf<ListAgentsOptions>()("limit", "offset");
+const EVENTS_KEYS = keysOf<EventsOptions>()("user_id", "status", "limit");
+const AUDIT_KEYS = keysOf<AuditOptions>()("user_id", "action", "since", "until", "limit", "offset");
+const ITER_AUDIT_KEYS = keysOf<IterAuditOptions>()("user_id", "action", "since", "until", "offset", "page_size");
+const FACTS_KEYS = keysOf<GetFactsOptions>()(
+  "subject", "entity", "predicate", "predicate_family", "include_invalidated", "as_of",
+  "user_id", "agent_id", "limit", "offset");
+const TRIPLE_KEYS = keysOf<AddFactTripleOptions>()(
+  "user_id", "agent_id", "run_id", "subject_type", "object_is_literal", "confidence",
+  "valid_from", "tense");
+const PROFILE_KEYS = keysOf<GetProfileOptions>()("user_id", "agent_id", "as_of");
+const CONTEXT_KEYS = keysOf<GetContextOptions>()("query", "user_id", "agent_id", "token_budget");
+const CONTEXT_EXTRA_KEYS = keysOf<Omit<GetContextOptions, "query">>()("user_id", "agent_id", "token_budget");
+
+/** Refuse an option this method does not read (options.ts). */
+function checkOptions(method: string, opts: unknown, known: readonly string[]): void {
+  const problem = unknownOption(method, opts, known);
+  if (problem) throw new KorelyError(problem);
+}
 
 /** add() accepts a string or a list of chat messages, joined to one block. */
 function coerceContent(content: string | Message[]): string {
@@ -427,18 +457,6 @@ function raiseFor(status: number, body: any, retryAfter: string | null): never {
   throw new APIError(msg, opts);
 }
 
-/** `base_url` is the Python spelling. In TypeScript it does not compile; in
- *  plain JavaScript it would be ignored, and the requests would go to the
- *  hosted service instead of the server the caller meant. */
-function refusePythonSpelling(opts: object | undefined): void {
-  if (opts && Object.prototype.hasOwnProperty.call(opts, "base_url")) {
-    throw new KorelyError(
-      "Unknown option base_url: the JavaScript SDK takes baseUrl " +
-        "(new Korely({ baseUrl: 'https://...' })) or the KORELY_BASE_URL env var.",
-    );
-  }
-}
-
 export class Korely {
   readonly apiKey: string;
   readonly baseUrl: string;
@@ -446,7 +464,9 @@ export class Korely {
   private readonly fetchImpl: typeof fetch;
 
   constructor(opts: KorelyOptions = {}) {
-    refusePythonSpelling(opts);
+    // `base_url` and `api_key`, the Python spellings, included: dropped, the
+    // requests went to the hosted service instead of the server meant.
+    checkOptions("Korely", opts, CLIENT_KEYS);
     const envKey =
       typeof process !== "undefined" ? process.env?.KORELY_API_KEY : undefined;
     const key = opts.apiKey ?? envKey;
@@ -501,7 +521,7 @@ export class Korely {
    * dashboard: its keys come from its own dashboard.
    */
   static async initAgent(agentCaller?: string, opts: InitAgentOptions = {}): Promise<AgentInitResult> {
-    refusePythonSpelling(opts);
+    checkOptions("initAgent", opts, INIT_KEYS);
     if (agentCaller != null && typeof agentCaller !== "string") {
       // `initAgent({ baseUrl })` with the options first would send them as the
       // label, and the server would refuse a body it cannot read.
@@ -572,6 +592,7 @@ export class Korely {
    * dashboard. No audit event survives: the trail is part of what goes.
    */
   async deleteAccount(opts: { confirm?: boolean } = {}): Promise<AccountDeleteReceipt> {
+    checkOptions("deleteAccount", opts, ["confirm"]);
     if (opts?.confirm !== true) {
       throw new KorelyError(
         "deleteAccount() deletes this key's account, every key, memory and fact " +
@@ -599,6 +620,7 @@ export class Korely {
    * project, like every read.
    */
   async audit(opts: AuditOptions = {}): Promise<AuditPage> {
+    checkOptions("audit", opts, AUDIT_KEYS);
     const page: { events: AuditEvent[]; total: number } = await this.request(
       "GET", "/v1/audit", {
         params: { ...auditFilters(opts), limit: opts.limit ?? 100, offset: opts.offset ?? 0 },
@@ -622,6 +644,7 @@ export class Korely {
    * `until: new Date()`) and `offset` the number of events already read.
    */
   async *iterAudit(opts: IterAuditOptions = {}): AsyncGenerator<AuditEvent, void, undefined> {
+    checkOptions("iterAudit", opts, ITER_AUDIT_KEYS);
     const filters = auditFilters(opts);
     let offset = opts.offset ?? 0;
     let pin = filters.until === undefined && offset === 0;
@@ -653,6 +676,7 @@ export class Korely {
    * backfill: facts extracted inherit it as `valid_from`.
    */
   async add(content: string | Message[], opts: AddOptions = {}): Promise<Memory> {
+    checkOptions("add", opts, ADD_KEYS);
     const text = coerceContent(content);
     if (!text.trim()) {
       throw new KorelyError(
@@ -678,6 +702,7 @@ export class Korely {
    * the server default (15), max 50.
    */
   async search(query: string, opts: SearchOptions = {}): Promise<SearchHit[]> {
+    checkOptions("search", opts, SEARCH_KEYS);
     const body = await this.request("POST", "/v1/memories/search", {
       body: {
         query,
@@ -697,6 +722,7 @@ export class Korely {
    * `total` and `offset` walk the rest.
    */
   async getAll(opts: ListOptions = {}): Promise<MemoryPage> {
+    checkOptions("getAll", opts, LIST_KEYS);
     const page: { memories: Memory[]; total: number } = await this.request(
       "GET", "/v1/memories", {
         params: {
@@ -720,6 +746,7 @@ export class Korely {
    * for optimistic concurrency (throws StaleWriteError instead of clobbering).
    */
   async update(memoryId: string, opts: UpdateOptions): Promise<Memory> {
+    checkOptions("update", opts, UPDATE_KEYS);
     return this.request("PATCH", `/v1/memories/${seg(memoryId, "memoryId")}`, {
       body: {
         content: opts.content,
@@ -747,6 +774,7 @@ export class Korely {
    * the same numbers; whichever pair the server sends fills both.
    */
   async deleteAll(opts: { user_id: string }): Promise<BulkReceipt> {
+    checkOptions("deleteAll", opts, ["user_id"]);
     const r: BulkReceipt = await this.request(
       "DELETE",
       `/v1/users/${seg(opts.user_id, "user_id")}/memories`,
@@ -770,6 +798,7 @@ export class Korely {
    * namespaces), each with active memory + fact counts and last-active time.
    */
   async users(opts: UsersOptions = {}): Promise<UsersPage> {
+    checkOptions("users", opts, USERS_KEYS);
     const page: { users: UserScope[]; total: number } = await this.request(
       "GET", "/v1/users", {
         params: {
@@ -796,6 +825,7 @@ export class Korely {
    * sets no cap and answers `cap: 0`.
    */
   async listAgents(opts: ListAgentsOptions = {}): Promise<AgentsPage> {
+    checkOptions("listAgents", opts, AGENTS_KEYS);
     const page: { agents: AgentScope[]; total: number; cap: number; used: number } =
       await this.request("GET", "/v1/agents", {
         params: {
@@ -830,6 +860,7 @@ export class Korely {
    * array that also carries `total`, the matches across all pages.
    */
   async getFacts(opts: GetFactsOptions = {}): Promise<FactList> {
+    checkOptions("getFacts", opts, FACTS_KEYS);
     const params: Params = {
       subject: opts.subject,
       entity: opts.entity,
@@ -864,6 +895,7 @@ export class Korely {
     object: string,
     opts: AddFactTripleOptions = {},
   ): Promise<Fact> {
+    checkOptions("addFactTriple", opts, TRIPLE_KEYS);
     return this.request("POST", "/v1/facts", {
       body: {
         subject,
@@ -896,6 +928,7 @@ export class Korely {
    * knows a fact is finished says so, and nothing has to infer it.
    */
   async forgetFact(factId: string, opts: { at?: string } = {}): Promise<ForgetReceipt> {
+    checkOptions("forgetFact", opts, ["at"]);
     return this.request("POST", `/v1/facts/${seg(factId, "factId")}/forget`, {
       body: { at: opts.at },
     });
@@ -930,6 +963,7 @@ export class Korely {
    * Pass `as_of` (ISO date) for the point-in-time profile.
    */
   async getProfile(opts: GetProfileOptions): Promise<Profile> {
+    checkOptions("getProfile", opts, PROFILE_KEYS);
     return this.request("GET", "/v1/profile", {
       params: {
         user_id: opts.user_id,
@@ -950,6 +984,8 @@ export class Korely {
   ): Promise<Context> {
     // A bare string is the query (2026-09-29): the Vercel AI SDK example in
     // the docs calls `korely.getContext(query)` and got 422 "query required".
+    if (typeof opts === "string") checkOptions("getContext", extra, CONTEXT_EXTRA_KEYS);
+    else checkOptions("getContext", opts, CONTEXT_KEYS);
     const o: GetContextOptions = typeof opts === "string" ? { ...extra, query: opts } : opts;
     if (!o || typeof o.query !== "string" || !o.query.trim()) {
       throw new KorelyError("getContext needs a query.");
@@ -978,6 +1014,7 @@ export class Korely {
    * this is how to know.
    */
   async events(opts: EventsOptions = {}): Promise<EventsResponse> {
+    checkOptions("events", opts, EVENTS_KEYS);
     return this.request("GET", "/v1/events", {
       params: {
         user_id: opts.user_id,

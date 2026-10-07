@@ -820,3 +820,43 @@ test("Korely.initAgent(): the refusals keep their code; a label that is not text
   await assert.rejects(() => Korely.initAgent("x", { fetch: none, base_url: "https://api.test" }), /baseUrl/);
   assert.equal(none.calls.length, 0);
 });
+
+// ── options the method does not read are refused (2026-10-07) ──────────────
+// In plain JavaScript `{ userId }` was dropped: a search ran over every end
+// user of the project, a write landed with no end user, `asOf` answered with
+// today's facts (window A's new-customer test). Nothing may be sent.
+
+test("an option in camelCase is refused before anything is sent, naming the spelling", async () => {
+  const { k, f } = client([]);
+  const cases = [
+    [() => k.search("x", { userId: "node-user" }), /search: unknown option userId\. Did you mean user_id\?/],
+    [() => k.add("x", { userId: "node-user" }), /add: unknown option userId\. Did you mean user_id\?/],
+    [() => k.getFacts({ asOf: "2020-01-01" }), /getFacts: unknown option asOf\. Did you mean as_of\?/],
+    [() => k.getAll({ agentId: "sales" }), /Did you mean agent_id\?/],
+    [() => k.deleteAll({ userId: "node-user" }), /deleteAll: unknown option userId\. Did you mean user_id\?/],
+    [() => k.getContext("x", { tokenBudget: 2000 }), /getContext: unknown option tokenBudget\. Did you mean token_budget\?/],
+    [() => k.getContext({ query: "x", userId: "u" }), /Did you mean user_id\?/],
+    [() => k.events({ user: "u" }), /events: unknown option user\. It takes: user_id, status, limit\./],
+    [() => k.addFactTriple("a", "b", "c", { validFrom: "2026-01-01" }), /Did you mean valid_from\?/],
+    [() => k.update("m1", { content: "x", expectedUpdatedAt: "t" }), /Did you mean expected_updated_at\?/],
+    [() => k.search("x", ["user_id", "u"]), /search: the options must be an object, got an array\./],
+  ];
+  for (const [call, message] of cases) {
+    await assert.rejects(call, (e) => e instanceof KorelyError && message.test(e.message), String(message));
+  }
+  assert.equal(f.calls.length, 0, "a refused call sends nothing");
+});
+
+test("the client's own options are camelCase, and the Python spellings are refused", () => {
+  assert.throws(() => new Korely({ api_key: "kor_self_x" }),
+    (e) => e instanceof KorelyError && /unknown option api_key\. Did you mean apiKey\?/.test(e.message));
+  assert.throws(() => new Korely({ apiKey: "kor_self_x", timeout_ms: 5 }), /Did you mean timeoutMs\?/);
+});
+
+test("the known options still go out as before", async () => {
+  const { k, f } = client([{ body: { results: [] } }, { body: { id: "m1" } }]);
+  await k.search("x", { user_id: "node-user", limit: 3 });
+  await k.add("x", { user_id: "node-user", agent_id: "sales" });
+  assert.equal(JSON.parse(f.calls[0].init.body).user_id, "node-user");
+  assert.equal(JSON.parse(f.calls[1].init.body).agent_id, "sales");
+});

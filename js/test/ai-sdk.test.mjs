@@ -920,3 +920,16 @@ test(
     assert.throws(() => cjs.korelyTools({ client: korely().client }), core.KorelyError);
   },
 );
+
+test("an option the entry point does not read is refused, in both entry points (2026-10-07)", () => {
+  // `agent_id`, the client's spelling, was dropped: the turns were written
+  // outside the agent's namespace.
+  const client = slowClient(() => Promise.resolve(CONTEXT));
+  const makers = [(o) => withKorelyMemory(fakeModel({ text: "x" }), o), (o) => korelyTools(o)];
+  for (const make of makers) {
+    assert.throws(() => make({ client, userId: "maria", agent_id: "sales" }),
+      (e) => e instanceof KorelyError && /unknown option agent_id\. Did you mean agentId\?/.test(e.message));
+  }
+  assert.throws(() => korelyTools({ client, userId: "maria", remember: false }), /unknown option remember/);
+  assert.equal(client.reads.length, 0);
+});

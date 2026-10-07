@@ -26,6 +26,7 @@ import { gateway, jsonSchema, tool, wrapLanguageModel } from "ai";
 import type { LanguageModel, LanguageModelMiddleware, Tool } from "ai";
 import { Korely, KorelyError } from "korely-memory";
 import type { Context } from "korely-memory";
+import { keysOf, unknownOption } from "./options.js";
 
 // ── what the API accepts ────────────────────────────────────────────────────
 // GET /v1/context and POST /v1/memories/search answer 422 to a query longer
@@ -155,7 +156,24 @@ interface Scope {
   report: (error: unknown, phase: KorelyPhase) => void;
 }
 
-function scopeOf(options: KorelyToolsOptions, caller: string): Scope {
+// The options each entry point reads: an `agent_id` (the client's spelling)
+// was dropped here and the memories were written outside the agent's
+// namespace (options.ts, 2026-10-07).
+const TOOLS_KEYS = keysOf<KorelyToolsOptions>()(
+  "userId", "agentId", "runId", "client", "tokenBudget", "includeDate", "timeZone",
+  "contextTimeoutMs", "onError");
+const MEMORY_KEYS = keysOf<KorelyMemoryOptions>()(
+  "userId", "agentId", "runId", "client", "tokenBudget", "includeDate", "timeZone",
+  "contextTimeoutMs", "onError", "remember", "waitUntil");
+
+/** Refuse an option this method does not read (options.ts). */
+function checkOptions(method: string, opts: unknown, known: readonly string[]): void {
+  const problem = unknownOption(method, opts, known);
+  if (problem) throw new KorelyError(problem);
+}
+
+function scopeOf(options: KorelyToolsOptions, caller: string, known: readonly string[]): Scope {
+  checkOptions(caller, options, known);
   const o = options ?? ({} as KorelyToolsOptions);
   if (typeof o.userId !== "string" || !o.userId.trim()) {
     throw new KorelyError(
@@ -362,7 +380,7 @@ function readWithin(read: () => Promise<Context>, limit: number | undefined): Pr
  * put that one first in the array (it runs first).
  */
 export function korelyMemoryMiddleware(options: KorelyMemoryOptions): LanguageModelMiddleware {
-  const scope = scopeOf(options, "korelyMemoryMiddleware");
+  const scope = scopeOf(options, "korelyMemoryMiddleware", MEMORY_KEYS);
   const remember = options.remember ?? true;
   const report = scope.report;
   const waitUntil = options.waitUntil;
@@ -560,7 +578,7 @@ function oneText<K extends string>(value: unknown, key: K, max: number): Checked
  * addMemory rejects on failure, and the AI SDK hands the error to the model.
  */
 export function korelyTools(options: KorelyToolsOptions): KorelyTools {
-  const scope = scopeOf(options, "korelyTools");
+  const scope = scopeOf(options, "korelyTools", TOOLS_KEYS);
   const withDate = (text: string) => (scope.today ? `${scope.today()}\n\n${text}` : text);
   return {
     searchMemory: tool({
