@@ -8,6 +8,16 @@ The server side of the entries marked "API" shipped on 2026-09-28. Against an
 older server these clients keep working: the old field names are still read,
 and a batch `timestamp` is refused there with a 422.
 
+## Unreleased
+
+Both clients, and the Python CLI and MCP server:
+
+- `search()` takes `min_score` (0 to 1): the memories scored below it are
+  left out, by the server, compared as the response shows the score. Absent,
+  nothing changes. The same parameter on the Cloud and on the Self-hosted
+  from its next release; a server without it answers 422. `korely search
+  --min-score` and the MCP `korely_search` tool take it too.
+
 ## Python 0.1.20 and npm 0.1.12 (2026-10-07)
 
 Both clients:

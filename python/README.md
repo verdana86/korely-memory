@@ -53,7 +53,7 @@ Every method wraps exactly one REST endpoint.
 | Method | Endpoint |
 |---|---|
 | `add(content, *, agent_id=, user_id=, run_id=, metadata=, timestamp=)` | `POST /v1/memories` |
-| `search(query, *, user_id=, agent_id=, run_id=, metadata=, limit=)` | `POST /v1/memories/search` |
+| `search(query, *, user_id=, agent_id=, run_id=, metadata=, limit=, min_score=)` | `POST /v1/memories/search`; `min_score` (0 to 1) leaves out hits scored below it |
 | `get_all(*, user_id=, agent_id=, run_id=, limit=, offset=)` | `GET /v1/memories` |
 | `get(memory_id)` | `GET /v1/memories/:id` |
 | `update(memory_id, *, content, expected_updated_at=)` | `PATCH /v1/memories/:id` |

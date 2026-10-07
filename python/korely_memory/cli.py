@@ -368,7 +368,8 @@ def cmd_events(k: Korely, a) -> int:
 
 
 def cmd_search(k: Korely, a) -> int:
-    hits = k.search(a.query, run_id=getattr(a, 'run_id', None), user_id=a.user_id, agent_id=a.agent_id, limit=a.limit)
+    hits = k.search(a.query, run_id=getattr(a, 'run_id', None), user_id=a.user_id, agent_id=a.agent_id,
+                    limit=a.limit, min_score=getattr(a, 'min_score', None))
     if a.json:
         # The API's own shape (GET /v1/memories/search answers {"results": [...]}),
         # so `jq '.results[0].snippet'` from the docs works (2026-09-29: it was a
@@ -823,6 +824,8 @@ def build_parser() -> argparse.ArgumentParser:
     # Not sent, the server applies its own, which is the API's by definition.
     sp.add_argument("--limit", type=int, default=None,
                     help="max hits (default: the server's, 15; max 50)")
+    sp.add_argument("--min-score", type=float, default=None,
+                    help="leave out hits scored below this, 0 to 1 (0.20 measured on LongMemEval)")
     sp.set_defaults(func=cmd_search)
 
     sp = sub.add_parser("context", parents=[common],

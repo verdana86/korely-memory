@@ -416,6 +416,13 @@ export interface SearchOptions {
   metadata?: Record<string, unknown>;
   /** Server default 15, max 50. */
   limit?: number;
+  /**
+   * Leave out the memories whose `score` is below this, 0 to 1 (a cosine
+   * similarity, compared as the response shows it). Absent: no floor. Fewer
+   * than `limit` results can come back. 0.20 is the value measured on
+   * LongMemEval with EmbeddingGemma; the right one depends on your texts.
+   */
+  min_score?: number;
 }
 
 export interface ListOptions {

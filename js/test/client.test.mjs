@@ -370,10 +370,11 @@ test("search and getAll take the filters the API takes", async () => {
     { status: 200, body: { results: [] } },
     { status: 200, body: { memories: [{ id: "m1" }, { id: "m2" }], total: 9 } },
   ]);
-  await k.search("q", { user_id: "u", run_id: "r1", metadata: { tier: "pro" } });
+  await k.search("q", { user_id: "u", run_id: "r1", metadata: { tier: "pro" }, min_score: 0.2 });
   const sent = JSON.parse(f.calls[0].init.body);
   assert.equal(sent.run_id, "r1");
   assert.deepEqual(sent.metadata, { tier: "pro" });
+  assert.equal(sent.min_score, 0.2, "the optional floor of both servers (2026-10-07)");
   const page = await k.getAll({ user_id: "u", run_id: "r1" });
   assert.match(f.calls[1].url, /run_id=r1/);
   assert.equal(page.total, 9);

@@ -95,7 +95,7 @@ Every method maps to one REST endpoint.
 | Method | Endpoint | |
 |---|---|---|
 | `add(content, opts?)` | `POST /v1/memories` | Write. `content` is a string or a list of chat messages. `opts.timestamp` (ISO) backfills the past: facts inherit it as `valid_from`. |
-| `search(query, opts?)` | `POST /v1/memories/search` | Semantic search over memories; filter by `user_id`, `agent_id`, `run_id`, `metadata`. |
+| `search(query, opts?)` | `POST /v1/memories/search` | Semantic search over memories; filter by `user_id`, `agent_id`, `run_id`, `metadata`; `min_score` (0 to 1) leaves out hits scored below it. |
 | `getAll(opts?)` | `GET /v1/memories` | List a scope, newest first. The page is iterable; `limit` up to 200. |
 | `get(id)` | `GET /v1/memories/:id` | One memory, with its facts. |
 | `update(id, { content })` | `PATCH /v1/memories/:id` | Re-runs extraction. |

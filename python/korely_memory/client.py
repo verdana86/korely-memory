@@ -736,7 +736,8 @@ class Korely:
     def search(self, query: str, *, user_id: Optional[str] = None,
                agent_id: Optional[str] = None, run_id: Optional[str] = None,
                metadata: Optional[dict] = None,
-               limit: Optional[int] = None) -> List[SearchHit]:
+               limit: Optional[int] = None,
+               min_score: Optional[float] = None) -> List[SearchHit]:
         """POST /v1/memories/search: semantic search over raw memories, ranked
         by score (vector similarity to the query).
 
@@ -744,10 +745,17 @@ class Korely:
         stored at write time (keys ANDed, compared as strings). Both mirror the
         arguments ``add()`` accepts, so anything you can write you can query.
 
-        ``limit`` defaults to the server default (15) when not passed, max 50."""
+        ``limit`` defaults to the server default (15) when not passed, max 50.
+
+        ``min_score`` (0 to 1) leaves out the memories whose score is below
+        it, compared as the response shows the score; None is no floor, and
+        fewer than ``limit`` results can come back. 0.20 is the value measured
+        on LongMemEval with EmbeddingGemma; the right one depends on your
+        texts. A server older than the parameter answers 422."""
         body = self._call("POST", "/v1/memories/search", json_body=_clean({
             "query": query, "user_id": user_id, "agent_id": agent_id,
             "run_id": run_id, "metadata": metadata, "limit": limit,
+            "min_score": min_score,
         }))
         return [SearchHit.from_dict(h) for h in body.get("results", [])]
 

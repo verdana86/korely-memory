@@ -161,14 +161,16 @@ def korely_add(content: str, user_id: Optional[str] = None,
 # checked 2026-10-06). It was 15, the REST default of POST /v1/memories/search,
 # so the same tool call gave a model more hits here than on the hosted server.
 @mcp.tool()
-def korely_search(query: str, user_id: Optional[str] = None, limit: int = 10) -> str:
+def korely_search(query: str, user_id: Optional[str] = None, limit: int = 10,
+                  min_score: Optional[float] = None) -> str:
     """Semantic (vector) search over raw memories: ranked hits with a relevance score.
+    min_score (0 to 1, optional) leaves out hits scored below it.
 
     Use when you want the underlying memories rather than the assembled context
     block (for that, use korely_get_context).
     """
     try:
-        hits = _client().search(query, user_id=user_id, limit=limit)
+        hits = _client().search(query, user_id=user_id, limit=limit, min_score=min_score)
     except KorelyError as e:
         return f"error: {e}"
     if not hits:

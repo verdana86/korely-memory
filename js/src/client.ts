@@ -101,7 +101,7 @@ export interface InitAgentOptions extends Pick<KorelyOptions, "region" | "baseUr
 const CLIENT_KEYS = keysOf<KorelyOptions>()("apiKey", "region", "baseUrl", "timeoutMs", "fetch");
 const INIT_KEYS = keysOf<InitAgentOptions>()("region", "baseUrl", "timeoutMs", "fetch", "processingRegion");
 const ADD_KEYS = keysOf<AddOptions>()("agent_id", "user_id", "run_id", "metadata", "timestamp");
-const SEARCH_KEYS = keysOf<SearchOptions>()("user_id", "agent_id", "run_id", "metadata", "limit");
+const SEARCH_KEYS = keysOf<SearchOptions>()("user_id", "agent_id", "run_id", "metadata", "limit", "min_score");
 const LIST_KEYS = keysOf<ListOptions>()("user_id", "agent_id", "run_id", "limit", "offset");
 const UPDATE_KEYS = keysOf<UpdateOptions>()("content", "expected_updated_at");
 const USERS_KEYS = keysOf<UsersOptions>()("agent_id", "limit", "offset");
@@ -792,6 +792,7 @@ export class Korely {
         run_id: opts.run_id,
         metadata: opts.metadata,
         limit: opts.limit,
+        min_score: opts.min_score,
       },
     });
     return (body.results ?? []) as SearchHit[];

@@ -99,6 +99,14 @@ class TestMemories(unittest.TestCase):
         self.assertEqual(hits[0].score, 0.91)
         self.assertEqual(hits[0].snippet, "s")
 
+    def test_search_sends_min_score_only_when_given(self):
+        """2026-10-07: the optional floor of both servers."""
+        rec = _Recorder().queue(200, {"results": []}).queue(200, {"results": []})
+        _client(rec).search("northwind pricing", min_score=0.2)
+        self.assertEqual(rec.last["json"]["min_score"], 0.2)
+        _client(rec).search("northwind pricing")
+        self.assertNotIn("min_score", rec.last["json"])
+
     def test_get_all_page_is_iterable_with_total(self):
         rec = _Recorder().queue(200, {"memories": [{"id": "m1"}, {"id": "m2"}], "total": 218})
         page = _client(rec).get_all(user_id="u")
