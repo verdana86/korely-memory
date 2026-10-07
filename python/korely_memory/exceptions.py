@@ -114,7 +114,33 @@ class QuotaExceededError(APIError):
 
     ``retry_after`` comes from :class:`APIError`, which every error the server
     answers with now carries.
+
+    On the Cloud's ``quota_exceeded`` (2026-10-07): ``limit`` (the month's
+    allowance, the plan plus the month's top-ups), ``used`` and ``resets_at``
+    (ISO date, when it starts again); None from a server that does not send
+    them. Read these, never the message, which says the same in words that
+    change.
     """
+
+    def _field(self, name: str):
+        body = self.body if isinstance(self.body, dict) else {}
+        detail = body.get("detail") if isinstance(body.get("detail"), dict) else {}
+        return body.get(name, detail.get(name))
+
+    @property
+    def limit(self) -> Optional[int]:
+        v = self._field("limit")
+        return v if isinstance(v, int) and not isinstance(v, bool) else None
+
+    @property
+    def used(self) -> Optional[int]:
+        v = self._field("used")
+        return v if isinstance(v, int) and not isinstance(v, bool) else None
+
+    @property
+    def resets_at(self) -> Optional[str]:
+        v = self._field("resets_at")
+        return v if isinstance(v, str) and v else None
 
 
 class TooManyBatchesError(QuotaExceededError):

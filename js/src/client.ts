@@ -252,6 +252,17 @@ function errorFields(status: number, body: any): { code?: string; message: strin
   return { code, message };
 }
 
+/** The machine fields of a 429 `quota_exceeded` (the Cloud, 2026-10-07), at
+ *  the top of the body or inside `detail`; absent ones stay undefined. */
+function quotaFields(body: any): { limit?: number; used?: number; resetsAt?: string } {
+  const b = body && typeof body === "object" ? body : {};
+  const d = b.detail && typeof b.detail === "object" && !Array.isArray(b.detail) ? b.detail : {};
+  const num = (v: unknown) => (typeof v === "number" && Number.isFinite(v) ? v : undefined);
+  const str = (v: unknown) => (typeof v === "string" && v ? v : undefined);
+  return { limit: num(b.limit ?? d.limit), used: num(b.used ?? d.used),
+           resetsAt: str(b.resets_at ?? d.resets_at) };
+}
+
 /** Retry-After in whole seconds, rounded up; undefined when absent or unreadable. */
 function retryAfterSeconds(raw: unknown): number | undefined {
   if (raw == null) return undefined;
@@ -463,8 +474,9 @@ function raiseFor(status: number, body: any, retryAfter: string | null): never {
     // `too_many_batches` has its own class (2026-10-06): with no Retry-After
     // it was indistinguishable by class from a monthly `quota_exceeded`, and
     // it clears as soon as a batch finishes.
-    if (code === "too_many_batches") throw new TooManyBatchesError(msg, opts);
-    throw new QuotaExceededError(msg, opts);
+    const quota = { ...opts, ...quotaFields(body) };
+    if (code === "too_many_batches") throw new TooManyBatchesError(msg, quota);
+    throw new QuotaExceededError(msg, quota);
   }
   throw new APIError(msg, opts);
 }

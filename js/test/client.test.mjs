@@ -931,3 +931,15 @@ test("processing_region: chosen at signup when given, read from ping (2026-10-07
   const { k } = client([{ body: { ok: true, tier: "hobby", region: "eu-hel1", processing_region: "global", scopes: [] } }]);
   assert.equal((await k.ping()).processing_region, "global");
 });
+
+test("a quota refusal carries limit, used and resets_at, read from the body, never the message (2026-10-07)", async () => {
+  const { k } = client([
+    { status: 429, body: { code: "quota_exceeded", message: "2,000 writes on the Developer plan this month...",
+                           limit: 2000, used: 2200, resets_at: "2026-11-01" } },
+    { status: 429, body: { code: "rate_limit_exceeded", message: "slow down" }, headers: { "retry-after": "7" } },
+  ]);
+  await assert.rejects(() => k.add("x", { user_id: "u" }), (e) =>
+    e instanceof QuotaExceededError && e.limit === 2000 && e.used === 2200 && e.resetsAt === "2026-11-01");
+  await assert.rejects(() => k.add("x", { user_id: "u" }), (e) =>
+    e instanceof QuotaExceededError && e.limit === undefined && e.retryAfter === 7);
+});

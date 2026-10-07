@@ -138,10 +138,29 @@ export class StaleWriteError extends ConflictError {
  * `retryAfter` comes from APIError, which every error the server answers with
  * carries.
  */
+export interface QuotaErrorOptions extends APIErrorOptions {
+  limit?: number;
+  used?: number;
+  resetsAt?: string;
+}
+
 export class QuotaExceededError extends APIError {
-  constructor(message = "", opts: APIErrorOptions = {}) {
+  /**
+   * On the Cloud's `quota_exceeded` (2026-10-07): the month's allowance (the
+   * plan plus the month's top-ups), what was used, and when it starts again
+   * (ISO date). Undefined from a server that does not send them. Read these,
+   * never the message, which says the same in words that change.
+   */
+  readonly limit?: number;
+  readonly used?: number;
+  readonly resetsAt?: string;
+
+  constructor(message = "", opts: QuotaErrorOptions = {}) {
     super(message, opts);
     this.name = "QuotaExceededError";
+    this.limit = opts.limit;
+    this.used = opts.used;
+    this.resetsAt = opts.resetsAt;
     Object.setPrototypeOf(this, new.target.prototype);
   }
 }
@@ -158,7 +177,7 @@ export class QuotaExceededError extends APIError {
  * docs tell you to stop on that one, while this one clears in minutes.
  */
 export class TooManyBatchesError extends QuotaExceededError {
-  constructor(message = "", opts: APIErrorOptions = {}) {
+  constructor(message = "", opts: QuotaErrorOptions = {}) {
     super(message, opts);
     this.name = "TooManyBatchesError";
     Object.setPrototypeOf(this, TooManyBatchesError.prototype);

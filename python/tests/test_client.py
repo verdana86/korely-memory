@@ -192,6 +192,16 @@ class TestErrorMapping(unittest.TestCase):
         with self.assertRaises(QuotaExceededError) as cm:
             _client(rec).add("x")
         self.assertEqual(cm.exception.retry_after, 12)
+        self.assertIsNone(cm.exception.limit, "a server that does not send it")
+
+    def test_429_quota_carries_limit_used_and_resets_at(self):
+        """2026-10-07: the Cloud's machine fields, never the message's words."""
+        rec = _Recorder().queue(429, {"code": "quota_exceeded", "message": "2,000 writes on the ...",
+                                      "limit": 2000, "used": 2200, "resets_at": "2026-11-01"})
+        with self.assertRaises(QuotaExceededError) as cm:
+            _client(rec).add("x")
+        e = cm.exception
+        self.assertEqual((e.limit, e.used, e.resets_at), (2000, 2200, "2026-11-01"))
 
     def test_422_is_generic_api_error(self):
         # non-empty content so the request actually reaches the server (empty
