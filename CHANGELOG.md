@@ -8,6 +8,40 @@ The server side of the entries marked "API" shipped on 2026-09-28. Against an
 older server these clients keep working: the old field names are still read,
 and a batch `timestamp` is refused there with a 422.
 
+## Unreleased (Python 0.1.19 and npm 0.1.11)
+
+npm:
+
+- **An option the method does not read is refused.** In plain JavaScript an
+  option spelled otherwise was dropped in silence: `search("x", { userId })`
+  searched every end user of the project, `add("x", { userId })` wrote a
+  memory with no end user (which `deleteAll({ user_id })` then never found),
+  and `getFacts({ asOf })` answered with today's facts. Every method now
+  throws a `KorelyError` before sending anything, naming the spelling it
+  takes: "search: unknown option userId. Did you mean user_id?". The same in
+  `korely-memory/ai-sdk`, where `agent_id` (the client's spelling) lost the
+  agent's namespace, and in the constructor (`api_key`, `timeout_ms`, besides
+  `base_url`). The REST API answers 422 to an unknown field and the Python
+  client raises `TypeError`: the three now agree.
+- In Node, `new Korely()` reads what `korely init` saved
+  (`~/.korely/config.json`, or `$KORELY_CONFIG_HOME/config.json`), as the
+  Python client does: an argument first, then the environment, then the file.
+- The package's author address is info@korely.ai, the one the site gives.
+
+Both clients:
+
+- `region` was documented as "data stored and processed in the EU", which a
+  Global project (the default) is not: there the model that reads a memory is
+  Google's. The data is stored in the EU (Helsinki); where a memory is read is
+  the project's region. `ping()` and `initAgent()` / `init_agent()` read the
+  new `processing_region` ("eu" or "global"; absent from an older server), and
+  a signup can choose it (`processingRegion` in JS, `processing_region` in
+  Python), sent only when given. The CLI shows it in `ping`, `auth` and `init`.
+- `addFactTriple()` / `add_fact_triple()` say whose fact it is: the server's
+  `user_id` and `agent_id` when it answers them (since 2026-10-07), else what
+  was sent. Python handed back `user_id=None` for a fact written for an end
+  user.
+
 ## Python 0.1.18 and npm 0.1.10 (2026-10-06)
 
 Both clients:
