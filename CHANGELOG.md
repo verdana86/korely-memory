@@ -8,7 +8,7 @@ The server side of the entries marked "API" shipped on 2026-09-28. Against an
 older server these clients keep working: the old field names are still read,
 and a batch `timestamp` is refused there with a 422.
 
-## Unreleased
+## Python 0.1.20 and npm 0.1.12 (2026-10-07)
 
 Both clients:
 
@@ -17,7 +17,8 @@ Both clients:
   with the id of the fact that holds now, the one to correct instead; None or
   undefined when nothing replaced it (write the value of now with
   `add_fact_triple()`), on any other conflict, and from a server that does
-  not send it. Both servers send it from their next release.
+  not send it. The Cloud sends it since 7 Oct 2026 (19:06), the Self-hosted
+  from 0.1.21.
 
 - `QuotaExceededError` carries the Cloud's machine fields of a monthly
   `quota_exceeded`: `limit` (the month's allowance, the plan plus the month's
