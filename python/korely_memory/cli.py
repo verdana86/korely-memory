@@ -759,6 +759,12 @@ def cmd_init(args) -> int:
     if q:
         print(f"  quotas  {q.get('writes_per_month')} writes / "
               f"{q.get('queries_per_month')} queries per month · {q.get('agents')} agents")
+    # Creating the account accepts the Terms and the Privacy Policy (the
+    # founder's decision of 11 Oct 2026): the server says which, from 0.1.27.
+    if result.terms_url and result.privacy_url:
+        print("  terms   creating the account accepts the Terms and the Privacy Policy:")
+        print(f"          {result.terms_url}")
+        print(f"          {result.privacy_url}")
     print()
     print("Next:")
     print('  korely add "I am using Korely"')

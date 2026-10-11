@@ -8,6 +8,14 @@ The server side of the entries marked "API" shipped on 2026-09-28. Against an
 older server these clients keep working: the old field names are still read,
 and a batch `timestamp` is refused there with a 422.
 
+## Python 0.1.23 and npm 0.1.15 (not released yet)
+
+- `korely init --agent` says what creating the account accepts: the Terms
+  and the Privacy Policy, with their addresses, as the Cloud names them from
+  Korely Agent 0.1.27. Both clients read them on the init result
+  (`terms_url`, `privacy_url`); a server older than that names none, and
+  nothing is printed.
+
 ## Python 0.1.22 and npm 0.1.14 (2026-10-11)
 
 Both clients, the Python CLI and MCP server, and the n8n node:

@@ -447,7 +447,12 @@ class InitSignsUpThroughTheSdk(_CleanEnv):
     """`korely init --agent` makes the SDK's call (Korely.init_agent) instead
     of its own copy of the HTTP and of the error parsing (2026-10-06)."""
 
-    def test_the_key_is_saved_and_masked(self):
+    _ANSWER = {"api_key": "kor_live_0123456789abcdef0123456789abcdef",
+               "tier": "hobby", "region": "eu-hel1",
+               "scopes": ["memories:read", "memories:write"],
+               "quotas": {"writes_per_month": 2000, "queries_per_month": 10000, "agents": 2}}
+
+    def _signup(self, answer):
         import json as _json
         import urllib.request
 
@@ -457,12 +462,7 @@ class InitSignsUpThroughTheSdk(_CleanEnv):
             status = 201
 
             def read(self):
-                return _json.dumps({"api_key": "kor_live_0123456789abcdef0123456789abcdef",
-                                    "tier": "hobby", "region": "eu-hel1",
-                                    "scopes": ["memories:read", "memories:write"],
-                                    "quotas": {"writes_per_month": 2000,
-                                               "queries_per_month": 10000,
-                                               "agents": 2}}).encode()
+                return _json.dumps(answer).encode()
 
             def getcode(self):
                 return 201
@@ -473,17 +473,24 @@ class InitSignsUpThroughTheSdk(_CleanEnv):
             def __exit__(self, *a):
                 return False
 
-        def answer(req, timeout=None):
+        def reply(req, timeout=None):
             seen.append(req)
             return _Resp()
 
-        real, urllib.request.urlopen = urllib.request.urlopen, answer
+        real, urllib.request.urlopen = urllib.request.urlopen, reply
         out = io.StringIO()
         try:
             with redirect_stdout(out), redirect_stderr(io.StringIO()):
                 rc = cli.main(["init", "--agent", "--agent-caller", "claude-code"])
         finally:
             urllib.request.urlopen = real
+        return rc, out.getvalue(), seen
+
+    def test_the_key_is_saved_and_masked(self):
+        import json as _json
+
+        rc, printed, seen = self._signup(self._ANSWER)
+        out = io.StringIO(printed)
         self.assertEqual(rc, 0)
         self.assertEqual(seen[0].full_url, "https://api.korely.ai/v1/agents/init")
         self.assertIsNone(seen[0].get_header("Authorization"))
@@ -493,6 +500,18 @@ class InitSignsUpThroughTheSdk(_CleanEnv):
         self.assertIn("kor_live_…cdef", out.getvalue())
         self.assertNotIn("0123456789abcdef0123", out.getvalue())
         self.assertIn("2000 writes / 10000 queries per month", out.getvalue())
+        self.assertNotIn("Terms", out.getvalue(), "a server older than 0.1.27 names none")
+
+    def test_it_says_what_creating_the_account_accepts(self):
+        """The Terms and the Privacy Policy, as the server names them (the
+        founder's decision of 11 Oct 2026, Korely Agent 0.1.27)."""
+        rc, printed, _ = self._signup(dict(
+            self._ANSWER, terms_url="https://korely.ai/legal/terms-of-service",
+            privacy_url="https://korely.ai/legal/privacy-policy"))
+        self.assertEqual(rc, 0)
+        self.assertIn("creating the account accepts the Terms and the Privacy Policy", printed)
+        self.assertIn("https://korely.ai/legal/terms-of-service", printed)
+        self.assertIn("https://korely.ai/legal/privacy-policy", printed)
 
 
 class InitDoesNotLoseASavedKey(_CleanEnv):

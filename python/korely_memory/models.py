@@ -637,6 +637,10 @@ class AgentInitResult:
     processing_region: Optional[str] = None
     scopes: List[str] = field(default_factory=list)
     quotas: dict = field(default_factory=dict)
+    # The Terms of Service and the Privacy Policy that creating the account
+    # accepts. None from a server older than Korely Agent 0.1.27.
+    terms_url: Optional[str] = None
+    privacy_url: Optional[str] = None
 
     @classmethod
     def from_dict(cls, d: dict) -> "AgentInitResult":

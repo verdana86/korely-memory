@@ -333,6 +333,11 @@ export interface AgentInitResult {
   scopes: string[];
   /** The hobby allowance: writes_per_month, queries_per_month, agents, the monthly AI budget. */
   quotas: Record<string, unknown>;
+  /** The Terms of Service that creating the account accepts. Absent from a
+   *  server older than Korely Agent 0.1.27. */
+  terms_url?: string;
+  /** The Privacy Policy, likewise. */
+  privacy_url?: string;
 }
 
 /**
