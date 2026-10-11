@@ -118,15 +118,17 @@ def _fact_line(f) -> str:
 
 @mcp.tool()
 def korely_get_context(query: str, user_id: Optional[str] = None,
-                       token_budget: int = 800) -> str:
+                       token_budget: int = 800, known_as_of: Optional[str] = None) -> str:
     """Recall what Korely knows for one end user, assembled into a prompt-ready block.
 
     THE primary recall path: call this before answering so the assistant has the
     user's currently-valid typed facts plus the most relevant memories. `user_id`
-    scopes to one end user (omit for the account-wide default).
+    scopes to one end user (omit for the account-wide default). `known_as_of`
+    (ISO date) rebuilds the block as Korely knew it then.
     """
     try:
-        ctx = _client().get_context(query=query, user_id=user_id, token_budget=token_budget)
+        ctx = _client().get_context(query=query, user_id=user_id, token_budget=token_budget,
+                                    known_as_of=known_as_of)
     except KorelyError as e:
         return f"error: {e}"
     return ctx.context or "(nothing remembered yet for this query)"
@@ -186,24 +188,28 @@ def korely_search(query: str, user_id: Optional[str] = None, limit: int = 10,
 def korely_get_facts(user_id: Optional[str] = None, entity: Optional[str] = None,
                      subject: Optional[str] = None, predicate_family: Optional[str] = None,
                      as_of: Optional[str] = None, include_invalidated: bool = False,
-                     limit: int = 50) -> str:
+                     limit: int = 50, known_as_of: Optional[str] = None) -> str:
     """Read typed (subject, predicate, object) facts, the bi-temporal core.
 
     `entity` matches subject OR object; `as_of` (ISO date) reconstructs what was
-    true on that day (time-travel); `include_invalidated` also shows superseded
-    facts. Deterministic: no model runs.
+    true on that day (time-travel); `known_as_of` (ISO date) what Korely knew on
+    that day (a change told later is not in it); `include_invalidated` also
+    shows superseded facts. Deterministic: no model runs.
     """
     try:
         facts = _client().get_facts(
             user_id=user_id, entity=entity, subject=subject,
             predicate_family=predicate_family, as_of=as_of,
             include_invalidated=include_invalidated, limit=limit,
+            known_as_of=known_as_of,
         )
     except KorelyError as e:
         return f"error: {e}"
+    when = ", ".join(w for w in (f"as of {as_of}" if as_of else "",
+                                 f"as known on {known_as_of}" if known_as_of else "") if w)
     if not facts:
-        return "no facts." + (f" (as of {as_of})" if as_of else "")
-    head = f"# facts as of {as_of}\n" if as_of else ""
+        return "no facts." + (f" ({when})" if when else "")
+    head = f"# facts {when}\n" if when else ""
     return head + "\n".join(f"- {_fact_line(f)}" for f in facts)
 
 

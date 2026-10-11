@@ -107,6 +107,26 @@ test("getFacts adds include_invalidated + as_of params", async () => {
   assert.equal(facts[0].id, "fct_1");
 });
 
+test("known_as_of: what the store knew on a date (Korely Agent 0.1.26)", async () => {
+  const { k, f } = client([
+    { status: 200, body: { facts: [{ id: "fct_1", object: "Milan", closed_known_at: null }], total: 1 } },
+    { status: 200, body: { user_id: "u", known_as_of: "2026-09-20", facts: [], by_family: {}, total: 0, truncated: false } },
+    { status: 200, body: { context: "", tokens: 0, sources: [] } },
+    { status: 200, body: { context: "", tokens: 0, sources: [] } },
+  ]);
+  const facts = await k.getFacts({ user_id: "maria", known_as_of: "2026-09-20" });
+  assert.match(f.calls[0].url, /known_as_of=2026-09-20/);
+  assert.doesNotMatch(f.calls[0].url, /[?&]as_of=/);
+  assert.equal(facts[0].object, "Milan");
+  const p = await k.getProfile({ user_id: "u", known_as_of: "2026-09-20" });
+  assert.match(f.calls[1].url, /known_as_of=2026-09-20/);
+  assert.equal(p.known_as_of, "2026-09-20");
+  await k.getContext({ query: "where?", user_id: "maria", known_as_of: "2026-09-20" });
+  assert.match(f.calls[2].url, /known_as_of=2026-09-20/);
+  await k.getContext("where?", { known_as_of: "2026-09-20" });
+  assert.match(f.calls[3].url, /known_as_of=2026-09-20/);
+});
+
 test("addFactTriple sends the triple", async () => {
   const { k, f } = client([
     {

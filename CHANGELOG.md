@@ -8,6 +8,23 @@ The server side of the entries marked "API" shipped on 2026-09-28. Against an
 older server these clients keep working: the old field names are still read,
 and a batch `timestamp` is refused there with a 422.
 
+## Python 0.1.22 and npm 0.1.14 (not released yet)
+
+Both clients, the Python CLI and MCP server, and the n8n node:
+
+- `known_as_of` (ISO date): what the store knew on a date, next to `as_of`,
+  what was true on it. An agent learns in October that a customer moved in
+  September: `as_of` of 20 September answers the new address, `known_as_of`
+  of 20 September the old one. On `get_facts()` / `getFacts()`,
+  `get_profile()` / `getProfile()` and `get_context()` / `getContext()`
+  (the block as the store could have built it then), `korely facts`,
+  `korely profile` and `korely context --known-as-of`, the MCP tools
+  `korely_get_facts` and `korely_get_context`, and the n8n node's fact list
+  and context. A fact carries `closed_known_at`, when the store learned it
+  had ended; a profile echoes `known_as_of`. Korely Agent answers it from
+  0.1.26 (Self-hosted and Cloud); an older server ignores the parameter and
+  answers about now.
+
 ## Python 0.1.21 and npm 0.1.13 (2026-10-08)
 
 Both clients, and the Python CLI and MCP server:

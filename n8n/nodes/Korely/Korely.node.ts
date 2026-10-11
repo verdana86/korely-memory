@@ -157,6 +157,16 @@ export class Korely implements INodeType {
 				displayOptions: { show: { resource: ['fact'], operation: ['list'] } },
 				description: 'Read the state as it was on this date. Empty means now.',
 			},
+			{
+				displayName: 'Known As Of',
+				name: 'knownAsOf',
+				type: 'string',
+				default: '',
+				placeholder: '2026-04-01',
+				displayOptions: { show: { resource: ['fact', 'context'], operation: ['list', 'get'] } },
+				description:
+					'What Korely knew on this date: a change told later is not in it, even when it happened before. Empty means now. Korely Agent 0.1.26 and later.',
+			},
 
 			// ── context ───────────────────────────────────────────────────────
 			{
@@ -269,11 +279,15 @@ export class Korely implements INodeType {
 				} else if (resource === 'context') {
 					url = '/v1/context';
 					qs = { query: this.getNodeParameter('query', i) as string, ...scope };
+					const knownAsOf = (this.getNodeParameter('knownAsOf', i, '') as string).trim();
+					if (knownAsOf) qs.known_as_of = knownAsOf;
 				} else if (resource === 'fact' && operation === 'list') {
 					url = '/v1/facts';
 					qs = { ...scope };
 					const asOf = (this.getNodeParameter('asOf', i, '') as string).trim();
 					if (asOf) qs.as_of = asOf;
+					const knownAsOf = (this.getNodeParameter('knownAsOf', i, '') as string).trim();
+					if (knownAsOf) qs.known_as_of = knownAsOf;
 					if (extra.limit) qs.limit = extra.limit;
 				} else if (resource === 'fact' && operation === 'write') {
 					method = 'POST';

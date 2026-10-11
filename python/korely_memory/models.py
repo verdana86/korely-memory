@@ -48,6 +48,9 @@ class Fact:
     subject_canonical: Optional[str] = None
     object_canonical: Optional[str] = None
     source_memory_ids: List[str] = field(default_factory=list)
+    # Korely Agent 0.1.26: when the store learned the fact had ended
+    # (``created_at`` is when it learned the fact); None while it is open.
+    closed_known_at: Optional[str] = None
 
     @classmethod
     def from_dict(cls, d: dict) -> "Fact":
@@ -266,10 +269,12 @@ class BatchJob:
 class Profile:
     """The assembled profile of one end user: active typed facts known about
     them, the end user's own facts first, plus a ``by_family`` grouping.
-    ``as_of`` echoes a point-in-time request. ``truncated`` is True when
+    ``as_of`` echoes a point-in-time request, ``known_as_of`` a request for
+    the profile as the store knew it then. ``truncated`` is True when
     ``total`` exceeds the number of facts returned (the profile is capped at 200)."""
     user_id: Optional[str] = None
     as_of: Optional[str] = None
+    known_as_of: Optional[str] = None
     facts: List[Fact] = field(default_factory=list)
     by_family: dict = field(default_factory=dict)
     total: int = 0
@@ -529,8 +534,9 @@ class PingResponse:
 @dataclass
 class AuditRead:
     """For a read: what the call returned, by public id, at most 100 of each
-    kind. With ``as_of`` on ``get_facts()`` they rebuild what an agent knew
-    when it decided. Ids only: the trail never holds content."""
+    kind. With ``known_as_of`` on ``get_facts()`` or ``get_context()`` (Korely
+    Agent 0.1.26) they rebuild what an agent knew when it decided. Ids only:
+    the trail never holds content."""
     memories: List[str] = field(default_factory=list)
     facts: List[str] = field(default_factory=list)
 

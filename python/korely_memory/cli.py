@@ -388,7 +388,7 @@ def cmd_search(k: Korely, a) -> int:
 
 def cmd_context(k: Korely, a) -> int:
     ctx = k.get_context(query=a.query, user_id=a.user_id, agent_id=a.agent_id,
-                        token_budget=a.token_budget)
+                        token_budget=a.token_budget, known_as_of=a.known_as_of)
     if a.json:
         _emit_json(ctx)
         return 0
@@ -401,29 +401,34 @@ def cmd_facts(k: Korely, a) -> int:
     facts = k.get_facts(entity=a.entity, subject=a.subject, predicate=a.predicate,
                         predicate_family=a.family,
                         user_id=a.user_id, agent_id=a.agent_id, as_of=a.as_of,
-                        include_invalidated=a.include_invalidated, limit=a.limit)
+                        include_invalidated=a.include_invalidated, limit=a.limit,
+                        known_as_of=a.known_as_of)
     if a.json:
         # The API's own shape ({"facts": [...], "total": n}), as the docs show
         # (`jq '.facts[]'`); it was a bare list until 2026-09-29.
         _emit_json({"facts": [dataclasses.asdict(f) for f in facts],
                     "total": getattr(facts, "total", len(facts))})
         return 0
+    when = ", ".join(w for w in (f"true as of {a.as_of}" if a.as_of else "",
+                                 f"as known on {a.known_as_of}" if a.known_as_of else "") if w)
     if not facts:
-        print("no facts." + (f" (as of {a.as_of})" if a.as_of else ""))
+        print("no facts." + (f" ({when})" if when else ""))
         return 0
-    if a.as_of:
-        print(f"# what was true as of {a.as_of}\n")
+    if when:
+        print(f"# what was {when}\n")
     for f in facts:
         print(" ", _fact_line(f))
     return 0
 
 
 def cmd_profile(k: Korely, a) -> int:
-    p = k.get_profile(user_id=a.user_id, agent_id=a.agent_id, as_of=a.as_of)
+    p = k.get_profile(user_id=a.user_id, agent_id=a.agent_id, as_of=a.as_of,
+                      known_as_of=a.known_as_of)
     if a.json:
         _emit_json(p)
         return 0
-    head = f"profile of {p.user_id}" + (f" as of {p.as_of}" if p.as_of else "")
+    head = (f"profile of {p.user_id}" + (f" as of {p.as_of}" if p.as_of else "")
+            + (f" as known on {p.known_as_of}" if p.known_as_of else ""))
     print(head + f"  ({p.total} fact(s))")
     for family, facts in (p.by_family or {}).items():
         print(f"\n{family}:")
@@ -832,6 +837,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help="assembled, prompt-ready context block (the agent call)")
     sp.add_argument("query")
     sp.add_argument("--token-budget", type=int, default=800)
+    sp.add_argument("--known-as-of", help="ISO date: the block as Korely knew it then")
     sp.set_defaults(func=cmd_context)
 
     sp = sub.add_parser("facts", parents=[common],
@@ -841,6 +847,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--predicate", help="exact predicate, e.g. subscribes_to")
     sp.add_argument("--family", help="predicate family")
     sp.add_argument("--as-of", help="ISO date: what was true on that day")
+    sp.add_argument("--known-as-of",
+                    help="ISO date: what Korely knew on that day (a change told later is not in it)")
     sp.add_argument("--include-invalidated", action="store_true",
                     help="also show superseded facts")
     sp.add_argument("--limit", type=int, default=50)
@@ -877,6 +885,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("profile", parents=[common], help="assembled profile of one end user")
     sp.add_argument("--as-of", help="ISO date: the point-in-time profile")
+    sp.add_argument("--known-as-of", help="ISO date: the profile as Korely knew it then")
     sp.set_defaults(func=cmd_profile)
 
     sp = sub.add_parser("users", parents=[common], help="end users you've stored data for")

@@ -871,16 +871,26 @@ class Korely:
                   predicate: Optional[str] = None, predicate_family: Optional[str] = None,
                   include_invalidated: bool = False, as_of: Optional[str] = None,
                   user_id: Optional[str] = None, agent_id: Optional[str] = None,
-                  limit: int = 50, offset: int = 0) -> FactList:
+                  limit: int = 50, offset: int = 0,
+                  known_as_of: Optional[str] = None) -> FactList:
         """GET /v1/facts: typed (subject, predicate, object) triples with
         bi-temporal validity. Pass ``as_of`` (ISO date) for a point-in-time
         query: what was true on that date.
+
+        ``known_as_of`` (ISO date) asks the other clock: what the store knew
+        on that date. A move made in September and told in October:
+        ``as_of="2026-09-20"`` returns the new address, ``known_as_of=
+        "2026-09-20"`` the old one. Both together: what the store knew on
+        ``known_as_of`` about ``as_of``. Each Fact then shows the end the
+        store knew of on that date (``closed_known_at`` says when it learned
+        it). Servers before Korely Agent 0.1.26 ignore the parameter.
 
         Returns a list of Fact. It also carries ``.total``, how many facts
         match the filters across all pages, so ``offset`` can walk them."""
         params = _clean({
             "subject": subject, "entity": entity, "predicate": predicate,
             "predicate_family": predicate_family, "as_of": as_of,
+            "known_as_of": known_as_of,
             "user_id": user_id, "agent_id": agent_id, "limit": limit, "offset": offset,
         })
         if include_invalidated:
@@ -963,29 +973,39 @@ class Korely:
         return Fact.from_dict(body)
 
     def get_profile(self, *, user_id: str, agent_id: Optional[str] = None,
-                    as_of: Optional[str] = None) -> Profile:
+                    as_of: Optional[str] = None,
+                    known_as_of: Optional[str] = None) -> Profile:
         """GET /v1/profile: the assembled profile of one end user, the active
         typed facts known about them, the end user's own facts first, grouped by
         predicate family. ``user_id`` is required. Pass ``as_of`` (ISO date) for
-        the point-in-time profile ("what we knew on 2026-03-01")."""
+        the point-in-time profile ("what was true on 2026-03-01"), and
+        ``known_as_of`` for the profile as the store knew it then ("what we
+        knew on 2026-03-01"); see ``get_facts``."""
         body = self._call("GET", "/v1/profile", params=_clean({
             "user_id": user_id, "agent_id": agent_id, "as_of": as_of,
+            "known_as_of": known_as_of,
         }))
         return Profile.from_dict(body)
 
     # ── context ──────────────────────────────────────────────────────────────
     def get_context(self, query: Optional[str] = None, *, user_id: Optional[str] = None,
-                    agent_id: Optional[str] = None, token_budget: int = 800) -> Context:
+                    agent_id: Optional[str] = None, token_budget: int = 800,
+                    known_as_of: Optional[str] = None) -> Context:
         """GET /v1/context: one call that assembles a prompt-ready context
         block (profile + relevant facts + memories) within a token budget.
 
         ``query`` by position or by name: ``get_context("...", user_id=...)``
-        is how the docs write it, and it raised TypeError until 2026-09-29."""
+        is how the docs write it, and it raised TypeError until 2026-09-29.
+
+        ``known_as_of`` (ISO date): the block as the store could have built
+        it then, the facts it knew and the memories it had received, to see
+        what an agent could have known when it decided. Rebuilt with today's
+        ranking. Servers before Korely Agent 0.1.26 ignore it."""
         if not query or not str(query).strip():
             raise KorelyError("get_context needs a query.")
         body = self._call("GET", "/v1/context", params=_clean({
             "query": query, "user_id": user_id, "agent_id": agent_id,
-            "token_budget": token_budget,
+            "token_budget": token_budget, "known_as_of": known_as_of,
         }))
         return Context.from_dict(body)
 

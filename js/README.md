@@ -105,12 +105,12 @@ Every method maps to one REST endpoint.
 | `users(opts?)` | `GET /v1/users` | Your end users, with counts. |
 | `listAgents(opts?)` | `GET /v1/agents` | This project's agent namespaces, with counts. `total` counts this project's names, `used` the cap slots taken across the account. Call after `agent_cap_exceeded` to reuse an id. |
 | `deleteAgent(agentId)` | `DELETE /v1/agents/:agent_id` | Purge an agent namespace of this project. `NotFoundError` for a name the project does not use; `slot_freed` says whether the cap slot is free now. |
-| `getFacts(opts?)` | `GET /v1/facts` | Typed facts; `as_of` for point-in-time. The array also carries `total`. |
+| `getFacts(opts?)` | `GET /v1/facts` | Typed facts; `as_of` for what was true on a date, `known_as_of` for what the store knew on it. The array also carries `total`. |
 | `addFactTriple(s, p, o, opts?)` | `POST /v1/facts` | Write a fact directly (bi-temporal; `tense: "past"` for one that is over). |
 | `correctFact(id, changes)` | `PATCH /v1/facts/:id` | Supersede a fact with a corrected one; `invalidated` lists what it closed. Restating the fact as it stands reconfirms it (`invalidated: []`). |
 | `forgetFact(id, { at? })` | `POST /v1/facts/:id/forget` | Close a fact; it stays in history. |
-| `getProfile({ user_id, as_of? })` | `GET /v1/profile` | The assembled profile of one end user. |
-| `getContext({ query, user_id? })` | `GET /v1/context` | One call, a prompt-ready context block. |
+| `getProfile({ user_id, as_of?, known_as_of? })` | `GET /v1/profile` | The assembled profile of one end user. |
+| `getContext({ query, user_id?, known_as_of? })` | `GET /v1/context` | One call, a prompt-ready context block; `known_as_of` rebuilds it as the store could have built it then. |
 | `events(opts?)` | `GET /v1/events` | Which writes are still being extracted; `limit` up to 200. |
 | `batch(memories)` | `POST /v1/batch` | Bulk import, for migrations. Each item takes `timestamp`, as `add()` does. |
 | `batchStatus(jobId)` | `GET /v1/batch/:id` | Poll an import job. |
@@ -126,8 +126,12 @@ Every write extracts typed `(subject, predicate, object)` facts with validity in
 time. Ask what was true on a past date:
 
 ```ts
-// What did we know about this user on March 1st?
+// What was true for this user on March 1st, as the store knows it today?
 const past = await korely.getProfile({ user_id: "customer-4812", as_of: "2026-03-01" });
+
+// And what did the store know on March 1st? A change told later is not in it
+// (Korely Agent 0.1.26).
+const knownThen = await korely.getProfile({ user_id: "customer-4812", known_as_of: "2026-03-01" });
 
 // Write a fact directly, dated in the past
 await korely.addFactTriple("Marco", "works_at", "Acme GmbH", {

@@ -220,6 +220,10 @@ class TheProtocol(unittest.TestCase):
         self.assertEqual(facts["properties"]["include_invalidated"]["type"], "boolean")
         self.assertEqual(facts["properties"]["limit"], {"type": "integer", "default": 50})
         self.assertEqual(facts["properties"]["as_of"]["type"], ["string", "null"])
+        self.assertEqual(facts["properties"]["known_as_of"]["type"], ["string", "null"])
+        self.assertEqual(
+            tools["korely_get_context"]["inputSchema"]["properties"]["known_as_of"]["type"],
+            ["string", "null"])
         self.assertEqual(tools["korely_search"]["inputSchema"]["required"], ["query"])
         self.assertTrue(tools["korely_get_context"]["description"])
 

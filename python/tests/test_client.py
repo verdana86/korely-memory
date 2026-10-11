@@ -152,6 +152,24 @@ class TestFactsContextBatch(unittest.TestCase):
         self.assertEqual(facts[0].object, "40 euro")
         self.assertEqual(facts[0].invalid_at, "2026-06-07")
 
+    def test_get_facts_known_as_of(self):
+        """Korely Agent 0.1.26: what the store knew on a date, and when it
+        learned a fact had ended."""
+        rec = _Recorder().queue(200, {"facts": [
+            {"object": "Milan", "invalid_at": None, "closed_known_at": None},
+        ], "total": 1})
+        facts = _client(rec).get_facts(user_id="maria", known_as_of="2026-09-20")
+        self.assertEqual(rec.last["params"]["known_as_of"], "2026-09-20")
+        self.assertNotIn("as_of", rec.last["params"])
+        self.assertEqual(facts[0].object, "Milan")
+        rec = _Recorder().queue(200, {"facts": [
+            {"object": "Milan", "invalid_at": "2026-09-01T00:00:00+00:00",
+             "closed_known_at": "2026-10-05T09:00:00+00:00"},
+        ], "total": 1})
+        facts = _client(rec).get_facts(user_id="maria", include_invalidated=True)
+        self.assertEqual(facts[0].closed_known_at, "2026-10-05T09:00:00+00:00")
+        self.assertNotIn("known_as_of", rec.last["params"])
+
     def test_get_facts_include_invalidated_param(self):
         rec = _Recorder().queue(200, {"facts": [], "total": 0})
         _client(rec).get_facts(entity="X", include_invalidated=True)
@@ -309,6 +327,23 @@ class TestMethodParity(unittest.TestCase):
         self.assertEqual(p.facts[0].object, "single")
         self.assertIn("identity", p.by_family)
         self.assertEqual(p.by_family["identity"][0].subject, "maria")
+
+    def test_get_profile_known_as_of(self):
+        rec = _Recorder().queue(200, {"user_id": "maria", "as_of": None,
+                                      "known_as_of": "2026-09-20", "facts": [],
+                                      "by_family": {}, "total": 0})
+        p = _client(rec).get_profile(user_id="maria", known_as_of="2026-09-20")
+        self.assertEqual(rec.last["params"]["known_as_of"], "2026-09-20")
+        self.assertEqual(p.known_as_of, "2026-09-20")
+
+    def test_get_context_known_as_of(self):
+        rec = _Recorder().queue(200, {"context": "## Known facts", "tokens": 3, "sources": []})
+        _client(rec).get_context("where does she live?", user_id="maria", known_as_of="2026-09-20")
+        self.assertEqual(rec.last["path"], "/v1/context")
+        self.assertEqual(rec.last["params"]["known_as_of"], "2026-09-20")
+        rec = _Recorder().queue(200, {"context": "", "tokens": 0, "sources": []})
+        _client(rec).get_context("where does she live?", user_id="maria")
+        self.assertNotIn("known_as_of", rec.last["params"])
 
     def test_history(self):
         rec = _Recorder().queue(200, {"id": "mem_1", "events": [

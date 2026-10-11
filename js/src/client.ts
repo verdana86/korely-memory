@@ -111,13 +111,15 @@ const AUDIT_KEYS = keysOf<AuditOptions>()("user_id", "action", "since", "until",
 const ITER_AUDIT_KEYS = keysOf<IterAuditOptions>()("user_id", "action", "since", "until", "offset", "page_size");
 const FACTS_KEYS = keysOf<GetFactsOptions>()(
   "subject", "entity", "predicate", "predicate_family", "include_invalidated", "as_of",
-  "user_id", "agent_id", "limit", "offset");
+  "known_as_of", "user_id", "agent_id", "limit", "offset");
 const TRIPLE_KEYS = keysOf<AddFactTripleOptions>()(
   "user_id", "agent_id", "run_id", "subject_type", "object_is_literal", "confidence",
   "valid_from", "tense");
-const PROFILE_KEYS = keysOf<GetProfileOptions>()("user_id", "agent_id", "as_of");
-const CONTEXT_KEYS = keysOf<GetContextOptions>()("query", "user_id", "agent_id", "token_budget");
-const CONTEXT_EXTRA_KEYS = keysOf<Omit<GetContextOptions, "query">>()("user_id", "agent_id", "token_budget");
+const PROFILE_KEYS = keysOf<GetProfileOptions>()("user_id", "agent_id", "as_of", "known_as_of");
+const CONTEXT_KEYS = keysOf<GetContextOptions>()(
+  "query", "user_id", "agent_id", "token_budget", "known_as_of");
+const CONTEXT_EXTRA_KEYS = keysOf<Omit<GetContextOptions, "query">>()(
+  "user_id", "agent_id", "token_budget", "known_as_of");
 
 /** Refuse an option this method does not read (options.ts). */
 function checkOptions(method: string, opts: unknown, known: readonly string[]): void {
@@ -938,8 +940,10 @@ export class Korely {
   // ── facts ─────────────────────────────────────────────────────────────────
   /**
    * GET /v1/facts: typed (subject, predicate, object) triples with bi-temporal
-   * validity. Pass `as_of` (ISO date) for a point-in-time query. Resolves to an
-   * array that also carries `total`, the matches across all pages.
+   * validity. Pass `as_of` (ISO date) for a point-in-time query, and
+   * `known_as_of` (ISO date) for what the store knew on that date (Korely
+   * Agent 0.1.26; older servers ignore it). Resolves to an array that also
+   * carries `total`, the matches across all pages.
    */
   async getFacts(opts: GetFactsOptions = {}): Promise<FactList> {
     checkOptions("getFacts", opts, FACTS_KEYS);
@@ -949,6 +953,7 @@ export class Korely {
       predicate: opts.predicate,
       predicate_family: opts.predicate_family,
       as_of: opts.as_of,
+      known_as_of: opts.known_as_of,
       user_id: opts.user_id,
       agent_id: opts.agent_id,
       limit: opts.limit ?? 50,
@@ -1049,7 +1054,8 @@ export class Korely {
   /**
    * GET /v1/profile: the assembled profile of one end user, the active typed
    * facts known about them, the end user's own facts first, grouped by family.
-   * Pass `as_of` (ISO date) for the point-in-time profile.
+   * Pass `as_of` (ISO date) for the point-in-time profile, `known_as_of` for
+   * the profile as the store knew it then.
    */
   async getProfile(opts: GetProfileOptions): Promise<Profile> {
     checkOptions("getProfile", opts, PROFILE_KEYS);
@@ -1058,6 +1064,7 @@ export class Korely {
         user_id: opts.user_id,
         agent_id: opts.agent_id,
         as_of: opts.as_of,
+        known_as_of: opts.known_as_of,
       },
     });
   }
@@ -1065,7 +1072,8 @@ export class Korely {
   // ── context ─────────────────────────────────────────────────────────────
   /**
    * GET /v1/context: one call that assembles a prompt-ready context block
-   * (profile + relevant facts + memories) within a token budget.
+   * (profile + relevant facts + memories) within a token budget. With
+   * `known_as_of` (ISO date), the block as the store could have built it then.
    */
   async getContext(
     opts: GetContextOptions | string,
@@ -1085,6 +1093,7 @@ export class Korely {
         user_id: o.user_id,
         agent_id: o.agent_id,
         token_budget: o.token_budget ?? 800,
+        known_as_of: o.known_as_of,
       },
     });
   }

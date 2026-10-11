@@ -141,6 +141,15 @@ class TestParserWiring(unittest.TestCase):
         self.assertEqual(a.as_of, "2026-03-01")
         self.assertTrue(a.include_invalidated)
 
+    def test_the_other_clock_on_facts_profile_and_context(self):
+        """Korely Agent 0.1.26: what Korely knew on a date."""
+        self.assertEqual(_args(["facts", "--known-as-of", "2026-09-20"]).known_as_of, "2026-09-20")
+        self.assertEqual(_args(["profile", "--known-as-of", "2026-09-20"]).known_as_of,
+                         "2026-09-20")
+        self.assertEqual(_args(["context", "where?", "--known-as-of", "2026-09-20"]).known_as_of,
+                         "2026-09-20")
+        self.assertIsNone(_args(["facts"]).known_as_of)
+
     def test_facts_forwards_predicate_to_the_api(self):
         rec = _Recorder().queue(200, {"facts": []})
         k = Korely(api_key="kor_live_x")

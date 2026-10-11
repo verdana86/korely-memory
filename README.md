@@ -55,6 +55,22 @@ Without `timestamp` every fact starts being true the moment you write it, so
 `as_of` on an earlier date returns nothing. That is correct, and usually not
 what you want when you are importing history.
 
+`as_of` answers what was true on a date, as the store knows it today.
+`known_as_of` (Korely Agent 0.1.26) answers the other question: what the store
+knew on that date. They differ when a change is told late. An agent learns on
+5 October that a customer moved on 1 September:
+
+```python
+korely.get_facts(user_id="maria", as_of="2026-09-20")        # lives_in -> Turin
+korely.get_facts(user_id="maria", known_as_of="2026-09-20")  # lives_in -> Milan
+```
+
+On 20 September the move had happened, and the store did not know it yet.
+`known_as_of` is on `get_facts`, `get_profile` and `get_context`, which rebuilds
+the block as the store could have built it then: what an agent could have
+known when it decided. Each fact carries `closed_known_at`, when the store
+learned it had ended.
+
 ## Writes settle asynchronously
 
 `add()` returns as soon as the memory is stored, then extraction runs server-side. That means:
@@ -140,7 +156,8 @@ Every command is listed in [python/README.md](python/README.md#cli).
 - **Typed facts.** Subject, predicate, object, extracted server-side. No prompt engineering on your side.
 - **Bi-temporal validity.** Every fact carries `valid_from` and `invalid_at`, so the store separates when something was true from when it was recorded.
 - **Contradiction resolution.** A new fact that conflicts with an old one supersedes it and records which fact replaced it. Nothing is silently dropped.
-- **Point-in-time queries.** `as_of` answers what the store believed on any past date.
+- **Point-in-time queries.** `as_of` answers what was true on any past date, and
+  `known_as_of` what the store knew on it.
 - **Entity graph.** Entities and relations are extracted automatically and available on every tier, including free.
 - **Semantic retrieval.** Memories and facts are ranked by meaning (vector similarity), and facts also by how recently a memory confirmed them.
 - **Prompt-ready context.** `get_context()` returns a block you can paste straight into a system prompt, with the token count.

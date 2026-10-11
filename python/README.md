@@ -63,12 +63,12 @@ Every method wraps exactly one REST endpoint.
 | `users(*, agent_id=, limit=, offset=)` | `GET /v1/users` |
 | `list_agents(*, limit=, offset=)` | `GET /v1/agents` |
 | `delete_agent(agent_id)` | `DELETE /v1/agents/:agent_id` |
-| `get_facts(*, subject=, entity=, predicate=, predicate_family=, include_invalidated=, as_of=, …)` | `GET /v1/facts` |
+| `get_facts(*, subject=, entity=, predicate=, predicate_family=, include_invalidated=, as_of=, known_as_of=, …)` | `GET /v1/facts` |
 | `add_fact_triple(subject, predicate, object, *, user_id=, valid_from=, tense=, …)` | `POST /v1/facts` |
 | `correct_fact(fact_id, *, subject=, predicate=, object=)` | `PATCH /v1/facts/:id` |
 | `forget_fact(fact_id, *, at=)` | `POST /v1/facts/:id/forget` |
-| `get_profile(*, user_id, agent_id=, as_of=)` | `GET /v1/profile` |
-| `get_context(*, query, user_id=, agent_id=, token_budget=)` | `GET /v1/context` |
+| `get_profile(*, user_id, agent_id=, as_of=, known_as_of=)` | `GET /v1/profile` |
+| `get_context(*, query, user_id=, agent_id=, token_budget=, known_as_of=)` | `GET /v1/context` |
 | `events(*, user_id=, status=, limit=)` | `GET /v1/events` |
 | `batch(memories)` | `POST /v1/batch` |
 | `batch_status(job_id)` | `GET /v1/batch/:id` |
@@ -174,9 +174,13 @@ facts = korely.get_facts(entity="Northwind Hosting")
 print(facts[0].object)      # 50 euro per month
 print(facts[0].invalid_at)  # None: active
 
-# Point-in-time: what did we believe on June 1?
+# Point-in-time: what was true on June 1?
 facts = korely.get_facts(entity="Northwind Hosting", as_of="2026-06-01")
 print(facts[0].object)      # 40 euro per month
+
+# And what did the store know on June 1? (Korely Agent 0.1.26) A change told
+# after June 1 is not in it, even when it happened before.
+facts = korely.get_facts(entity="Northwind Hosting", known_as_of="2026-06-01")
 ```
 
 ## Scoping

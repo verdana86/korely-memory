@@ -47,6 +47,9 @@ export interface Fact {
   object_canonical?: string;
   /** Every memory that stated this fact. */
   source_memory_ids?: string[];
+  /** Korely Agent 0.1.26: when the store learned the fact had ended
+   *  (`created_at` is when it learned the fact); null while it is open. */
+  closed_known_at?: string | null;
 }
 
 /**
@@ -183,6 +186,8 @@ export interface BatchJob {
 export interface Profile {
   user_id?: string;
   as_of?: string | null;
+  /** Echoes a request for the profile as the store knew it then. */
+  known_as_of?: string | null;
   /** The end user's own facts first, then the rest. */
   facts: Fact[];
   /** Facts grouped by predicate family. */
@@ -382,7 +387,7 @@ export interface AuditEvent {
   /** Counts and labels, never content. */
   meta?: Record<string, unknown> | null;
   ip?: string | null;
-  /** On a read, what it returned; with `as_of` on getFacts() it rebuilds what an agent knew when it decided. */
+  /** On a read, what it returned; with `known_as_of` on getFacts() or getContext() (Korely Agent 0.1.26) it rebuilds what an agent knew when it decided. */
   read?: AuditRead | null;
 }
 
@@ -491,6 +496,12 @@ export interface GetFactsOptions {
   include_invalidated?: boolean;
   /** ISO date: point-in-time validity ("what was true on 2026-06-01"). */
   as_of?: string;
+  /**
+   * ISO date: what the store knew on that date (Korely Agent 0.1.26). A move
+   * made in September and told in October: `as_of` September gives the new
+   * address, `known_as_of` September the old one.
+   */
+  known_as_of?: string;
   user_id?: string;
   agent_id?: string;
   limit?: number;
@@ -518,6 +529,8 @@ export interface GetProfileOptions {
   agent_id?: string;
   /** ISO date: the profile as it stood on that date. */
   as_of?: string;
+  /** ISO date: the profile as the store knew it on that date. */
+  known_as_of?: string;
 }
 
 export interface GetContextOptions {
@@ -525,6 +538,11 @@ export interface GetContextOptions {
   user_id?: string;
   agent_id?: string;
   token_budget?: number;
+  /**
+   * ISO date: the block as the store could have built it then, the facts it
+   * knew and the memories it had received (Korely Agent 0.1.26).
+   */
+  known_as_of?: string;
 }
 
 
