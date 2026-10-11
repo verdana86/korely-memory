@@ -397,6 +397,19 @@ def cmd_context(k: Korely, a) -> int:
     return 0
 
 
+def _what_was(as_of, known_as_of) -> str:
+    """The heading of a read at a moment: what was true then, what the store
+    knew then, or what it knew on one day about another. `--known-as-of`
+    alone printed "what was as known on ..." (the site's docs, 11 Oct 2026)."""
+    if as_of and known_as_of:
+        return f"what the store knew on {known_as_of} about {as_of}"
+    if known_as_of:
+        return f"what the store knew on {known_as_of}"
+    if as_of:
+        return f"what was true on {as_of}"
+    return ""
+
+
 def cmd_facts(k: Korely, a) -> int:
     facts = k.get_facts(entity=a.entity, subject=a.subject, predicate=a.predicate,
                         predicate_family=a.family,
@@ -409,13 +422,12 @@ def cmd_facts(k: Korely, a) -> int:
         _emit_json({"facts": [dataclasses.asdict(f) for f in facts],
                     "total": getattr(facts, "total", len(facts))})
         return 0
-    when = ", ".join(w for w in (f"true as of {a.as_of}" if a.as_of else "",
-                                 f"as known on {a.known_as_of}" if a.known_as_of else "") if w)
+    when = _what_was(a.as_of, a.known_as_of)
     if not facts:
         print("no facts." + (f" ({when})" if when else ""))
         return 0
     if when:
-        print(f"# what was {when}\n")
+        print(f"# {when}\n")
     for f in facts:
         print(" ", _fact_line(f))
     return 0
@@ -427,8 +439,8 @@ def cmd_profile(k: Korely, a) -> int:
     if a.json:
         _emit_json(p)
         return 0
-    head = (f"profile of {p.user_id}" + (f" as of {p.as_of}" if p.as_of else "")
-            + (f" as known on {p.known_as_of}" if p.known_as_of else ""))
+    when = _what_was(p.as_of, p.known_as_of)
+    head = f"profile of {p.user_id}" + (f", {when}" if when else "")
     print(head + f"  ({p.total} fact(s))")
     for family, facts in (p.by_family or {}).items():
         print(f"\n{family}:")

@@ -15,6 +15,10 @@ and a batch `timestamp` is refused there with a 422.
   Korely Agent 0.1.27. Both clients read them on the init result
   (`terms_url`, `privacy_url`); a server older than that names none, and
   nothing is printed.
+- `korely facts` and `korely profile` head a read at a moment with its own
+  question: "what was true on" a date, "what the store knew on" a date, or
+  what it knew on one day about another. With `--known-as-of` alone it
+  printed "what was as known on".
 
 ## Python 0.1.22 and npm 0.1.14 (2026-10-11)
 

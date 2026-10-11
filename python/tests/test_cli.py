@@ -1048,3 +1048,15 @@ class DeleteAccountForgetsTheDeadKey(_CleanEnv, _RunsCommands):
         self.assertEqual(rc, 1)
         self.assertIn("[account_has_login]", err.getvalue())
         self.assertEqual(self._config()["api_key"], "kor_live_test")
+
+
+class TheHeadingSaysWhichClock(unittest.TestCase):
+    """`korely facts --known-as-of` alone printed "what was as known on ..."
+    (the site's docs, 11 Oct 2026): each clock says its own question."""
+
+    def test_each_clock_and_both(self):
+        self.assertEqual(cli._what_was("2026-09-20", None), "what was true on 2026-09-20")
+        self.assertEqual(cli._what_was(None, "2026-09-20"), "what the store knew on 2026-09-20")
+        self.assertEqual(cli._what_was("2026-08-15", "2026-10-10"),
+                         "what the store knew on 2026-10-10 about 2026-08-15")
+        self.assertEqual(cli._what_was(None, None), "")
