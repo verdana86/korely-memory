@@ -452,7 +452,7 @@ class InitSignsUpThroughTheSdk(_CleanEnv):
                "scopes": ["memories:read", "memories:write"],
                "quotas": {"writes_per_month": 2000, "queries_per_month": 10000, "agents": 2}}
 
-    def _signup(self, answer):
+    def _signup(self, answer, *extra):
         import json as _json
         import urllib.request
 
@@ -481,7 +481,7 @@ class InitSignsUpThroughTheSdk(_CleanEnv):
         out = io.StringIO()
         try:
             with redirect_stdout(out), redirect_stderr(io.StringIO()):
-                rc = cli.main(["init", "--agent", "--agent-caller", "claude-code"])
+                rc = cli.main(["init", "--agent", "--agent-caller", "claude-code", *extra])
         finally:
             urllib.request.urlopen = real
         return rc, out.getvalue(), seen
@@ -512,6 +512,34 @@ class InitSignsUpThroughTheSdk(_CleanEnv):
         self.assertIn("creating the account accepts the Terms and the Privacy Policy", printed)
         self.assertIn("https://korely.ai/legal/terms-of-service", printed)
         self.assertIn("https://korely.ai/legal/privacy-policy", printed)
+
+
+    def test_the_processing_region_is_asked_for_and_printed(self):
+        """`korely init --processing-region eu` (12 Oct 2026): the API and both
+        SDKs could choose the region at signup, the CLI could not."""
+        import json as _json
+
+        rc, printed, seen = self._signup(dict(self._ANSWER, processing_region="eu"),
+                                         "--processing-region", "eu")
+        self.assertEqual(rc, 0)
+        self.assertEqual(_json.loads(seen[0].data)["processing_region"], "eu")
+        self.assertIn("processing eu", printed)
+
+    def test_left_out_the_server_chooses(self):
+        import json as _json
+
+        rc, _, seen = self._signup(self._ANSWER)
+        self.assertEqual(rc, 0)
+        self.assertNotIn("processing_region", _json.loads(seen[0].data or b"{}"))
+
+    def test_with_a_key_already_made_it_is_refused(self):
+        err = io.StringIO()
+        with redirect_stdout(io.StringIO()), redirect_stderr(err):
+            rc = cli.main(["init", "--api-key", "kor_live_0123456789abcdef0123456789abcdef",
+                           "--processing-region", "eu"])
+        self.assertEqual(rc, 2)
+        self.assertIn("keeps its project's region", err.getvalue())
+        self.assertFalse(os.path.exists(os.path.join(self.cfg_dir, "config.json")))
 
 
 class InitDoesNotLoseASavedKey(_CleanEnv):

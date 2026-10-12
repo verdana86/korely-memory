@@ -706,6 +706,16 @@ def cmd_init(args) -> int:
               file=sys.stderr)
         return 2
 
+    region = getattr(args, "processing_region", None)
+    if given and region:
+        # A key already made has its project and its region: the flag would
+        # be silently ignored, and the developer would believe the memories
+        # are read in the region they asked for.
+        print("error: nothing saved. --processing-region chooses the region of a NEW "
+              "account; a key you already have keeps its project's region "
+              "(change it in the dashboard).", file=sys.stderr)
+        return 2
+
     if given:
         # A pair the client will refuse on every later command must not be
         # saved with "Saved" printed over it. `korely init --api-key kor_self_...`
@@ -738,7 +748,12 @@ def cmd_init(args) -> int:
     # (`message`, else what `detail` says, never the raw JSON). This command
     # used to carry its own urllib request and its own copy of the parsing.
     try:
-        result = Korely.init_agent(getattr(args, "agent_caller", None), base_url=base)
+        # --processing-region (12 Oct 2026, the founder's request): the API,
+        # the Python SDK and the JS SDK could choose "eu" at signup, the CLI
+        # could not, so a developer who started here got a Global project.
+        # Left out, the server's default (Global, the founder's 6 Oct choice).
+        result = Korely.init_agent(getattr(args, "agent_caller", None), base_url=base,
+                                   processing_region=region)
     except APIError as e:
         print(f"error: signup failed ({e.status}): {e.message or e}", file=sys.stderr)
         return 1
@@ -812,6 +827,10 @@ def build_parser() -> argparse.ArgumentParser:
                     help="agent self-signup (default; mints an anonymous hobby account)")
     sp.add_argument("--agent-caller", help="who is signing up, e.g. 'claude-code'")
     sp.add_argument("--base-url", help="API base URL (default https://api.korely.ai)")
+    sp.add_argument("--processing-region", choices=["eu", "global"],
+                    help="where the new account's memories are read by a model: eu "
+                         "(gpt-oss-120b on Scaleway, Paris) or global (Gemini, by Google; "
+                         "the default)")
     sp.add_argument("--force", action="store_true",
                     help="replace a key already saved in ~/.korely/config.json (it is lost)")
     sp.add_argument("--json", action="store_true", help="machine-readable output")

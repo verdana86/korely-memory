@@ -8,6 +8,15 @@ The server side of the entries marked "API" shipped on 2026-09-28. Against an
 older server these clients keep working: the old field names are still read,
 and a batch `timestamp` is refused there with a 422.
 
+## Python 0.1.24 (not released yet)
+
+- `korely init --processing-region eu|global`: the CLI can choose where the
+  new account's memories are read by a model, as the API and both SDKs
+  already could (`init_agent(processing_region="eu")`, `processingRegion:
+  "eu"`). `eu` is gpt-oss-120b on Scaleway, Paris; left out, the server's
+  default, Global (Gemini). It prints the region it got. With `--api-key`
+  it is refused: a key you already have keeps its project's region.
+
 ## Python 0.1.23 and npm 0.1.15 (2026-10-11)
 
 - `korely init --agent` says what creating the account accepts: the Terms

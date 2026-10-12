@@ -254,7 +254,7 @@ ones that read or write memories.
 
 | Command | Call |
 |---|---|
-| `korely init [--agent] [--api-key KEY] [--force]` | `POST /v1/agents/init`, or save a key you have; `--force` to replace a saved one |
+| `korely init [--agent] [--processing-region eu\|global] [--api-key KEY] [--force]` | `POST /v1/agents/init`, or save a key you have; `--processing-region eu` reads the new account's memories in Europe (Global, the default, otherwise); `--force` to replace a saved one |
 | `korely auth` / `korely ping` | `GET /v1/ping` |
 | `korely add TEXT` / `korely update ID TEXT` | `POST /v1/memories` / `PATCH /v1/memories/:id` (`-` or a pipe reads stdin) |
 | `korely search QUERY` | `POST /v1/memories/search` |
