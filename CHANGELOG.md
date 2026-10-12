@@ -8,7 +8,7 @@ The server side of the entries marked "API" shipped on 2026-09-28. Against an
 older server these clients keep working: the old field names are still read,
 and a batch `timestamp` is refused there with a 422.
 
-## Python 0.1.24 (not released yet)
+## Python 0.1.24 (2026-10-12)
 
 - `korely init --processing-region eu|global`: the CLI can choose where the
   new account's memories are read by a model, as the API and both SDKs
