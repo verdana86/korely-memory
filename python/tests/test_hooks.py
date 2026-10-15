@@ -432,6 +432,22 @@ class AlsoRead(Base):
         self.assertEqual(private.reads[0][1], None)  # the whole project, no repo scope
         self.assertEqual(shared.reads[0][1], "repo:shop-api")
 
+    def test_the_start_reads_a_user_id_across_repositories(self):
+        client = FakeClient("- a fact")
+        out = json.loads(hooks.run_hook(
+            "session-start", "claude-code", {"session_id": "p3", "cwd": str(self.repo)},
+            client_factory=lambda profile=None: client,
+            background=self.background.append, also_read_user=["founder"]))
+        self.assertIn("Korely memory of user_id founder (across repositories):",
+                      out["hookSpecificOutput"]["additionalContext"])
+        self.assertEqual([r[1] for r in client.reads], ["repo:shop-api", "founder"])
+        cmd = hooks.hook_command("/bin/korely", "session-start", "claude-code",
+                                 also_read_user=["founder"])
+        self.assertTrue(cmd.endswith("--also-read-user founder"))
+        self.assertNotIn("--also-read-user",
+                         hooks.hook_command("/bin/korely", "stop", "claude-code",
+                                            also_read_user=["founder"]))
+
     def test_a_profile_that_fails_leaves_the_rest(self):
         def factory(profile=None):
             if profile:

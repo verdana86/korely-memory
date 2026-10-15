@@ -29,8 +29,10 @@ and a batch `timestamp` is refused there with a 422.
   environment's key does not override it. `korely init --tool ...
   --also-read private` makes the session start read that project too (its
   own block) and adds an MCP server `korely-private`; sessions are saved to
-  the default profile only. The CLI and the client read the config file
-  through one function now (`profile_config`).
+  the default profile only. `--also-read-user <id>` reads a user_id of the
+  same project next to `repo:<name>` (a memory across repositories); the
+  session is still saved to the repository. The CLI and the client read the
+  config file through one function now (`profile_config`).
 - `Korely(client="claude-code")` (or `KORELY_CLIENT`) names the tool
   writing, sent as `X-Korely-Client`; left out, the header names the
   library, `korely-python/<version>`. Korely Agent from 0.1.36 keeps it on

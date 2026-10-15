@@ -851,7 +851,8 @@ def _install_tool(args) -> int:
     try:
         report = hooks.install(tool, project, everywhere=everywhere, remove=remove,
                                mcp=not getattr(args, "no_mcp", False), scope=scope,
-                               also_read=getattr(args, "also_read", None) or ())
+                               also_read=getattr(args, "also_read", None) or (),
+                               also_read_user=getattr(args, "also_read_user", None) or ())
     except (hooks.InstallError, ValueError, OSError) as e:
         print(f"error: nothing installed. {e}", file=sys.stderr)
         return 2
@@ -916,7 +917,8 @@ def cmd_hook(args) -> int:
         data = {}
     out = hooks.run_hook(args.event, args.tool, data, every=args.every,
                          fixed_scope=getattr(args, "user_id", None),
-                         also_read=getattr(args, "also_read", None) or ())
+                         also_read=getattr(args, "also_read", None) or (),
+                         also_read_user=getattr(args, "also_read_user", None) or ())
     if out:
         print(out)
     return 0
@@ -975,6 +977,10 @@ def build_parser() -> argparse.ArgumentParser:
                     help="with --tool: hooks only, no korely MCP server")
     sp.add_argument("--remove", action="store_true",
                     help="with --tool: take korely's hooks and MCP server out again")
+    sp.add_argument("--also-read-user", action="append", default=[], metavar="USER_ID",
+                    help="with --tool: the session start also reads this user_id of the same "
+                         "project (a memory across repositories, e.g. your own); sessions are "
+                         "still saved to repo:<name>")
     sp.add_argument("--also-read", action="append", default=[], metavar="PROFILE",
                     help="with --tool: the session start also reads this profile's project "
                          "(the whole project), and a second MCP server korely-<profile> is "
@@ -991,6 +997,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--session", help="flush: only this session")
     sp.add_argument("--also-read", action="append", default=[], metavar="PROFILE",
                     help="session-start and prompt: also read this profile's project")
+    sp.add_argument("--also-read-user", action="append", default=[], metavar="USER_ID",
+                    help="session-start and prompt: also read this user_id of the same project")
     sp.set_defaults(func=cmd_hook)
 
     sp = sub.add_parser("auth", parents=[common], help="verify your API key")

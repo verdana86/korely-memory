@@ -462,7 +462,10 @@ korely init --tool claude-code --also-read private
 The session start then reads the repository's memory and, under a heading of
 its own, the private project; sessions are still saved to the shared one only.
 A second MCP server, `korely-private`, reads and writes the private project on
-purpose. Every command takes `--profile` (or `KORELY_PROFILE`), and so do
+purpose. `--also-read-user <id>` does the same for a memory of the same project
+that spans repositories (your own preferences and decisions, e.g. `founder`):
+the start reads it next to `repo:<name>`, and the session is saved to the
+repository. Every command takes `--profile` (or `KORELY_PROFILE`), and so do
 `Korely(profile="private")` and `korely-mcp --profile private`.
 
 ## MCP server

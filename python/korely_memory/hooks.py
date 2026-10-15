@@ -481,13 +481,25 @@ def _block(client: Any, query: str, budget: int, user_id: Optional[str], heading
 
 
 def _context_text(client_factory: Callable[..., Any], scope: str, repo: str, query: str,
-                  budget: int, also_read: Sequence[str] = ()) -> str:
-    """The repository's memory, then the whole project of each profile in
-    `also_read` (a private project next to the shared one), each block under
-    its own heading. A profile that cannot be read is left out, never the rest."""
-    blocks = [_block(client_factory(), query, budget, scope,
+                  budget: int, also_read: Sequence[str] = (),
+                  also_read_user: Sequence[str] = ()) -> str:
+    """The repository's memory, then each user_id of `also_read_user` in the
+    same project (a memory that spans repositories, e.g. `founder`), then the
+    whole project of each profile in `also_read` (a private project next to
+    the shared one), each block under its own heading. A block that cannot be
+    read is left out, never the rest."""
+    main = client_factory()
+    blocks = [_block(main, query, budget, scope,
                      f"Korely memory of the repository {repo} (user_id {scope}), what earlier "
                      f"sessions stored, whichever assistant they ran in:")]
+    for user in also_read_user:
+        if user == scope:
+            continue
+        try:
+            blocks.append(_block(main, query, EXTRA_BUDGET, user,
+                                 f"Korely memory of user_id {user} (across repositories):"))
+        except Exception as e:  # noqa: BLE001 - the other blocks still go
+            _log(f"user_id {user}: {type(e).__name__}: {e}")
     for name in also_read:
         try:
             blocks.append(_block(client_factory(name), query, EXTRA_BUDGET, None,
@@ -517,7 +529,7 @@ def run_hook(event: str, tool: str, data: Dict[str, Any], *, every: int = DEFAUL
              fixed_scope: Optional[str] = None,
              client_factory: Optional[Callable[..., Any]] = None,
              background: Callable[[Optional[str]], None] = flush_in_background,
-             also_read: Sequence[str] = ()) -> str:
+             also_read: Sequence[str] = (), also_read_user: Sequence[str] = ()) -> str:
     """Handle one event; return what to print on stdout. Never raises."""
     quiet = _quiet_output(tool, event)
     try:
@@ -540,7 +552,7 @@ def run_hook(event: str, tool: str, data: Dict[str, Any], *, every: int = DEFAUL
             background(None)  # what sessions that ended without a word left behind
             text = _context_text(client_factory, scope, repo,
                                  f"{repo}: decisions, rules, open work and next steps",
-                                 START_BUDGET, also_read)
+                                 START_BUDGET, also_read, also_read_user)
             return _context_output(tool, event, text) if text else quiet
 
         if event == "prompt":
@@ -549,7 +561,8 @@ def run_hook(event: str, tool: str, data: Dict[str, Any], *, every: int = DEFAUL
                 return quiet
             # Once per session, the context of what the developer asked: the
             # start could only guess at a query.
-            text = _context_text(client_factory, scope, repo, ev.prompt, PROMPT_BUDGET, also_read)
+            text = _context_text(client_factory, scope, repo, ev.prompt, PROMPT_BUDGET,
+                                 also_read, also_read_user)
             return _context_output(tool, event, text) if text else quiet
 
         if event == "stop":
@@ -609,13 +622,14 @@ def korely_command() -> str:
 
 
 def hook_command(base: str, event: str, tool: str, scope: Optional[str] = None,
-                 also_read: Sequence[str] = ()) -> str:
+                 also_read: Sequence[str] = (), also_read_user: Sequence[str] = ()) -> str:
     import shlex
 
     cmd = f"{base} hook {event} --tool {tool}"
     if scope:
         cmd += f" --user-id {shlex.quote(scope)}"
     if event in ("session-start", "prompt"):  # the events that read
+        cmd += "".join(f" --also-read-user {shlex.quote(u)}" for u in also_read_user)
         cmd += "".join(f" --also-read {shlex.quote(p)}" for p in also_read)
     return cmd
 
@@ -774,7 +788,7 @@ def install(tool: str, project: Path, *, everywhere: bool = False, remove: bool 
             mcp: bool = True, scope: Optional[str] = None,
             base: Optional[str] = None,
             run: Callable[..., Any] = subprocess.run,
-            also_read: Sequence[str] = ()) -> List[str]:
+            also_read: Sequence[str] = (), also_read_user: Sequence[str] = ()) -> List[str]:
     """Write (or with `remove`, take out) this tool's korely hooks and MCP
     server. `also_read`: profiles the session start also reads, each with an
     MCP server of its own, `korely-<profile>`. Returns one line per change,
@@ -789,7 +803,8 @@ def install(tool: str, project: Path, *, everywhere: bool = False, remove: bool 
                     f"{path} is committed to the repository: korely does not add personal "
                     f"hooks to a shared file. Use --global (every repository, each with its "
                     f"own memory) or add them by hand.")
-    commands = {} if remove else {e: hook_command(base, e, tool, scope, also_read) for e in EVENTS}
+    commands = {} if remove else {e: hook_command(base, e, tool, scope, also_read, also_read_user)
+                                  for e in EVENTS}
     path = files["hooks"]
     if path.exists() or not remove:
         _save_json(path, merge_hooks(_load_json(path), tool, commands))
