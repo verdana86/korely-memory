@@ -47,20 +47,18 @@ mcp = Server("korely", __version__)
 # starts this server in, the scope `korely hook` writes to. Without either, as
 # before: no user_id.
 _DEFAULT_USER: Optional[str] = None
+# The profile whose key this server uses (`main`, `--profile`): a second
+# project next to the default one, e.g. a private one.
+_PROFILE: Optional[str] = None
 
 
 def _client() -> Korely:
-    """Resolve the key like the CLI: KORELY_API_KEY env, else ~/.korely/config.json."""
-    from .cli import _load_config
-
-    cfg = _load_config()
-    key = os.environ.get("KORELY_API_KEY") or cfg.get("api_key")
-    base = os.environ.get("KORELY_BASE_URL") or cfg.get("base_url")
-    if not key:
-        raise KorelyError(
-            "No API key. Run `korely init --agent` to get one free, or set KORELY_API_KEY."
-        )
-    return Korely(api_key=key, base_url=base)
+    """The client the CLI would build: KORELY_API_KEY env, else the key saved
+    in ~/.korely/config.json; with `--profile`, that profile's key."""
+    try:
+        return Korely(profile=_PROFILE)
+    except KorelyError as e:
+        raise KorelyError(f"{e} Or run `korely init --agent` to get one free.") from None
 
 
 def _user(user_id: Optional[str]) -> Optional[str]:
@@ -227,13 +225,15 @@ def main(argv: Optional[list] = None) -> None:
     """Console entry point (`korely-mcp`). Runs the stdio MCP server."""
     import argparse
 
-    global _DEFAULT_USER
+    global _DEFAULT_USER, _PROFILE
     p = argparse.ArgumentParser(prog="korely-mcp")
+    p.add_argument("--profile", help="the key saved with `korely init --profile <name>`")
     p.add_argument("--user-id", help="the user_id of a call that names none")
     p.add_argument("--repo-scope", action="store_true",
                    help="that user_id is repo:<name> of the current folder's repository, "
                         "the memory `korely hook` writes (korely init --tool)")
     args = p.parse_args(argv)
+    _PROFILE = args.profile
     if args.user_id:
         _DEFAULT_USER = args.user_id
     elif args.repo_scope:

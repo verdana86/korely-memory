@@ -22,6 +22,15 @@ and a batch `timestamp` is refused there with a 422.
   prints what the tool expects and always exits 0.
 - `korely-mcp --user-id <id>` and `--repo-scope`: the user_id of a call
   that names none.
+- Named profiles: `korely init --api-key ... --profile private` saves a
+  second key next to the default one in `~/.korely/config.json`; every
+  command, `Korely(profile=)`, `AsyncKorely(profile=)` and `korely-mcp` take
+  `--profile` (or `KORELY_PROFILE`). A profile named is a decision: the
+  environment's key does not override it. `korely init --tool ...
+  --also-read private` makes the session start read that project too (its
+  own block) and adds an MCP server `korely-private`; sessions are saved to
+  the default profile only. The CLI and the client read the config file
+  through one function now (`profile_config`).
 - `Korely(client="claude-code")` (or `KORELY_CLIENT`) names the tool
   writing, sent as `X-Korely-Client`; left out, the header names the
   library, `korely-python/<version>`. Korely Agent from 0.1.36 keeps it on

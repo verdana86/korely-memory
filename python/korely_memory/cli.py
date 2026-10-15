@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from . import __version__
-from .client import Korely, _refuse_a_mismatched_pair
+from .client import Korely, _refuse_a_mismatched_pair, config_path, profile_config
 from .exceptions import APIError, KorelyError
 
 _DEFAULT_BASE = "https://api.korely.ai"
@@ -31,8 +31,7 @@ _DEFAULT_BASE = "https://api.korely.ai"
 
 # ── config file (~/.korely/config.json) ─────────────────────────────────────
 def _config_path() -> Path:
-    home = os.environ.get("KORELY_CONFIG_HOME") or str(Path.home() / ".korely")
-    return Path(home) / "config.json"
+    return Path(config_path())
 
 
 def _load_config() -> dict:
@@ -54,16 +53,32 @@ def _save_config(data: dict) -> Path:
 
 
 def _resolve_key(args) -> Optional[str]:
-    """Key precedence: --api-key flag > KORELY_API_KEY env > saved config."""
+    """Key precedence: --api-key flag > KORELY_API_KEY env > saved config.
+    With --profile, the profile's saved key (a profile named is a decision:
+    the environment does not override it)."""
+    profile = getattr(args, "profile", None)
+    if profile:
+        return getattr(args, "api_key", None) or profile_config(profile).get("api_key")
     return (getattr(args, "api_key", None)
             or os.environ.get("KORELY_API_KEY")
-            or _load_config().get("api_key"))
+            or profile_config().get("api_key"))
 
 
 def _resolve_base_url(args) -> Optional[str]:
+    profile = getattr(args, "profile", None)
+    if profile:
+        return getattr(args, "base_url", None) or profile_config(profile).get("base_url")
     return (getattr(args, "base_url", None)
             or os.environ.get("KORELY_BASE_URL")
-            or _load_config().get("base_url"))
+            or profile_config().get("base_url"))
+
+
+def _profile_slot(cfg: dict, profile: Optional[str]) -> dict:
+    """Where `korely init` writes a key: the file's top level for the default
+    profile, `profiles[<name>]` for `--profile <name>` (created)."""
+    if not profile or profile == "default":
+        return cfg
+    return cfg.setdefault("profiles", {}).setdefault(profile, {})
 
 
 # ── output helpers ─────────────────────────────────────────────────────────
@@ -694,7 +709,8 @@ def _init_key(args) -> int:
     # `init` overwrote the file, and the first account stayed on the server,
     # with its memories, impossible to close, its key held by nobody. Checked
     # before the signup call, so a refused init mints no account either.
-    saved = _load_config().get("api_key")
+    profile = getattr(args, "profile", None)
+    saved = _profile_slot(_load_config(), profile).get("api_key")
     if saved and saved != given and not getattr(args, "force", False):
         print(f"error: nothing changed. A key is already saved in {_config_path()} "
               f"({_mask(saved)}).\n"
@@ -727,15 +743,16 @@ def _init_key(args) -> int:
             print(f"error: nothing saved. {e}", file=sys.stderr)
             return 2
         cfg = _load_config()
-        if cfg.get("api_key") != given:
-            cfg.pop("tier", None)  # the plan of the key this one replaces
-        cfg["api_key"] = given
-        cfg["base_url"] = base
+        slot = _profile_slot(cfg, profile)
+        if slot.get("api_key") != given:
+            slot.pop("tier", None)  # the plan of the key this one replaces
+        slot["api_key"] = given
+        slot["base_url"] = base
         path = _save_config(cfg)
         if getattr(args, "json", False):
             _emit_json({"api_key": given, "base_url": base, "config": str(path)})
             return 0
-        print(f"Saved to {path} (chmod 600).")
+        print(f"Saved to {path} (chmod 600)" + (f", profile {profile}." if profile else "."))
         print(f"  key       {_mask(given)}")
         print(f"  base_url  {base}")
         print()
@@ -768,11 +785,12 @@ def _init_key(args) -> int:
         print("error: server did not return an api_key.", file=sys.stderr)
         return 1
     cfg = _load_config()
-    cfg.pop("tier", None)  # the plan of a key replaced with --force
-    cfg["api_key"] = key
-    cfg["base_url"] = base
+    slot = _profile_slot(cfg, profile)
+    slot.pop("tier", None)  # the plan of a key replaced with --force
+    slot["api_key"] = key
+    slot["base_url"] = base
     if result.tier:
-        cfg["tier"] = result.tier
+        slot["tier"] = result.tier
     path = _save_config(cfg)
 
     if getattr(args, "json", False):
@@ -811,7 +829,8 @@ def cmd_init(args) -> int:
         return _init_key(args)
     if not getattr(args, "remove", False):
         given = (getattr(args, "api_key", None) or "").strip()
-        have = os.environ.get("KORELY_API_KEY") or _load_config().get("api_key")
+        have = (profile_config(args.profile).get("api_key") if getattr(args, "profile", None)
+                else os.environ.get("KORELY_API_KEY") or profile_config().get("api_key"))
         if given or not have:
             code = _init_key(args)
             if code:
@@ -831,7 +850,8 @@ def _install_tool(args) -> int:
     scope = getattr(args, "user_id", None)
     try:
         report = hooks.install(tool, project, everywhere=everywhere, remove=remove,
-                               mcp=not getattr(args, "no_mcp", False), scope=scope)
+                               mcp=not getattr(args, "no_mcp", False), scope=scope,
+                               also_read=getattr(args, "also_read", None) or ())
     except (hooks.InstallError, ValueError, OSError) as e:
         print(f"error: nothing installed. {e}", file=sys.stderr)
         return 2
@@ -895,7 +915,8 @@ def cmd_hook(args) -> int:
     except (ValueError, OSError):
         data = {}
     out = hooks.run_hook(args.event, args.tool, data, every=args.every,
-                         fixed_scope=getattr(args, "user_id", None))
+                         fixed_scope=getattr(args, "user_id", None),
+                         also_read=getattr(args, "also_read", None) or ())
     if out:
         print(out)
     return 0
@@ -916,6 +937,9 @@ def build_parser() -> argparse.ArgumentParser:
     common.add_argument("--base-url", help="API base URL (default https://api.korely.ai)")
     common.add_argument("--user-id", help="end-user namespace (unlimited per tier)")
     common.add_argument("--agent-id", help="agent namespace (counts against your agent cap)")
+    common.add_argument("--profile",
+                        help="use the key saved with `korely init --profile <name>` "
+                             "(else KORELY_PROFILE, else the default one)")
 
     sub = p.add_subparsers(dest="command", required=True)
 
@@ -936,6 +960,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--force", action="store_true",
                     help="replace a key already saved in ~/.korely/config.json (it is lost)")
     sp.add_argument("--json", action="store_true", help="machine-readable output")
+    sp.add_argument("--profile",
+                    help="save the key under this name, next to the default one (a second "
+                         "project, e.g. a private one); other commands take --profile too")
     sp.add_argument("--tool", choices=["claude-code", "codex", "cursor"],
                     help="also connect this coding assistant: hooks that hand it the "
                          "repository's memory at the start and save the session to it")
@@ -948,6 +975,10 @@ def build_parser() -> argparse.ArgumentParser:
                     help="with --tool: hooks only, no korely MCP server")
     sp.add_argument("--remove", action="store_true",
                     help="with --tool: take korely's hooks and MCP server out again")
+    sp.add_argument("--also-read", action="append", default=[], metavar="PROFILE",
+                    help="with --tool: the session start also reads this profile's project "
+                         "(the whole project), and a second MCP server korely-<profile> is "
+                         "added; sessions are still saved to the default profile only")
     sp.set_defaults(func=cmd_init)
 
     sp = sub.add_parser("hook", help="what a coding assistant's hook runs (korely init --tool)")
@@ -958,6 +989,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--every", type=int, default=5,
                     help="answers kept before they are sent as one memory (default 5)")
     sp.add_argument("--session", help="flush: only this session")
+    sp.add_argument("--also-read", action="append", default=[], metavar="PROFILE",
+                    help="session-start and prompt: also read this profile's project")
     sp.set_defaults(func=cmd_hook)
 
     sp = sub.add_parser("auth", parents=[common], help="verify your API key")

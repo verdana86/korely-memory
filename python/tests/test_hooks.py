@@ -364,3 +364,93 @@ class McpScope(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class Profiles(unittest.TestCase):
+    """A second project next to the default one (a private one): its key is a
+    named profile in the same config file, read with `--profile`."""
+
+    def setUp(self):
+        self.tmp = Path(tempfile.mkdtemp())
+        self.env = mock.patch.dict(os.environ, {"KORELY_CONFIG_HOME": str(self.tmp)})
+        self.env.start()
+        os.environ.pop("KORELY_PROFILE", None)
+        os.environ.pop("KORELY_API_KEY", None)
+
+    def tearDown(self):
+        self.env.stop()
+
+    def _init(self, *extra):
+        from korely_memory import cli
+
+        with mock.patch("sys.stdout"):
+            return cli.main(["init", *extra])
+
+    def test_init_saves_a_named_profile_next_to_the_default(self):
+        self.assertEqual(self._init("--api-key", "kor_live_shared"), 0)
+        self.assertEqual(self._init("--api-key", "kor_live_private", "--profile", "private"), 0)
+        cfg = json.loads((self.tmp / "config.json").read_text())
+        self.assertEqual(cfg["api_key"], "kor_live_shared")
+        self.assertEqual(cfg["profiles"]["private"]["api_key"], "kor_live_private")
+        # A key already saved in a profile is not replaced without --force.
+        with mock.patch("sys.stderr"):
+            self.assertEqual(self._init("--api-key", "kor_live_other", "--profile", "private"), 2)
+
+    def test_a_named_profile_wins_over_the_environment(self):
+        from korely_memory.client import Korely, KorelyError
+
+        self._init("--api-key", "kor_live_private", "--profile", "private")
+        with mock.patch.dict(os.environ, {"KORELY_API_KEY": "kor_live_env"}):
+            self.assertEqual(Korely(profile="private").api_key, "kor_live_private")
+            self.assertEqual(Korely().api_key, "kor_live_env")
+        with self.assertRaises(KorelyError):
+            Korely(profile="nobody")
+
+    def test_the_mcp_server_takes_a_profile(self):
+        from korely_memory import mcp_server
+
+        with mock.patch.object(mcp_server.mcp, "run"):
+            mcp_server.main(["--profile", "private"])
+        try:
+            self.assertEqual(mcp_server._PROFILE, "private")
+        finally:
+            mcp_server._PROFILE = None
+
+
+class AlsoRead(Base):
+    def test_the_start_reads_the_repository_and_the_private_project(self):
+        shared, private = FakeClient("- shared fact"), FakeClient("- private fact")
+        clients = {None: shared, "private": private}
+        out = json.loads(hooks.run_hook(
+            "session-start", "claude-code", {"session_id": "p1", "cwd": str(self.repo)},
+            client_factory=lambda profile=None: clients[profile],
+            background=self.background.append, also_read=["private"]))
+        text = out["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("shared fact", text)
+        self.assertIn("Korely memory of the profile private (its whole project):", text)
+        self.assertIn("private fact", text)
+        self.assertEqual(private.reads[0][1], None)  # the whole project, no repo scope
+        self.assertEqual(shared.reads[0][1], "repo:shop-api")
+
+    def test_a_profile_that_fails_leaves_the_rest(self):
+        def factory(profile=None):
+            if profile:
+                raise RuntimeError("no such profile")
+            return FakeClient("- shared fact")
+
+        out = json.loads(hooks.run_hook(
+            "session-start", "claude-code", {"session_id": "p2", "cwd": str(self.repo)},
+            client_factory=factory, background=self.background.append, also_read=["gone"]))
+        self.assertIn("shared fact", out["hookSpecificOutput"]["additionalContext"])
+
+    def test_install_adds_the_reads_and_a_server_per_profile(self):
+        with mock.patch.object(Path, "home", return_value=self.tmp / "home"):
+            hooks.install("cursor", self.repo, everywhere=True, base="/opt/bin/korely",
+                          also_read=["private"])
+            home = self.tmp / "home" / ".cursor"
+            h = json.loads((home / "hooks.json").read_text())["hooks"]
+            self.assertTrue(h["sessionStart"][0]["command"].endswith("--also-read private"))
+            self.assertNotIn("--also-read", h["afterAgentResponse"][0]["command"])
+            servers = json.loads((home / "mcp.json").read_text())["mcpServers"]
+            self.assertEqual(servers["korely"]["args"], ["--repo-scope"])
+            self.assertEqual(servers["korely-private"]["args"], ["--profile", "private"])

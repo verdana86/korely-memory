@@ -36,7 +36,7 @@ import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Sequence
 
 TOOLS = ("claude-code", "codex", "cursor")
 EVENTS = ("session-start", "prompt", "stop", "pre-compact", "session-end")
@@ -56,6 +56,10 @@ MEMORY_CHARS = 15000
 # characters of a SessionStart hook's output; 1,500 tokens stay under it.
 START_BUDGET = 1500
 PROMPT_BUDGET = 1200
+# A profile read next to the repository's memory (`--also-read`): the two stay
+# under Codex's ~2,500 tokens of hook context and Claude Code's 10,000
+# characters.
+EXTRA_BUDGET = 700
 # A session file nobody touched for this long belongs to a session that ended
 # without saying so (a closed terminal): the next session start sends it.
 STALE_SECONDS = 2 * 3600
@@ -467,13 +471,30 @@ def _quiet_output(tool: str, event: str) -> str:
     return json.dumps({"continue": True}) if event == "prompt" else "{}"
 
 
-def _context_block(client: Any, scope: str, repo: str, query: str, budget: int) -> str:
-    ctx = client.get_context(query=query[:2000], user_id=scope, token_budget=budget)
+def _block(client: Any, query: str, budget: int, user_id: Optional[str], heading: str) -> str:
+    """One context block under its heading, or "" when Korely holds nothing."""
+    ctx = client.get_context(query=query[:2000], user_id=user_id, token_budget=budget)
     body = (getattr(ctx, "context", "") or "").strip()
     if not body or not getattr(ctx, "sources", None):
         return ""
-    return (f"Korely memory of the repository {repo} (user_id {scope}), what earlier "
-            f"sessions stored, whichever assistant they ran in:\n\n{body}")
+    return f"{heading}\n\n{body}"
+
+
+def _context_text(client_factory: Callable[..., Any], scope: str, repo: str, query: str,
+                  budget: int, also_read: Sequence[str] = ()) -> str:
+    """The repository's memory, then the whole project of each profile in
+    `also_read` (a private project next to the shared one), each block under
+    its own heading. A profile that cannot be read is left out, never the rest."""
+    blocks = [_block(client_factory(), query, budget, scope,
+                     f"Korely memory of the repository {repo} (user_id {scope}), what earlier "
+                     f"sessions stored, whichever assistant they ran in:")]
+    for name in also_read:
+        try:
+            blocks.append(_block(client_factory(name), query, EXTRA_BUDGET, None,
+                                 f"Korely memory of the profile {name} (its whole project):"))
+        except Exception as e:  # noqa: BLE001 - the other blocks still go
+            _log(f"profile {name}: {type(e).__name__}: {e}")
+    return "\n\n".join(b for b in blocks if b)
 
 
 def _primed(session: str) -> bool:
@@ -494,8 +515,9 @@ def _primed(session: str) -> bool:
 
 def run_hook(event: str, tool: str, data: Dict[str, Any], *, every: int = DEFAULT_EVERY,
              fixed_scope: Optional[str] = None,
-             client_factory: Optional[Callable[[], Any]] = None,
-             background: Callable[[Optional[str]], None] = flush_in_background) -> str:
+             client_factory: Optional[Callable[..., Any]] = None,
+             background: Callable[[Optional[str]], None] = flush_in_background,
+             also_read: Sequence[str] = ()) -> str:
     """Handle one event; return what to print on stdout. Never raises."""
     quiet = _quiet_output(tool, event)
     try:
@@ -508,16 +530,17 @@ def run_hook(event: str, tool: str, data: Dict[str, Any], *, every: int = DEFAUL
         if client_factory is None:
             from .client import Korely
 
-            client_factory = lambda: Korely(timeout=NETWORK_TIMEOUT, client=tool)  # noqa: E731
+            def client_factory(profile: Optional[str] = None) -> Any:
+                return Korely(timeout=NETWORK_TIMEOUT, client=tool, profile=profile)
         ev = Event(data)
         scope = scope_for(ev.cwd, fixed_scope)
         repo = repo_name(ev.cwd)
 
         if event == "session-start":
             background(None)  # what sessions that ended without a word left behind
-            text = _context_block(client_factory(), scope, repo,
-                                  f"{repo}: decisions, rules, open work and next steps",
-                                  START_BUDGET)
+            text = _context_text(client_factory, scope, repo,
+                                 f"{repo}: decisions, rules, open work and next steps",
+                                 START_BUDGET, also_read)
             return _context_output(tool, event, text) if text else quiet
 
         if event == "prompt":
@@ -526,7 +549,7 @@ def run_hook(event: str, tool: str, data: Dict[str, Any], *, every: int = DEFAUL
                 return quiet
             # Once per session, the context of what the developer asked: the
             # start could only guess at a query.
-            text = _context_block(client_factory(), scope, repo, ev.prompt, PROMPT_BUDGET)
+            text = _context_text(client_factory, scope, repo, ev.prompt, PROMPT_BUDGET, also_read)
             return _context_output(tool, event, text) if text else quiet
 
         if event == "stop":
@@ -585,12 +608,15 @@ def korely_command() -> str:
     return f"{shlex.quote(sys.executable)} -m korely_memory.cli"
 
 
-def hook_command(base: str, event: str, tool: str, scope: Optional[str] = None) -> str:
+def hook_command(base: str, event: str, tool: str, scope: Optional[str] = None,
+                 also_read: Sequence[str] = ()) -> str:
     import shlex
 
     cmd = f"{base} hook {event} --tool {tool}"
     if scope:
         cmd += f" --user-id {shlex.quote(scope)}"
+    if event in ("session-start", "prompt"):  # the events that read
+        cmd += "".join(f" --also-read {shlex.quote(p)}" for p in also_read)
     return cmd
 
 
@@ -679,14 +705,15 @@ def merge_hooks(settings: Dict[str, Any], tool: str, commands: Dict[str, str]) -
     return out
 
 
-def merge_mcp_json(config: Dict[str, Any], command: Optional[List[str]]) -> Dict[str, Any]:
-    """`config` with the `korely` server set to `command`, or removed (None)."""
+def merge_mcp_json(config: Dict[str, Any], command: Optional[List[str]],
+                   name: str = "korely") -> Dict[str, Any]:
+    """`config` with the server `name` set to `command`, or removed (None)."""
     servers = config.get("mcpServers")
     servers = dict(servers) if isinstance(servers, dict) else {}
     if command:
-        servers["korely"] = {"type": "stdio", "command": command[0], "args": command[1:]}
+        servers[name] = {"type": "stdio", "command": command[0], "args": command[1:]}
     else:
-        servers.pop("korely", None)
+        servers.pop(name, None)
     out = dict(config)
     if servers:
         out["mcpServers"] = servers
@@ -695,17 +722,15 @@ def merge_mcp_json(config: Dict[str, Any], command: Optional[List[str]]) -> Dict
     return out
 
 
-_TOML_TABLE = re.compile(r"(?ms)^\[mcp_servers\.korely\]\n.*?(?=^\[|\Z)")
-
-
-def merge_mcp_toml(text: str, command: Optional[List[str]]) -> str:
-    """Codex's config.toml with a `[mcp_servers.korely]` table set or removed.
+def merge_mcp_toml(text: str, command: Optional[List[str]], name: str = "korely") -> str:
+    """Codex's config.toml with a `[mcp_servers.<name>]` table set or removed.
     Plain text: the standard library has no TOML writer, and every other line
     of the file stays as the developer wrote it."""
-    text = _TOML_TABLE.sub("", text).rstrip("\n")
+    table_re = re.compile(rf"(?ms)^\[mcp_servers\.{re.escape(name)}\]\n.*?(?=^\[|\Z)")
+    text = table_re.sub("", text).rstrip("\n")
     if command:
         args = ", ".join(json.dumps(a) for a in command[1:])
-        table = (f"[mcp_servers.korely]\ncommand = {json.dumps(command[0])}\n"
+        table = (f"[mcp_servers.{name}]\ncommand = {json.dumps(command[0])}\n"
                  f"args = [{args}]\n")
         text = (text + "\n\n" if text else "") + table
     return text + ("\n" if text and not text.endswith("\n") else "")
@@ -748,9 +773,12 @@ class InstallError(Exception):
 def install(tool: str, project: Path, *, everywhere: bool = False, remove: bool = False,
             mcp: bool = True, scope: Optional[str] = None,
             base: Optional[str] = None,
-            run: Callable[..., Any] = subprocess.run) -> List[str]:
+            run: Callable[..., Any] = subprocess.run,
+            also_read: Sequence[str] = ()) -> List[str]:
     """Write (or with `remove`, take out) this tool's korely hooks and MCP
-    server. Returns one line per change, for the report."""
+    server. `also_read`: profiles the session start also reads, each with an
+    MCP server of its own, `korely-<profile>`. Returns one line per change,
+    for the report."""
     base = base or korely_command()
     files = hook_files(tool, project, everywhere)
     report: List[str] = []
@@ -761,45 +789,17 @@ def install(tool: str, project: Path, *, everywhere: bool = False, remove: bool 
                     f"{path} is committed to the repository: korely does not add personal "
                     f"hooks to a shared file. Use --global (every repository, each with its "
                     f"own memory) or add them by hand.")
-    commands = {} if remove else {e: hook_command(base, e, tool, scope) for e in EVENTS}
+    commands = {} if remove else {e: hook_command(base, e, tool, scope, also_read) for e in EVENTS}
     path = files["hooks"]
     if path.exists() or not remove:
         _save_json(path, merge_hooks(_load_json(path), tool, commands))
         report.append(f"{'removed from' if remove else 'hooks in'} {path}")
 
-    server = None if (remove or not mcp) else _mcp_command(base, scope)
-    if tool == "claude-code":
-        # Claude Code keeps MCP servers in ~/.claude.json, which it rewrites
-        # itself: its own command is the one safe way in.
-        where = "user" if everywhere else "local"
-        cmd = ["claude", "mcp", "remove", "--scope", where, "korely"]
-        _quiet_run(run, cmd, project)
-        if server:
-            cmd = ["claude", "mcp", "add", "--scope", where, "korely", "--", *server]
-            if _quiet_run(run, cmd, project):
-                report.append(f"MCP server korely ({where} scope) added with `claude mcp add`")
-            else:
-                import shlex
-
-                report.append("MCP server not added (no `claude` command found). Run: "
-                              + " ".join(shlex.quote(c) for c in cmd))
-        elif remove:
-            report.append(f"MCP server korely removed ({where} scope)")
-    elif tool == "cursor":
-        mp = files["mcp"]
-        if server or mp.exists():
-            _save_json(mp, merge_mcp_json(_load_json(mp), server))
-            if server:
-                report.append(f"MCP server korely in {mp}")
-    else:
-        mp = files["mcp"]
-        old = mp.read_text(encoding="utf-8") if mp.exists() else ""
-        new = merge_mcp_toml(old, server)
-        if new != old and (server or mp.exists()):
-            mp.parent.mkdir(parents=True, exist_ok=True)
-            mp.write_text(new, encoding="utf-8")
-            if server:
-                report.append(f"MCP server korely in {mp}")
+    servers = [("korely", _mcp_command(base, scope))]
+    servers += [(f"korely-{p}", _mcp_command(base, None, profile=p)) for p in also_read]
+    for name, command in servers:
+        _install_server(tool, files, project, name, None if (remove or not mcp) else command,
+                        everywhere=everywhere, remove=remove, run=run, report=report)
     if not everywhere and not remove:
         for p in files.values():
             if p.exists():
@@ -809,9 +809,48 @@ def install(tool: str, project: Path, *, everywhere: bool = False, remove: bool 
     return report
 
 
-def _mcp_command(base: str, scope: Optional[str]) -> List[str]:
+def _install_server(tool: str, files: Dict[str, Path], project: Path, name: str,
+                    server: Optional[List[str]], *, everywhere: bool, remove: bool,
+                    run: Callable[..., Any], report: List[str]) -> None:
+    """One MCP server `name` set to `server`, or taken out (None), in the
+    tool's own place for it."""
+    if tool == "claude-code":
+        # Claude Code keeps MCP servers in ~/.claude.json, which it rewrites
+        # itself: its own command is the one safe way in.
+        where = "user" if everywhere else "local"
+        _quiet_run(run, ["claude", "mcp", "remove", "--scope", where, name], project)
+        if server:
+            cmd = ["claude", "mcp", "add", "--scope", where, name, "--", *server]
+            if _quiet_run(run, cmd, project):
+                report.append(f"MCP server {name} ({where} scope) added with `claude mcp add`")
+            else:
+                import shlex
+
+                report.append("MCP server not added (no `claude` command found). Run: "
+                              + " ".join(shlex.quote(c) for c in cmd))
+        elif remove:
+            report.append(f"MCP server {name} removed ({where} scope)")
+    elif tool == "cursor":
+        mp = files["mcp"]
+        if server or mp.exists():
+            _save_json(mp, merge_mcp_json(_load_json(mp), server, name))
+            if server:
+                report.append(f"MCP server {name} in {mp}")
+    else:
+        mp = files["mcp"]
+        old = mp.read_text(encoding="utf-8") if mp.exists() else ""
+        new = merge_mcp_toml(old, server, name)
+        if new != old and (server or mp.exists()):
+            mp.parent.mkdir(parents=True, exist_ok=True)
+            mp.write_text(new, encoding="utf-8")
+            if server:
+                report.append(f"MCP server {name} in {mp}")
+
+
+def _mcp_command(base: str, scope: Optional[str], profile: Optional[str] = None) -> List[str]:
     """The stdio server next to the CLI, scoped like the hooks: `--repo-scope`
-    reads and writes `repo:<name>` of the folder the tool starts it in."""
+    reads and writes `repo:<name>` of the folder the tool starts it in. With
+    `profile`, that profile's key and its whole project (no scope)."""
     import shlex
 
     parts = shlex.split(base)
@@ -819,6 +858,8 @@ def _mcp_command(base: str, scope: Optional[str]) -> List[str]:
         cmd = [str(Path(parts[0]).with_name("korely-mcp"))]
     else:  # python -m korely_memory.cli
         cmd = [parts[0], "-m", "korely_memory.mcp_server"]
+    if profile:
+        return cmd + ["--profile", profile]
     return cmd + (["--user-id", scope] if scope else ["--repo-scope"])
 
 

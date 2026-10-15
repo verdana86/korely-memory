@@ -447,6 +447,24 @@ everything in one memory instead; `--remove` takes it all out again.
 
 Five answers to a memory is about eight writes for a day of forty exchanges.
 
+### Two projects, one shared and one private
+
+A key reads its whole project, so a private memory is a project of its own.
+Save its key as a named profile, next to the default one, in the same file
+(`~/.korely/config.json`, chmod 600; no key goes into a tool's config):
+
+```bash
+korely init --api-key kor_live_...                      # the shared project
+korely init --api-key kor_live_... --profile private    # the private one
+korely init --tool claude-code --also-read private
+```
+
+The session start then reads the repository's memory and, under a heading of
+its own, the private project; sessions are still saved to the shared one only.
+A second MCP server, `korely-private`, reads and writes the private project on
+purpose. Every command takes `--profile` (or `KORELY_PROFILE`), and so do
+`Korely(profile="private")` and `korely-mcp --profile private`.
+
 ## MCP server
 
 ```bash

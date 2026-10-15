@@ -155,7 +155,39 @@ def _coerce_content(content: Any) -> str:
     return str(content)
 
 
-def _key_from_config() -> Optional[str]:
+def config_path() -> str:
+    """~/.korely/config.json, or $KORELY_CONFIG_HOME/config.json: where
+    `korely init` saves a key, and where every client reads it back."""
+    home = os.environ.get("KORELY_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".korely")
+    return os.path.join(home, "config.json")
+
+
+def profile_config(profile: Optional[str] = None) -> dict:
+    """The saved settings of one profile: the file's top level for the default
+    profile, its `profiles[<name>]` for a named one (`korely init --profile`),
+    the way the AWS CLI keeps several accounts in one file. `profile` None
+    reads KORELY_PROFILE, else the default. Best effort: an unreadable file is
+    an empty profile, and the caller raises its usual missing-key error."""
+    try:
+        with open(config_path(), encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    name = profile or os.environ.get("KORELY_PROFILE") or None
+    if not name or name == "default":
+        return data
+    named = (data.get("profiles") or {}).get(name)
+    return named if isinstance(named, dict) else {}
+
+
+def _from_config(field: str, profile: Optional[str] = None) -> Optional[str]:
+    value = profile_config(profile).get(field)
+    return value if isinstance(value, str) and value else None
+
+
+def _key_from_config(profile: Optional[str] = None) -> Optional[str]:
     """Fall back to the key `korely init` saved.
 
     The CLI writes it to ~/.korely/config.json, and the docs tell people to run
@@ -164,17 +196,10 @@ def _key_from_config() -> Optional[str]:
     Best effort: any read problem just means we carry on and raise the normal
     missing-key error.
     """
-    try:
-        home = os.environ.get("KORELY_CONFIG_HOME") or os.path.join(
-            os.path.expanduser("~"), ".korely")
-        with open(os.path.join(home, "config.json"), encoding="utf-8") as fh:
-            key = json.load(fh).get("api_key")
-        return key if isinstance(key, str) and key else None
-    except Exception:
-        return None
+    return _from_config("api_key", profile)
 
 
-def _base_from_config() -> Optional[str]:
+def _base_from_config(profile: Optional[str] = None) -> Optional[str]:
     """The server `korely init` was pointed at, from the same file.
 
     `korely init --base-url https://my-server` writes both the key and the
@@ -183,14 +208,7 @@ def _base_from_config() -> Optional[str]:
     sent it to api.korely.ai. Same defect as the environment variable, in the
     one path the docstring above calls the documented one.
     """
-    try:
-        home = os.environ.get("KORELY_CONFIG_HOME") or os.path.join(
-            os.path.expanduser("~"), ".korely")
-        with open(os.path.join(home, "config.json"), encoding="utf-8") as fh:
-            base = json.load(fh).get("base_url")
-        return base if isinstance(base, str) and base else None
-    except Exception:
-        return None
+    return _from_config("base_url", profile)
 
 
 def _sni_hint(base_url: str, reason: object) -> str:
@@ -335,11 +353,16 @@ class Korely:
         ca_file: Optional[str] = None,
         verify: bool = True,
         client: Optional[str] = None,
+        profile: Optional[str] = None,
     ):
         """`client`: the tool writing, e.g. "claude-code" (argument, else
         KORELY_CLIENT), sent as `X-Korely-Client`: Korely Agent keeps it on
         each memory as `client`, a label that no agent cap counts. Left out,
         the header names this library, `korely-python/<version>`.
+
+        `profile`: a key saved with `korely init --profile <name>`, read from
+        the config file instead of the default one; a profile named here is a
+        decision, so KORELY_API_KEY and KORELY_BASE_URL do not override it.
 
         `ca_file`: a PEM file with the certificate authority to trust for
         https (argument, else KORELY_CA_FILE), for a server whose certificate
@@ -348,7 +371,11 @@ class Korely:
         read SSL_CERT_FILE. `verify=False` turns certificate checks off: only
         as an argument, never from the environment, because it lets anyone on
         the path read the key and the memories."""
-        self.api_key = api_key or os.environ.get("KORELY_API_KEY") or _key_from_config()
+        if profile and not api_key and not _key_from_config(profile):
+            raise KorelyError(f"No key saved for the profile {profile!r}: run "
+                              f"`korely init --api-key <key> --profile {profile}`.")
+        env = {} if profile else os.environ
+        self.api_key = api_key or env.get("KORELY_API_KEY") or _key_from_config(profile)
         if not self.api_key:
             raise KorelyError(
                 "No API key. Pass api_key='kor_live_...', set KORELY_API_KEY, "
@@ -372,8 +399,8 @@ class Korely:
         # that quietly wins.
         self.base_url = (
             base_url
-            or os.environ.get("KORELY_BASE_URL")
-            or _base_from_config()
+            or env.get("KORELY_BASE_URL")
+            or _base_from_config(profile)
             or _REGIONS.get(region)
             or _REGIONS["eu"]
         ).rstrip("/")

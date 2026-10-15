@@ -79,10 +79,10 @@ class AsyncKorely:
     def __init__(self, api_key: Optional[str] = None, region: str = "eu",
                  base_url: Optional[str] = None, timeout: float = 30.0,
                  ca_file: Optional[str] = None, verify: bool = True,
-                 client: Optional[str] = None):
+                 client: Optional[str] = None, profile: Optional[str] = None):
         self._sync = Korely(api_key=api_key, region=region,
                             base_url=base_url, timeout=timeout,
-                            ca_file=ca_file, verify=verify, client=client)
+                            ca_file=ca_file, verify=verify, client=client, profile=profile)
 
     @classmethod
     async def init_agent(cls, agent_caller: Optional[str] = None, **kw) -> AgentInitResult:
