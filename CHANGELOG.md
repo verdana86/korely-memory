@@ -8,6 +8,21 @@ The server side of the entries marked "API" shipped on 2026-09-28. Against an
 older server these clients keep working: the old field names are still read,
 and a batch `timestamp` is refused there with a 422.
 
+## Python 0.1.25 (not released)
+
+- `korely init --tool claude-code|codex|cursor` connects a coding assistant
+  to one memory per repository (`repo:<name>`, the same from a worktree),
+  shared by every assistant connected: hooks hand it the memory at the
+  start of a session and on its first prompt, and send the prompts and the
+  final answers as one memory every five answers, before a compaction and
+  at the end, from a process of their own. What looks like a key is masked
+  first. `--global` for every repository, `--user-id` for one memory,
+  `--no-mcp`, `--remove`. A file the repository commits is never touched.
+- `korely hook <event>`: what those hooks run. It reads the event on stdin,
+  prints what the tool expects and always exits 0.
+- `korely-mcp --user-id <id>` and `--repo-scope`: the user_id of a call
+  that names none.
+
 ## Python 0.1.24 (2026-10-12)
 
 - `korely init --processing-region eu|global`: the CLI can choose where the

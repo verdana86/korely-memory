@@ -42,6 +42,12 @@ from .client import __version__
 
 mcp = Server("korely", __version__)
 
+# The user_id a tool call gets when the model leaves it out (`main`):
+# `--user-id <id>`, or `--repo-scope` for `repo:<name>` of the folder the tool
+# starts this server in, the scope `korely hook` writes to. Without either, as
+# before: no user_id.
+_DEFAULT_USER: Optional[str] = None
+
 
 def _client() -> Korely:
     """Resolve the key like the CLI: KORELY_API_KEY env, else ~/.korely/config.json."""
@@ -55,6 +61,10 @@ def _client() -> Korely:
             "No API key. Run `korely init --agent` to get one free, or set KORELY_API_KEY."
         )
     return Korely(api_key=key, base_url=base)
+
+
+def _user(user_id: Optional[str]) -> Optional[str]:
+    return user_id or _DEFAULT_USER
 
 
 def _name(label: Optional[str], canonical: Optional[str]) -> str:
@@ -127,7 +137,7 @@ def korely_get_context(query: str, user_id: Optional[str] = None,
     (ISO date) rebuilds the block as Korely knew it then.
     """
     try:
-        ctx = _client().get_context(query=query, user_id=user_id, token_budget=token_budget,
+        ctx = _client().get_context(query=query, user_id=_user(user_id), token_budget=token_budget,
                                     known_as_of=known_as_of)
     except KorelyError as e:
         return f"error: {e}"
@@ -147,7 +157,7 @@ def korely_add(content: str, user_id: Optional[str] = None,
     was true then. Omitted: now.
     """
     try:
-        m = _client().add(content, user_id=user_id, agent_id=agent_id, run_id=run_id,
+        m = _client().add(content, user_id=_user(user_id), agent_id=agent_id, run_id=run_id,
                           timestamp=timestamp)
     except KorelyError as e:
         return f"error: {e}"
@@ -172,7 +182,7 @@ def korely_search(query: str, user_id: Optional[str] = None, limit: int = 10,
     block (for that, use korely_get_context).
     """
     try:
-        hits = _client().search(query, user_id=user_id, limit=limit, min_score=min_score)
+        hits = _client().search(query, user_id=_user(user_id), limit=limit, min_score=min_score)
     except KorelyError as e:
         return f"error: {e}"
     if not hits:
@@ -198,7 +208,7 @@ def korely_get_facts(user_id: Optional[str] = None, entity: Optional[str] = None
     """
     try:
         facts = _client().get_facts(
-            user_id=user_id, entity=entity, subject=subject,
+            user_id=_user(user_id), entity=entity, subject=subject,
             predicate_family=predicate_family, as_of=as_of,
             include_invalidated=include_invalidated, limit=limit,
             known_as_of=known_as_of,
@@ -213,8 +223,27 @@ def korely_get_facts(user_id: Optional[str] = None, entity: Optional[str] = None
     return head + "\n".join(f"- {_fact_line(f)}" for f in facts)
 
 
-def main() -> None:
+def main(argv: Optional[list] = None) -> None:
     """Console entry point (`korely-mcp`). Runs the stdio MCP server."""
+    import argparse
+
+    global _DEFAULT_USER
+    p = argparse.ArgumentParser(prog="korely-mcp")
+    p.add_argument("--user-id", help="the user_id of a call that names none")
+    p.add_argument("--repo-scope", action="store_true",
+                   help="that user_id is repo:<name> of the current folder's repository, "
+                        "the memory `korely hook` writes (korely init --tool)")
+    args = p.parse_args(argv)
+    if args.user_id:
+        _DEFAULT_USER = args.user_id
+    elif args.repo_scope:
+        from .hooks import _git, scope_for
+
+        cwd = os.getcwd()
+        # Outside a repository there is no repository's memory to default to:
+        # a folder's name would invent one.
+        if _git(cwd, "rev-parse", "--show-toplevel"):
+            _DEFAULT_USER = scope_for(cwd)
     mcp.run()
 
 

@@ -668,7 +668,7 @@ def cmd_batch_status(k: Korely, a) -> int:
     return 0
 
 
-def cmd_init(args) -> int:
+def _init_key(args) -> int:
     """Self-serve signup: mint a hobby key with no Firebase, save it locally.
 
     The one command that runs WITHOUT a key: it is how you get one. Calls
@@ -799,6 +799,105 @@ def cmd_init(args) -> int:
     return 0
 
 
+def cmd_init(args) -> int:
+    """`korely init`, and with `--tool` the hooks of a coding assistant.
+
+    With `--tool` and a key already saved there is nothing to sign up for:
+    the hooks are installed with it. Without a key, the key first (a signup,
+    or `--api-key`), then the hooks. `--remove` needs no key at all.
+    """
+    tool = getattr(args, "tool", None)
+    if not tool:
+        return _init_key(args)
+    if not getattr(args, "remove", False):
+        given = (getattr(args, "api_key", None) or "").strip()
+        have = os.environ.get("KORELY_API_KEY") or _load_config().get("api_key")
+        if given or not have:
+            code = _init_key(args)
+            if code:
+                return code
+            print()
+    return _install_tool(args)
+
+
+def _install_tool(args) -> int:
+    from . import hooks
+
+    tool = args.tool
+    cwd = os.getcwd()
+    project = Path(hooks._git(cwd, "rev-parse", "--show-toplevel") or cwd)
+    everywhere = bool(getattr(args, "global_", False))
+    remove = bool(getattr(args, "remove", False))
+    scope = getattr(args, "user_id", None)
+    try:
+        report = hooks.install(tool, project, everywhere=everywhere, remove=remove,
+                               mcp=not getattr(args, "no_mcp", False), scope=scope)
+    except (hooks.InstallError, ValueError, OSError) as e:
+        print(f"error: nothing installed. {e}", file=sys.stderr)
+        return 2
+    name = hooks.TOOL_NAMES[tool]
+    if remove:
+        print(f"Korely hooks for {name} removed.")
+        for line in report:
+            print(f"  {line}")
+        return 0
+    memory = scope or (hooks.scope_for(cwd) if not everywhere else "repo:<name of each repository>")
+    print(f"Korely is connected to {name} "
+          f"({'every repository' if everywhere else 'this repository'}).")
+    for line in report:
+        print(f"  {line}")
+    print()
+    print(f"  memory   user_id {memory}: every assistant you connect reads and writes it")
+    print("  start    the assistant is handed what Korely holds for the repository, and on "
+          "the first prompt what matches it")
+    print(f"  saving   every {hooks.DEFAULT_EVERY} answers, before a compaction and at the end, "
+          "as one memory; what looks like a key is masked first")
+    if tool == "codex":
+        print()
+        print("Codex runs a new hook only once you trust it: open /hooks in Codex and trust "
+              "the five korely hooks.")
+    if tool == "cursor":
+        print()
+        print("Cursor runs Claude Code's hooks too; korely's Claude Code hooks step aside "
+              "inside Cursor, so a turn is stored once.")
+        print("Cursor does not wait for sessionStart: the first answer can come before the "
+              "context does.")
+    if tool == "claude-code":
+        print()
+        print("Claude Code runs hooks in a folder you trusted. Restart the session to load them.")
+    if not everywhere:
+        print()
+        print(f"See what it holds:  korely context \"what did we decide\" --user-id {memory}")
+    return 0
+
+
+def cmd_hook(args) -> int:
+    """`korely hook <event>`: what an assistant's hook runs. Reads the event
+    on stdin, prints what the tool expects, and exits 0 whatever happens."""
+    from . import hooks
+
+    if args.event == "flush":
+        from .client import Korely
+
+        try:
+            hooks.flush(args.session, lambda: Korely(timeout=hooks.NETWORK_TIMEOUT))
+        except Exception as e:  # noqa: BLE001
+            hooks._log(f"flush: {type(e).__name__}: {e}")
+        return 0
+    try:
+        raw = sys.stdin.read() if not sys.stdin.isatty() else ""
+        data = json.loads(raw) if raw.strip() else {}
+        if not isinstance(data, dict):
+            data = {}
+    except (ValueError, OSError):
+        data = {}
+    out = hooks.run_hook(args.event, args.tool, data, every=args.every,
+                         fixed_scope=getattr(args, "user_id", None))
+    if out:
+        print(out)
+    return 0
+
+
 # ── parser ──────────────────────────────────────────────────────────────────
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
@@ -834,7 +933,29 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--force", action="store_true",
                     help="replace a key already saved in ~/.korely/config.json (it is lost)")
     sp.add_argument("--json", action="store_true", help="machine-readable output")
+    sp.add_argument("--tool", choices=["claude-code", "codex", "cursor"],
+                    help="also connect this coding assistant: hooks that hand it the "
+                         "repository's memory at the start and save the session to it")
+    sp.add_argument("--global", dest="global_", action="store_true",
+                    help="with --tool: every repository (your user settings), each with its "
+                         "own memory; default: this repository only")
+    sp.add_argument("--user-id",
+                    help="with --tool: one memory for all of it instead of repo:<name>")
+    sp.add_argument("--no-mcp", action="store_true",
+                    help="with --tool: hooks only, no korely MCP server")
+    sp.add_argument("--remove", action="store_true",
+                    help="with --tool: take korely's hooks and MCP server out again")
     sp.set_defaults(func=cmd_init)
+
+    sp = sub.add_parser("hook", help="what a coding assistant's hook runs (korely init --tool)")
+    sp.add_argument("event", choices=["session-start", "prompt", "stop", "pre-compact",
+                                      "session-end", "flush"])
+    sp.add_argument("--tool", choices=["claude-code", "codex", "cursor"], default="claude-code")
+    sp.add_argument("--user-id", help="the memory to use instead of repo:<name>")
+    sp.add_argument("--every", type=int, default=5,
+                    help="answers kept before they are sent as one memory (default 5)")
+    sp.add_argument("--session", help="flush: only this session")
+    sp.set_defaults(func=cmd_hook)
 
     sp = sub.add_parser("auth", parents=[common], help="verify your API key")
     sp.set_defaults(func=cmd_auth)
@@ -1008,6 +1129,9 @@ def main(argv=None) -> int:
     # `init` is the one command that runs WITHOUT a key: it mints one.
     if getattr(args, "command", None) == "init":
         return cmd_init(args)
+    if getattr(args, "command", None) == "hook":
+        # A hook finds its key itself, and never fails the assistant for want of one.
+        return cmd_hook(args)
     key = _resolve_key(args)
     if not key:
         print("error: no API key. Run `korely init --agent` to get one free, "

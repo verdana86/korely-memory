@@ -227,6 +227,13 @@ It checks its own claims rather than making them, erasure included.
 | `js/` | [`korely-memory`](https://www.npmjs.com/package/korely-memory) on npm |
 | `n8n/` | [`n8n-nodes-korely`](https://www.npmjs.com/package/n8n-nodes-korely), a community node for self-hosted n8n (see its README) |
 
+## Coding assistants
+
+`korely init --tool claude-code` (or `codex`, or `cursor`) in a repository
+connects that assistant to one memory per repository: it is handed the
+memory when a session starts, and its sessions are saved to it. Every
+assistant you connect shares it. See [the Python README](python/README.md#one-memory-for-your-coding-assistants).
+
 ## MCP
 
 Korely runs a hosted MCP server, so a coding agent can read and write memory without any package:
