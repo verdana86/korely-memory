@@ -225,7 +225,7 @@ It checks its own claims rather than making them, erasure included.
 |---|---|
 | `python/` | [`korely-memory`](https://pypi.org/project/korely-memory/) on PyPI, includes the `korely` CLI and an MCP stdio server |
 | `js/` | [`korely-memory`](https://www.npmjs.com/package/korely-memory) on npm |
-| `n8n/` | `n8n-nodes-korely`, a community node for n8n (not on npm yet, see its README) |
+| `n8n/` | [`n8n-nodes-korely`](https://www.npmjs.com/package/n8n-nodes-korely), a community node for self-hosted n8n (see its README) |
 
 ## MCP
 

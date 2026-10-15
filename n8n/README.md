@@ -3,16 +3,18 @@
 Bi-temporal memory in a workflow: store what happened, ask what was true on a
 date, and retract a fact when it stops being true.
 
-`n8n-nodes-korely` is not on npm yet, so **Settings → Community Nodes →
-Install** cannot find it. Until it is, build it here and install the tarball
-into the folder where your self-hosted n8n keeps community nodes:
+## Install
+
+In a self-hosted n8n: **Settings → Community Nodes → Install**, enter
+`n8n-nodes-korely`, and confirm. Without the panel, install it into the folder
+where n8n keeps community nodes and restart n8n:
 
 ```bash
-cd n8n && npm ci && npm run build && npm pack
-cd ~/.n8n/nodes && npm install /path/to/korely-memory/n8n/n8n-nodes-korely-0.1.0.tgz
+cd ~/.n8n/nodes && npm install n8n-nodes-korely
 ```
 
-Then restart n8n.
+n8n Cloud installs only verified community nodes, and this one is not verified
+yet. On n8n Cloud, call the REST API with the HTTP Request node.
 
 ## Why this and not the HTTP Request node
 
@@ -68,9 +70,13 @@ not a node that works: what breaks is paths, field names and the HTTP verb, and
 the compiler sees none of those.
 
 ```bash
-npm run build
+npm ci --ignore-scripts && npm run build
 KORELY_BASE_URL=https://your-install KORELY_API_KEY=kor_self_... node --test test/run.mjs
 ```
+
+`--ignore-scripts` because `n8n-workflow`, needed only for the types, pulls in
+a native module that wants a compiler and Node 22. `npm test` runs the offline
+test, with no network.
 
 It found a defect in the REST API on its first run, which is the argument for
 writing it this way.
