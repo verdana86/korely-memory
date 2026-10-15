@@ -24,7 +24,7 @@ and a batch `timestamp` is refused there with a 422.
   that names none.
 - `Korely(client="claude-code")` (or `KORELY_CLIENT`) names the tool
   writing, sent as `X-Korely-Client`; left out, the header names the
-  library, `korely-python/<version>`. Korely Agent from 0.1.37 keeps it on
+  library, `korely-python/<version>`. Korely Agent from 0.1.36 keeps it on
   each memory as `client`, a label no agent cap counts (an older server
   ignores the header). `korely hook` sends the assistant's name.
 
@@ -32,7 +32,7 @@ and a batch `timestamp` is refused there with a 422.
 
 - `new Korely({ client: "cursor" })` (or `KORELY_CLIENT`) replaces the
   library's name in `X-Korely-Client`, the header this client has always
-  sent (`korely-js/<version>`). Korely Agent from 0.1.37 keeps it on each
+  sent (`korely-js/<version>`). Korely Agent from 0.1.36 keeps it on each
   memory as `client`.
 
 ## Python 0.1.24 (2026-10-12)
