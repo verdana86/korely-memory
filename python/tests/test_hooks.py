@@ -28,6 +28,7 @@ class FakeContext:
 class FakeClient:
     def __init__(self, context="- The user decided to ship on Fridays", fail=False):
         self.added, self.reads, self.context, self.fail = [], [], context, fail
+        self.tools = []
 
     def add(self, content, **kw):
         if self.fail:
@@ -144,7 +145,8 @@ class SessionFlow(Base):
             self.hook("stop", "claude-code", {"session_id": "s1",
                                               "last_assistant_message": f"done {i}"}, client)
         self.assertEqual(self.background, ["s1"])
-        self.assertEqual(hooks.flush("s1", lambda: client), 1)
+        self.assertEqual(hooks.flush("s1", lambda tool=None: client.tools.append(tool) or client), 1)
+        self.assertEqual(client.tools, ["claude-code"])  # sent as X-Korely-Client
         content, kw = client.added[0]
         self.assertIn("A coding session in the repository shop-api, with Claude Code", content)
         self.assertIn("Developer: step 4 use [redacted]", content)
@@ -155,7 +157,7 @@ class SessionFlow(Base):
         self.assertEqual(kw["metadata"], {"source": "claude-code", "repo": "shop-api"})
         self.assertTrue(kw["timestamp"])
         # Sent once: a second flush has nothing to send.
-        self.assertEqual(hooks.flush("s1", lambda: client), 0)
+        self.assertEqual(hooks.flush("s1", lambda tool=None: client), 0)
 
     def test_session_end_sends_the_rest_and_leaves_no_file(self):
         client = FakeClient()
@@ -164,7 +166,7 @@ class SessionFlow(Base):
                   client)
         self.hook("session-end", "claude-code", {"session_id": "s2"}, client)
         self.assertEqual(self.background, ["s2"])
-        hooks.flush("s2", lambda: client)
+        hooks.flush("s2", lambda tool=None: client)
         self.assertEqual(len(client.added), 1)
         self.assertEqual(list(hooks._sessions().glob("s2*")), [])
 
@@ -172,14 +174,14 @@ class SessionFlow(Base):
         down = FakeClient(fail=True)
         self.hook("prompt", "claude-code", {"session_id": "s3", "prompt": "x"}, down)
         self.hook("pre-compact", "claude-code", {"session_id": "s3"}, down)
-        self.assertEqual(hooks.flush("s3", lambda: down), 0)
+        self.assertEqual(hooks.flush("s3", lambda tool=None: down), 0)
         boxes = list(hooks._sessions().glob("s3.out*.json"))
         self.assertEqual(len(boxes), 1)
         log = (Path(os.environ["KORELY_CONFIG_HOME"]) / "hook.log").read_text()
         self.assertIn("network down", log)
         self.assertNotIn('"x"', log)
         up = FakeClient()
-        self.assertEqual(hooks.flush(None, lambda: up), 1)  # what session-start runs
+        self.assertEqual(hooks.flush(None, lambda tool=None: up), 1)  # what session-start runs
         self.assertIn("Developer: x", up.added[0][0])
 
     def test_two_senders_never_send_the_same_turns(self):
@@ -187,7 +189,7 @@ class SessionFlow(Base):
         self.hook("prompt", "claude-code", {"session_id": "d1", "prompt": "once"}, client)
         box = hooks._claim(hooks._session_file("d1"))
         os.rename(box, box.with_name(box.name[:-5] + ".sending"))  # the other sender
-        self.assertFalse(hooks.send_outbox(box, lambda: client))
+        self.assertFalse(hooks.send_outbox(box, lambda tool=None: client))
         self.assertEqual(client.added, [])
 
     def test_a_hook_never_raises_and_never_blocks(self):
@@ -216,7 +218,7 @@ class Tools(Base):
         self.assertEqual(json.loads(prompt), {"continue": True})
         hooks.run_hook("stop", "cursor", {**data, "text": "hi there"},
                        client_factory=lambda: client, background=lambda s: None)
-        hooks.flush("k1", lambda: client)
+        hooks.flush("k1", lambda tool=None: client)
         self.assertIn("Assistant: hi there", client.added[0][0])
         self.assertIn("with Cursor", client.added[0][0])
 
@@ -234,7 +236,7 @@ class Tools(Base):
         ]))
         client = FakeClient()
         self.hook("stop", "claude-code", {"session_id": "t1", "transcript_path": str(t)}, client)
-        hooks.flush("t1", lambda: client)
+        hooks.flush("t1", lambda tool=None: client)
         self.assertIn("Assistant: the end", client.added[0][0])
 
 
@@ -311,6 +313,40 @@ class Installing(Base):
             data = json.loads((home / "hooks.json").read_text())
             self.assertIn("SessionStart", data["hooks"])
             self.assertIn("[mcp_servers.korely]", (home / "config.toml").read_text())
+
+
+class ClientHeader(unittest.TestCase):
+    def test_the_tool_is_sent_as_x_korely_client(self):
+        from korely_memory.client import Korely
+
+        seen = {}
+
+        def fake_urlopen(req, timeout=None, **kw):
+            seen.update({k.lower(): v for k, v in req.header_items()})
+            raise OSError("stop here")
+
+        with mock.patch("urllib.request.urlopen", fake_urlopen):
+            k = Korely(api_key="kor_live_x", client="codex")
+            with self.assertRaises(Exception):
+                k.add("hello", user_id="repo:x")
+        self.assertEqual(seen.get("x-korely-client"), "codex")
+
+    def test_without_one_the_header_names_the_library(self):
+        from korely_memory import __version__
+        from korely_memory.client import Korely
+
+        seen = {}
+
+        def fake_urlopen(req, timeout=None, **kw):
+            seen.update({k.lower(): v for k, v in req.header_items()})
+            raise OSError("stop here")
+
+        with mock.patch.dict(os.environ, {}, clear=False):
+            os.environ.pop("KORELY_CLIENT", None)
+            with mock.patch("urllib.request.urlopen", fake_urlopen):
+                with self.assertRaises(Exception):
+                    Korely(api_key="kor_live_x").add("hello")
+        self.assertEqual(seen.get("x-korely-client"), "korely-python/" + __version__)
 
 
 class McpScope(unittest.TestCase):

@@ -334,8 +334,14 @@ class Korely:
         timeout: float = 30.0,
         ca_file: Optional[str] = None,
         verify: bool = True,
+        client: Optional[str] = None,
     ):
-        """`ca_file`: a PEM file with the certificate authority to trust for
+        """`client`: the tool writing, e.g. "claude-code" (argument, else
+        KORELY_CLIENT), sent as `X-Korely-Client`: Korely Agent keeps it on
+        each memory as `client`, a label that no agent cap counts. Left out,
+        the header names this library, `korely-python/<version>`.
+
+        `ca_file`: a PEM file with the certificate authority to trust for
         https (argument, else KORELY_CA_FILE), for a server whose certificate
         a private CA signed: Caddy's local CA on a laptop install, a company
         CA. Needed on the Python 3.9 macOS ships with, whose LibreSSL does not
@@ -373,6 +379,7 @@ class Korely:
         ).rstrip("/")
         _refuse_a_mismatched_pair(self.api_key, self.base_url)
         self.timeout = timeout
+        self.client = (client or os.environ.get("KORELY_CLIENT") or "").strip() or None
         self._ssl_context = _ssl_context(ca_file or os.environ.get("KORELY_CA_FILE") or None, verify)
 
     @classmethod
@@ -459,6 +466,10 @@ class Korely:
         # key is obtained, and an empty `Bearer ` is not "no key" to a server.
         if self.api_key:
             headers["Authorization"] = "Bearer " + self.api_key
+        # Who is writing: the tool the developer named, else this library, as
+        # the JavaScript client has always said (`korely-js/<version>`).
+        headers["X-Korely-Client"] = (getattr(self, "client", None)
+                                      or "korely-python/" + __version__)
         if data is not None:
             headers["Content-Type"] = "application/json"
         req = _urlrequest.Request(url, data=data, method=method, headers=headers)

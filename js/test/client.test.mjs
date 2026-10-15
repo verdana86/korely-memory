@@ -73,6 +73,17 @@ test("add builds POST /v1/memories", async () => {
   assert.equal(m.id, "mem_1");
 });
 
+test("the header names the library, or the tool given as client", async () => {
+  const body = { id: "mem_1", content: "x", user_id: null, agent_id: null, run_id: null,
+                 metadata: {}, facts: [] };
+  const plain = fakeFetch([{ status: 201, body }]);
+  await new Korely({ apiKey: "kor_live_x", fetch: plain }).add("hello");
+  assert.equal(plain.calls[0].init.headers["X-Korely-Client"], `korely-js/${VERSION}`);
+  const tool = fakeFetch([{ status: 201, body }]);
+  await new Korely({ apiKey: "kor_live_x", fetch: tool, client: "cursor" }).add("hello");
+  assert.equal(tool.calls[0].init.headers["X-Korely-Client"], "cursor");
+});
+
 test("add coerces a message list", async () => {
   const { k, f } = client([{ status: 201, body: { id: "mem_1" } }]);
   await k.add([

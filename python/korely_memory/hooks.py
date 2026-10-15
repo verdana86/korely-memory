@@ -341,7 +341,7 @@ def memory_text(box: Dict[str, Any]) -> str:
     return _clip(text, MEMORY_CHARS)
 
 
-def send_outbox(box_path: Path, client_factory: Callable[[], Any]) -> bool:
+def send_outbox(box_path: Path, client_factory: Callable[[Optional[str]], Any]) -> bool:
     """Send one outbox file as one memory; delete it once Korely has it.
 
     The file is renamed to `.sending` first: a rename succeeds for one
@@ -358,7 +358,7 @@ def send_outbox(box_path: Path, client_factory: Callable[[], Any]) -> bool:
         work.unlink(missing_ok=True)
         return True
     try:
-        client = client_factory()
+        client = client_factory(box.get("tool"))
         client.add(memory_text(box), user_id=box.get("scope"),
                    run_id=(box.get("session") or None) and str(box["session"])[:255],
                    metadata={"source": box.get("tool"), "repo": box.get("repo")},
@@ -377,9 +377,10 @@ def send_outbox(box_path: Path, client_factory: Callable[[], Any]) -> bool:
     return True
 
 
-def flush(session: Optional[str], client_factory: Callable[[], Any]) -> int:
+def flush(session: Optional[str], client_factory: Callable[[Optional[str]], Any]) -> int:
     """Claim and send what one session (or, with None, every stale session and
-    every outbox left by a failed send) has not sent yet. Returns memories sent."""
+    every outbox left by a failed send) has not sent yet. Returns memories sent.
+    `client_factory(tool)` makes the client, told which tool filled the outbox."""
     sent = 0
     root = _sessions()
     paths: List[Path] = []
@@ -507,7 +508,7 @@ def run_hook(event: str, tool: str, data: Dict[str, Any], *, every: int = DEFAUL
         if client_factory is None:
             from .client import Korely
 
-            client_factory = lambda: Korely(timeout=NETWORK_TIMEOUT)  # noqa: E731
+            client_factory = lambda: Korely(timeout=NETWORK_TIMEOUT, client=tool)  # noqa: E731
         ev = Event(data)
         scope = scope_for(ev.cwd, fixed_scope)
         repo = repo_name(ev.cwd)

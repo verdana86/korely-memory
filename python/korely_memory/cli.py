@@ -880,7 +880,10 @@ def cmd_hook(args) -> int:
         from .client import Korely
 
         try:
-            hooks.flush(args.session, lambda: Korely(timeout=hooks.NETWORK_TIMEOUT))
+            # Each outbox names the tool that filled it: the memory says which
+            # assistant wrote it (X-Korely-Client), outside the agent cap.
+            hooks.flush(args.session, lambda tool=None: Korely(timeout=hooks.NETWORK_TIMEOUT,
+                                                              client=tool))
         except Exception as e:  # noqa: BLE001
             hooks._log(f"flush: {type(e).__name__}: {e}")
         return 0
