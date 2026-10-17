@@ -8,7 +8,7 @@ The server side of the entries marked "API" shipped on 2026-09-28. Against an
 older server these clients keep working: the old field names are still read,
 and a batch `timestamp` is refused there with a 422.
 
-## Python 0.1.25 (not released)
+## Python 0.1.25 (2026-10-18)
 
 - `korely projects` (list, create `--region eu|global`, rename, archive,
   unarchive, delete `--yes [--erase]`, a project named by id or name) and
