@@ -824,6 +824,15 @@ def cmd_init(args) -> int:
     the hooks are installed with it. Without a key, the key first (a signup,
     or `--api-key`), then the hooks. `--remove` needs no key at all.
     """
+    if getattr(args, "api_key", None) is not None and not args.api_key.strip():
+        # `--api-key ""` is a key that did not arrive (a shell variable left
+        # empty, a paste that missed), never a request for a new account. On
+        # 17 Oct 2026 `read -s K && korely init --api-key "$K"` left K empty,
+        # and init fell through to the signup: a second account with no
+        # login, saved as the default profile, in the founder's own test.
+        print("error: the key is empty: nothing saved, nothing installed, and no account "
+              "created. Paste the key again (korely init --api-key <key>).", file=sys.stderr)
+        return 2
     tool = getattr(args, "tool", None)
     if not tool:
         return _init_key(args)
@@ -921,6 +930,126 @@ def cmd_hook(args) -> int:
                          also_read_user=getattr(args, "also_read_user", None) or ())
     if out:
         print(out)
+    return 0
+
+
+# ── administration: projects and keys (an admin key) ────────────────────────
+# What the dashboard does, the terminal does too (the founder, 17 Oct 2026).
+_SCOPE_WORDS = {"read": "memories:read", "write": "memories:write", "admin": "admin"}
+
+
+def _project_of(k: Korely, ref: str) -> dict:
+    """A project by id or by name (case folded), archived ones included."""
+    rows = k.projects(include_archived=True)
+    hit = [p for p in rows if p.get("id") == ref] or \
+        [p for p in rows if (p.get("name") or "").lower() == ref.lower()]
+    if len(hit) != 1:
+        raise KorelyError(f"no single project named or numbered {ref!r} "
+                          f"({len(hit)} match; `korely projects` lists them)")
+    return hit[0]
+
+
+def cmd_projects(k: Korely, a) -> int:
+    action = a.action or "list"
+    if action == "list":
+        rows = k.projects(include_archived=a.archived)
+        if a.json:
+            _emit_json(rows)
+            return 0
+        for p in rows:
+            flags = " ".join(f for f in ("default" if p.get("is_default") else "",
+                                         "archived" if p.get("archived_at") else "") if f)
+            print(f"  {p.get('id')}  {p.get('name', ''):24s} region {p.get('region') or '-':6s}"
+                  f"{'  ' + flags if flags else ''}")
+        return 0
+    if action == "create":
+        out = k.create_project(a.name, region=a.region, description=a.description)
+    elif action == "rename":
+        out = k.update_project(_project_of(k, a.project)["id"], name=a.new_name)
+    elif action == "archive":
+        out = k.archive_project(_project_of(k, a.project)["id"])
+    elif action == "unarchive":
+        out = k.unarchive_project(_project_of(k, a.project)["id"])
+    else:  # delete
+        p = _project_of(k, a.project)
+        if not a.yes:
+            what = "erases every memory and fact it holds" if a.erase else \
+                "moves its keys, memories and facts to the default project"
+            print(f"error: deleting {p.get('name')!r} {what}. Re-run with --yes to confirm.",
+                  file=sys.stderr)
+            return 2
+        out = k.delete_project(p["id"], erase=a.erase)
+    if a.json:
+        _emit_json(out)
+    else:
+        print(f"{action}: {out.get('name') or out.get('id') or 'done'}")
+    return 0
+
+
+def _scopes(text: Optional[str]) -> Optional[list]:
+    if not text:
+        return None
+    return [_SCOPE_WORDS.get(w.strip(), w.strip()) for w in text.split(",") if w.strip()]
+
+
+def _users(text: Optional[str]) -> Optional[list]:
+    if not text:
+        return None
+    return [u.strip() for u in text.split(",") if u.strip()] or None
+
+
+def cmd_keys(k: Korely, a) -> int:
+    action = a.action or "list"
+    if action == "list":
+        rows = k.keys()
+        if a.json:
+            _emit_json(rows)
+            return 0
+        for r in rows:
+            users = f"  only {','.join(r['users'])}" if r.get("users") else ""
+            print(f"  {r.get('id')}  {r.get('masked', ''):22s} {(r.get('name') or '')[:24]:24s} "
+                  f"{r.get('state', ''):8s} {','.join(r.get('scopes') or [])}"
+                  f"  [{r.get('project_name') or '-'}]{users}")
+        return 0
+    if action == "create":
+        project = _project_of(k, a.project)["id"] if a.project else None
+        expires: Any = ...
+        if a.expires is not None:
+            expires = None if a.expires == "never" else int(a.expires)
+        out = k.create_key(a.name, project_id=project, scopes=_scopes(a.scopes),
+                           users=_users(a.users), expires_in_days=expires)
+        secret = out.pop("key", None)
+        if a.save_as and secret:
+            # Straight into a profile, never on the screen nor in the
+            # terminal's scrollback.
+            cfg = _load_config()
+            slot = _profile_slot(cfg, a.save_as)
+            slot.pop("tier", None)
+            slot["api_key"] = secret
+            slot["base_url"] = k.base_url
+            path = _save_config(cfg)
+            print(f"created {out.get('name')} ({out.get('masked')}), saved to {path} as profile "
+                  f"{a.save_as}; use it with --profile {a.save_as}")
+            return 0
+        if a.json:
+            _emit_json(dict(out, key=secret))
+            return 0
+        print(f"created {out.get('name')}: {secret}")
+        print("This is the only time the key is shown. Next time, --save-as <profile> keeps it "
+              "off the screen.")
+        return 0
+    if action == "move":
+        out = k.move_key(a.key_id, _project_of(k, a.project)["id"])
+    else:  # revoke
+        if not a.yes:
+            print("error: a revoked key stops working at once and for good. Re-run with --yes.",
+                  file=sys.stderr)
+            return 2
+        out = k.revoke_key(a.key_id)
+    if a.json:
+        _emit_json(out)
+    else:
+        print(f"{action}: {out.get('name') or out.get('id') or 'done'}")
     return 0
 
 
@@ -1158,6 +1287,51 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--all", action="store_true",
                     help="every page, for an export (with --json: one streamed JSON document)")
     sp.set_defaults(func=cmd_audit)
+
+    sp = sub.add_parser("projects", parents=[common],
+                        help="the account's projects (an admin key): list, create, rename, "
+                             "archive, unarchive, delete")
+    act = sp.add_subparsers(dest="action")
+    x = act.add_parser("list", parents=[common])
+    x.add_argument("--archived", action="store_true", help="archived ones too")
+    x = act.add_parser("create", parents=[common])
+    x.add_argument("name")
+    x.add_argument("--region", choices=["eu", "global"],
+                   help="where its memories are read by a model (default: the install's)")
+    x.add_argument("--description")
+    x = act.add_parser("rename", parents=[common])
+    x.add_argument("project", help="id or name")
+    x.add_argument("new_name")
+    for name in ("archive", "unarchive"):
+        x = act.add_parser(name, parents=[common])
+        x.add_argument("project", help="id or name")
+    x = act.add_parser("delete", parents=[common])
+    x.add_argument("project", help="id or name")
+    x.add_argument("--erase", action="store_true",
+                   help="erase its memories and facts instead of moving them to the default project")
+    x.add_argument("--yes", action="store_true", help="confirm")
+    sp.set_defaults(func=cmd_projects, archived=False)
+
+    sp = sub.add_parser("keys", parents=[common],
+                        help="the account's API keys (an admin key): list, create, move, revoke")
+    act = sp.add_subparsers(dest="action")
+    act.add_parser("list", parents=[common])
+    x = act.add_parser("create", parents=[common])
+    x.add_argument("--name", required=True)
+    x.add_argument("--project", help="id or name (default: the default project)")
+    x.add_argument("--scopes", help="read,write (the default), read, write, admin")
+    x.add_argument("--users",
+                   help="confine it to these end users: founder,repo:* (a trailing * is a prefix)")
+    x.add_argument("--expires", help="days, or never (default: the server's)")
+    x.add_argument("--save-as", metavar="PROFILE",
+                   help="save the new key in this profile instead of printing it")
+    x = act.add_parser("move", parents=[common])
+    x.add_argument("key_id")
+    x.add_argument("--project", required=True, help="id or name")
+    x = act.add_parser("revoke", parents=[common])
+    x.add_argument("key_id")
+    x.add_argument("--yes", action="store_true", help="confirm")
+    sp.set_defaults(func=cmd_keys)
 
     sp = sub.add_parser("delete-account", parents=[common],
                         help="delete this key's account for good (Cloud, `init --agent` accounts; "

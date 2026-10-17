@@ -165,6 +165,37 @@ class AsyncKorely:
     async def delete_agent(self, agent_id: str) -> AgentDeleteReceipt:
         return await self._run(self._sync.delete_agent, agent_id)
 
+    # ── administration (an admin key): the sync client's, off the loop ─────
+    async def projects(self, **kw) -> list:
+        return await self._run(lambda: self._sync.projects(**kw))
+
+    async def create_project(self, name: str, **kw) -> dict:
+        return await self._run(lambda: self._sync.create_project(name, **kw))
+
+    async def update_project(self, project_id: str, **kw) -> dict:
+        return await self._run(lambda: self._sync.update_project(project_id, **kw))
+
+    async def archive_project(self, project_id: str) -> dict:
+        return await self._run(self._sync.archive_project, project_id)
+
+    async def unarchive_project(self, project_id: str) -> dict:
+        return await self._run(self._sync.unarchive_project, project_id)
+
+    async def delete_project(self, project_id: str, **kw) -> dict:
+        return await self._run(lambda: self._sync.delete_project(project_id, **kw))
+
+    async def keys(self) -> list:
+        return await self._run(self._sync.keys)
+
+    async def create_key(self, name: str, **kw) -> dict:
+        return await self._run(lambda: self._sync.create_key(name, **kw))
+
+    async def revoke_key(self, key_id: str) -> dict:
+        return await self._run(self._sync.revoke_key, key_id)
+
+    async def move_key(self, key_id: str, project_id: str) -> dict:
+        return await self._run(self._sync.move_key, key_id, project_id)
+
     async def events(self, **kw) -> EventsResponse:
         return await self._run(lambda: self._sync.events(**kw))
 

@@ -10,6 +10,20 @@ and a batch `timestamp` is refused there with a 422.
 
 ## Python 0.1.25 (not released)
 
+- `korely projects` (list, create `--region eu|global`, rename, archive,
+  unarchive, delete `--yes [--erase]`, a project named by id or name) and
+  `korely keys` (list, create `--scopes read,write,admin --users
+  founder,repo:* --expires 30|never [--save-as PROFILE]`, move, revoke
+  `--yes`): the dashboard's administration from the terminal, with a key
+  that holds `admin` (`--profile admin`). `--save-as` writes the new key
+  into a profile and never prints it. The same calls in the client:
+  `projects()`, `create_project()`, `update_project()`,
+  `archive_project()`, `unarchive_project()`, `delete_project()`, `keys()`,
+  `create_key(users=...)`, `revoke_key()`, `move_key()`, and in
+  `AsyncKorely`.
+- `korely init --api-key ""` (an empty or blank key, with or without
+  `--tool`) refuses and saves nothing. It used to fall through to the
+  signup and create a second account with no login.
 - `korely init --tool claude-code|codex|cursor` connects a coding assistant
   to one memory per repository (`repo:<name>`, the same from a worktree),
   shared by every assistant connected: hooks hand it the memory at the
