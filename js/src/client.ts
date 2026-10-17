@@ -83,6 +83,12 @@ export interface KorelyOptions {
   timeoutMs?: number;
   /** Inject a fetch implementation (mainly for testing / older runtimes). */
   fetch?: typeof fetch;
+  /**
+   * The tool writing, e.g. "claude-code" (else KORELY_CLIENT): sent as
+   * `X-Korely-Client`, which Korely Agent keeps on each memory as `client`, a
+   * label no agent cap counts. Left out, the header names this library.
+   */
+  client?: string;
 }
 
 /** Where and how `Korely.initAgent()` signs up: the client options a call
@@ -98,7 +104,7 @@ export interface InitAgentOptions extends Pick<KorelyOptions, "region" | "baseUr
 
 // The options each method reads (options.ts): the compiler holds every list to
 // its type, and every method refuses a key that is not on its list.
-const CLIENT_KEYS = keysOf<KorelyOptions>()("apiKey", "region", "baseUrl", "timeoutMs", "fetch");
+const CLIENT_KEYS = keysOf<KorelyOptions>()("apiKey", "region", "baseUrl", "timeoutMs", "fetch", "client");
 const INIT_KEYS = keysOf<InitAgentOptions>()("region", "baseUrl", "timeoutMs", "fetch", "processingRegion");
 const ADD_KEYS = keysOf<AddOptions>()("agent_id", "user_id", "run_id", "metadata", "timestamp");
 const SEARCH_KEYS = keysOf<SearchOptions>()("user_id", "agent_id", "run_id", "metadata", "limit", "min_score");
@@ -365,6 +371,7 @@ interface Transport {
   timeoutMs: number;
   fetchImpl: typeof fetch;
   apiKey?: string;
+  client?: string;
 }
 
 /** One HTTP exchange: the answer's JSON, or the error the status maps to. */
@@ -386,7 +393,7 @@ async function exchange(
 
   const headers: Record<string, string> = {
     Accept: "application/json",
-    "X-Korely-Client": `korely-js/${VERSION}`,
+    "X-Korely-Client": t.client || `korely-js/${VERSION}`,
   };
   // No key only for initAgent(): that call is how a key is obtained, and an
   // empty `Bearer ` is not "no key" to a server.
@@ -533,6 +540,7 @@ export class Korely {
   readonly apiKey: string;
   readonly baseUrl: string;
   readonly timeoutMs: number;
+  readonly client?: string;
   private readonly fetchImpl: typeof fetch;
 
   constructor(opts: KorelyOptions = {}) {
@@ -554,6 +562,9 @@ export class Korely {
       );
     }
     this.apiKey = key;
+    const envClient =
+      typeof process !== "undefined" ? process.env?.KORELY_CLIENT : undefined;
+    this.client = (opts.client ?? envClient ?? "").trim() || undefined;
     // KORELY_BASE_URL comes before the region default, and not for convenience.
     // Somebody who installed Korely on their own machine sets KORELY_API_KEY and
     // KORELY_BASE_URL, writes `new Korely()`, and expects to be talking to their
@@ -638,7 +649,8 @@ export class Korely {
     opts: { params?: Params; body?: unknown } = {},
   ): Promise<any> {
     return exchange(
-      { baseUrl: this.baseUrl, timeoutMs: this.timeoutMs, fetchImpl: this.fetchImpl, apiKey: this.apiKey },
+      { baseUrl: this.baseUrl, timeoutMs: this.timeoutMs, fetchImpl: this.fetchImpl, apiKey: this.apiKey,
+        client: this.client },
       method, path, opts,
     );
   }

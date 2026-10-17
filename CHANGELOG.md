@@ -8,6 +8,66 @@ The server side of the entries marked "API" shipped on 2026-09-28. Against an
 older server these clients keep working: the old field names are still read,
 and a batch `timestamp` is refused there with a 422.
 
+## Python 0.1.25 (not released)
+
+- `korely projects` (list, create `--region eu|global`, rename, archive,
+  unarchive, delete `--yes [--erase]`, a project named by id or name) and
+  `korely keys` (list, create `--scopes read,write,admin --users
+  founder,repo:* --expires 30|never [--save-as PROFILE]`, move, revoke
+  `--yes`): the dashboard's administration from the terminal, with a key
+  that holds `admin` (`--profile admin`). `--save-as` writes the new key
+  into a profile and never prints it. The same calls in the client:
+  `projects()`, `create_project()`, `update_project()`,
+  `archive_project()`, `unarchive_project()`, `delete_project()`, `keys()`,
+  `create_key(users=...)`, `revoke_key()`, `move_key()`, and in
+  `AsyncKorely`.
+- `korely init --api-key ""` (an empty or blank key, with or without
+  `--tool`) refuses and saves nothing. It used to fall through to the
+  signup and create a second account with no login.
+- `korely init --tool claude-code|codex|cursor` connects a coding assistant
+  to one memory per repository (`repo:<name>`, the same from a worktree),
+  shared by every assistant connected: hooks hand it the memory at the
+  start of a session and on its first prompt, and send the prompts and the
+  final answers as one memory every five answers, before a compaction and
+  at the end, from a process of their own. What looks like a key is masked
+  first. `--global` for every repository, `--user-id` for one memory,
+  `--no-mcp`, `--remove`. A file the repository commits is never touched.
+- `korely hook <event>`: what those hooks run. It reads the event on stdin,
+  prints what the tool expects and always exits 0.
+- `korely-mcp --user-id <id>` and `--repo-scope`: the user_id of a call
+  that names none.
+- `korely-mcp --also-read-user <id>` (repeatable), and `korely init --tool
+  ... --also-read-user <id>` passes it to the server as well as to the hooks:
+  a context, a search or a facts read without user_id covers the
+  repository's memory and each id (one block per id, one ranking for the
+  search, one section per id for the facts), and the tools' descriptions
+  tell the model that what holds beyond the repository goes to one of
+  those ids. Before, only the hooks read them, and a tool called in the
+  middle of a session saw the repository alone.
+- Named profiles: `korely init --api-key ... --profile private` saves a
+  second key next to the default one in `~/.korely/config.json`; every
+  command, `Korely(profile=)`, `AsyncKorely(profile=)` and `korely-mcp` take
+  `--profile` (or `KORELY_PROFILE`). A profile named is a decision: the
+  environment's key does not override it. `korely init --tool ...
+  --also-read private` makes the session start read that project too (its
+  own block) and adds an MCP server `korely-private`; sessions are saved to
+  the default profile only. `--also-read-user <id>` reads a user_id of the
+  same project next to `repo:<name>` (a memory across repositories); the
+  session is still saved to the repository. The CLI and the client read the
+  config file through one function now (`profile_config`).
+- `Korely(client="claude-code")` (or `KORELY_CLIENT`) names the tool
+  writing, sent as `X-Korely-Client`; left out, the header names the
+  library, `korely-python/<version>`. Korely Agent from 0.1.36 keeps it on
+  each memory as `client`, a label no agent cap counts (an older server
+  ignores the header). `korely hook` sends the assistant's name.
+
+## npm 0.1.16 (not released)
+
+- `new Korely({ client: "cursor" })` (or `KORELY_CLIENT`) replaces the
+  library's name in `X-Korely-Client`, the header this client has always
+  sent (`korely-js/<version>`). Korely Agent from 0.1.36 keeps it on each
+  memory as `client`.
+
 ## Python 0.1.24 (2026-10-12)
 
 - `korely init --processing-region eu|global`: the CLI can choose where the

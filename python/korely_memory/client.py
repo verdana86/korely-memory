@@ -155,7 +155,39 @@ def _coerce_content(content: Any) -> str:
     return str(content)
 
 
-def _key_from_config() -> Optional[str]:
+def config_path() -> str:
+    """~/.korely/config.json, or $KORELY_CONFIG_HOME/config.json: where
+    `korely init` saves a key, and where every client reads it back."""
+    home = os.environ.get("KORELY_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".korely")
+    return os.path.join(home, "config.json")
+
+
+def profile_config(profile: Optional[str] = None) -> dict:
+    """The saved settings of one profile: the file's top level for the default
+    profile, its `profiles[<name>]` for a named one (`korely init --profile`),
+    the way the AWS CLI keeps several accounts in one file. `profile` None
+    reads KORELY_PROFILE, else the default. Best effort: an unreadable file is
+    an empty profile, and the caller raises its usual missing-key error."""
+    try:
+        with open(config_path(), encoding="utf-8") as fh:
+            data = json.load(fh)
+    except Exception:
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    name = profile or os.environ.get("KORELY_PROFILE") or None
+    if not name or name == "default":
+        return data
+    named = (data.get("profiles") or {}).get(name)
+    return named if isinstance(named, dict) else {}
+
+
+def _from_config(field: str, profile: Optional[str] = None) -> Optional[str]:
+    value = profile_config(profile).get(field)
+    return value if isinstance(value, str) and value else None
+
+
+def _key_from_config(profile: Optional[str] = None) -> Optional[str]:
     """Fall back to the key `korely init` saved.
 
     The CLI writes it to ~/.korely/config.json, and the docs tell people to run
@@ -164,17 +196,10 @@ def _key_from_config() -> Optional[str]:
     Best effort: any read problem just means we carry on and raise the normal
     missing-key error.
     """
-    try:
-        home = os.environ.get("KORELY_CONFIG_HOME") or os.path.join(
-            os.path.expanduser("~"), ".korely")
-        with open(os.path.join(home, "config.json"), encoding="utf-8") as fh:
-            key = json.load(fh).get("api_key")
-        return key if isinstance(key, str) and key else None
-    except Exception:
-        return None
+    return _from_config("api_key", profile)
 
 
-def _base_from_config() -> Optional[str]:
+def _base_from_config(profile: Optional[str] = None) -> Optional[str]:
     """The server `korely init` was pointed at, from the same file.
 
     `korely init --base-url https://my-server` writes both the key and the
@@ -183,14 +208,7 @@ def _base_from_config() -> Optional[str]:
     sent it to api.korely.ai. Same defect as the environment variable, in the
     one path the docstring above calls the documented one.
     """
-    try:
-        home = os.environ.get("KORELY_CONFIG_HOME") or os.path.join(
-            os.path.expanduser("~"), ".korely")
-        with open(os.path.join(home, "config.json"), encoding="utf-8") as fh:
-            base = json.load(fh).get("base_url")
-        return base if isinstance(base, str) and base else None
-    except Exception:
-        return None
+    return _from_config("base_url", profile)
 
 
 def _sni_hint(base_url: str, reason: object) -> str:
@@ -334,15 +352,30 @@ class Korely:
         timeout: float = 30.0,
         ca_file: Optional[str] = None,
         verify: bool = True,
+        client: Optional[str] = None,
+        profile: Optional[str] = None,
     ):
-        """`ca_file`: a PEM file with the certificate authority to trust for
+        """`client`: the tool writing, e.g. "claude-code" (argument, else
+        KORELY_CLIENT), sent as `X-Korely-Client`: Korely Agent keeps it on
+        each memory as `client`, a label that no agent cap counts. Left out,
+        the header names this library, `korely-python/<version>`.
+
+        `profile`: a key saved with `korely init --profile <name>`, read from
+        the config file instead of the default one; a profile named here is a
+        decision, so KORELY_API_KEY and KORELY_BASE_URL do not override it.
+
+        `ca_file`: a PEM file with the certificate authority to trust for
         https (argument, else KORELY_CA_FILE), for a server whose certificate
         a private CA signed: Caddy's local CA on a laptop install, a company
         CA. Needed on the Python 3.9 macOS ships with, whose LibreSSL does not
         read SSL_CERT_FILE. `verify=False` turns certificate checks off: only
         as an argument, never from the environment, because it lets anyone on
         the path read the key and the memories."""
-        self.api_key = api_key or os.environ.get("KORELY_API_KEY") or _key_from_config()
+        if profile and not api_key and not _key_from_config(profile):
+            raise KorelyError(f"No key saved for the profile {profile!r}: run "
+                              f"`korely init --api-key <key> --profile {profile}`.")
+        env = {} if profile else os.environ
+        self.api_key = api_key or env.get("KORELY_API_KEY") or _key_from_config(profile)
         if not self.api_key:
             raise KorelyError(
                 "No API key. Pass api_key='kor_live_...', set KORELY_API_KEY, "
@@ -366,13 +399,14 @@ class Korely:
         # that quietly wins.
         self.base_url = (
             base_url
-            or os.environ.get("KORELY_BASE_URL")
-            or _base_from_config()
+            or env.get("KORELY_BASE_URL")
+            or _base_from_config(profile)
             or _REGIONS.get(region)
             or _REGIONS["eu"]
         ).rstrip("/")
         _refuse_a_mismatched_pair(self.api_key, self.base_url)
         self.timeout = timeout
+        self.client = (client or os.environ.get("KORELY_CLIENT") or "").strip() or None
         self._ssl_context = _ssl_context(ca_file or os.environ.get("KORELY_CA_FILE") or None, verify)
 
     @classmethod
@@ -459,6 +493,10 @@ class Korely:
         # key is obtained, and an empty `Bearer ` is not "no key" to a server.
         if self.api_key:
             headers["Authorization"] = "Bearer " + self.api_key
+        # Who is writing: the tool the developer named, else this library, as
+        # the JavaScript client has always said (`korely-js/<version>`).
+        headers["X-Korely-Client"] = (getattr(self, "client", None)
+                                      or "korely-python/" + __version__)
         if data is not None:
             headers["Content-Type"] = "application/json"
         req = _urlrequest.Request(url, data=data, method=method, headers=headers)
@@ -513,6 +551,14 @@ class Korely:
         if status >= 400:
             self._raise(status, body if isinstance(body, dict) else {})
         return body if isinstance(body, dict) else {}
+
+    def _call_any(self, method: str, path: str, *, params: Optional[dict] = None,
+                  json_body: Optional[Any] = None) -> Any:
+        """`_call` for an answer that may be a list (GET /admin/keys)."""
+        status, body = self._send(method, path, params=params, json_body=json_body)
+        if status >= 400:
+            self._raise(status, body if isinstance(body, dict) else {})
+        return body
 
     @staticmethod
     def _detail_line(body: dict) -> Optional[str]:
@@ -865,6 +911,67 @@ class Korely:
         return AgentDeleteReceipt.from_dict(
             self._call("DELETE", "/v1/agents/" + _seg(agent_id, "agent_id"))
         )
+
+    # ── administration (an admin key) ────────────────────────────────────────
+    # Projects and keys, as the dashboard manages them (the founder, 17 Oct
+    # 2026: what the dashboard does, the API and the terminal do too). The key
+    # needs the `admin` scope; on the Cloud /admin answers on api.korely.ai.
+    # The answers are the server's own dicts.
+    def projects(self, *, include_archived: bool = False) -> list:
+        """GET /admin/projects: the account's projects."""
+        body = self._call("GET", "/admin/projects",
+                          params=_clean({"include_archived": True if include_archived else None}))
+        return list(body.get("projects") or [])
+
+    def create_project(self, name: str, *, region: Optional[str] = None,
+                       description: Optional[str] = None) -> dict:
+        """POST /admin/projects. ``region``: ``eu`` or ``global`` (None: the
+        install's default writer)."""
+        return self._call("POST", "/admin/projects", json_body=_clean({
+            "name": name, "region": region, "description": description}))
+
+    def update_project(self, project_id: str, *, name: Optional[str] = None,
+                       description: Optional[str] = None) -> dict:
+        """PATCH /admin/projects/:id: a new name or description."""
+        return self._call("PATCH", "/admin/projects/" + _seg(project_id, "project_id"),
+                          json_body=_clean({"name": name, "description": description}))
+
+    def archive_project(self, project_id: str) -> dict:
+        """POST /admin/projects/:id/archive (refused while live keys are in it)."""
+        return self._call("POST", f"/admin/projects/{_seg(project_id, 'project_id')}/archive")
+
+    def unarchive_project(self, project_id: str) -> dict:
+        return self._call("POST", f"/admin/projects/{_seg(project_id, 'project_id')}/unarchive")
+
+    def delete_project(self, project_id: str, *, erase: bool = False) -> dict:
+        """DELETE /admin/projects/:id. What it held moves to the default
+        project, or with ``erase`` is physically deleted (keys still move)."""
+        return self._call("DELETE", "/admin/projects/" + _seg(project_id, "project_id"),
+                          params={"erase": "true"} if erase else None)
+
+    def keys(self) -> list:
+        """GET /admin/keys: the account's keys, masked (never a secret)."""
+        body = self._call_any("GET", "/admin/keys")
+        return list(body if isinstance(body, list) else body.get("keys") or [])
+
+    def create_key(self, name: str, *, project_id: Optional[str] = None,
+                   scopes: Optional[List[str]] = None, users: Optional[List[str]] = None,
+                   expires_in_days: Any = ...) -> dict:
+        """POST /admin/keys. The answer's ``key`` is the secret, shown once.
+        ``users``: confine it to these end users of its project (exact ids and
+        prefixes ending in ``*``); ``expires_in_days``: left out the server's
+        default, None never, 0 expired now."""
+        body = _clean({"name": name, "project_id": project_id, "scopes": scopes, "users": users})
+        if expires_in_days is not ...:
+            body["expires_in_days"] = expires_in_days
+        return self._call("POST", "/admin/keys", json_body=body)
+
+    def revoke_key(self, key_id: str) -> dict:
+        return self._call("POST", f"/admin/keys/{_seg(key_id, 'key_id')}/revoke")
+
+    def move_key(self, key_id: str, project_id: str) -> dict:
+        return self._call("POST", f"/admin/keys/{_seg(key_id, 'key_id')}/move",
+                          json_body={"project_id": project_id})
 
     # ── facts ────────────────────────────────────────────────────────────────
     def get_facts(self, *, subject: Optional[str] = None, entity: Optional[str] = None,

@@ -301,3 +301,79 @@ class TheSearchDefaultOfTheHostedServers(unittest.TestCase):
         with mock.patch.object(m, "_client", lambda: k):
             self.assertEqual(m.korely_search("tea"), "no matches.")
         self.assertEqual(sent[0]["limit"], 10)
+
+
+class TestAlsoReadUser(unittest.TestCase):
+    """`korely-mcp --repo-scope --also-read-user founder` (17 Oct 2026): the
+    hooks read `founder` at the start of a session, and the tools in the
+    middle of it saw `repo:<name>` alone unless the model guessed the id.
+    A read without user_id now covers the repository and each id, and the
+    descriptions say where a write that holds beyond the repository goes."""
+
+    def setUp(self):
+        from korely_memory import mcp_server as m
+
+        self.m = m
+        self.saved = (m._DEFAULT_USER, m._ALSO_READ,
+                      {f: getattr(m, f).__doc__ for f in
+                       ("korely_get_context", "korely_search", "korely_get_facts", "korely_add")})
+        m._DEFAULT_USER, m._ALSO_READ = "repo:site", ("founder",)
+
+    def tearDown(self):
+        m = self.m
+        m._DEFAULT_USER, m._ALSO_READ, docs = self.saved
+        for f, d in docs.items():
+            getattr(m, f).__doc__ = d
+
+    def fake(self):
+        from types import SimpleNamespace
+
+        asked = []
+
+        class Client:
+            def search(self, query, user_id=None, limit=10, min_score=None):
+                asked.append(user_id)
+                score = {"repo:site": 0.5, "founder": 0.9}[user_id]
+                return [SimpleNamespace(score=score, snippet=f"note of {user_id}", id=f"mem_{user_id}")]
+
+            def get_facts(self, user_id=None, **kw):
+                asked.append(user_id)
+                return []
+
+        return Client(), asked
+
+    def test_a_read_without_user_id_covers_every_id(self):
+        self.assertEqual(self.m._readers(None), ["repo:site", "founder"])
+        self.assertEqual(self.m._readers("private"), ["private"])
+
+    def test_search_ranks_across_them_and_says_whose(self):
+        client, asked = self.fake()
+        with mock.patch.object(self.m, "_client", lambda: client):
+            out = self.m.korely_search("decision")
+        self.assertEqual(asked, ["repo:site", "founder"])
+        self.assertLess(out.index("mem_founder, founder"), out.index("mem_repo:site, repo:site"))
+
+    def test_without_extra_ids_nothing_changes(self):
+        self.m._ALSO_READ = ()
+        client, asked = self.fake()
+        with mock.patch.object(self.m, "_client", lambda: client):
+            out = self.m.korely_search("decision")
+        self.assertEqual(asked, ["repo:site"])
+        self.assertNotIn(", repo:site", out)
+
+    def test_the_descriptions_say_where_a_write_goes(self):
+        self.m._note_the_scope()
+        listed = self.m.mcp.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list"})["result"]["tools"]
+        tools = {t["name"]: t["description"] for t in listed}
+        self.assertIn("'founder'", tools["korely_add"])
+        self.assertIn("pass it as user_id", tools["korely_add"])
+        self.assertIn("reads 'repo:site'", tools["korely_search"])
+
+
+class TestTheServerGetsTheIds(unittest.TestCase):
+    def test_init_passes_the_ids_to_the_server(self):
+        from korely_memory.hooks import _mcp_command
+
+        cmd = _mcp_command("korely", None, also_read_user=("founder", "private"))
+        self.assertEqual(cmd[-5:], ["--repo-scope", "--also-read-user", "founder",
+                                    "--also-read-user", "private"])

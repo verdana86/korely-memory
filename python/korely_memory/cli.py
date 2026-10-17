@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from . import __version__
-from .client import Korely, _refuse_a_mismatched_pair
+from .client import Korely, _refuse_a_mismatched_pair, config_path, profile_config
 from .exceptions import APIError, KorelyError
 
 _DEFAULT_BASE = "https://api.korely.ai"
@@ -31,8 +31,7 @@ _DEFAULT_BASE = "https://api.korely.ai"
 
 # ── config file (~/.korely/config.json) ─────────────────────────────────────
 def _config_path() -> Path:
-    home = os.environ.get("KORELY_CONFIG_HOME") or str(Path.home() / ".korely")
-    return Path(home) / "config.json"
+    return Path(config_path())
 
 
 def _load_config() -> dict:
@@ -54,16 +53,32 @@ def _save_config(data: dict) -> Path:
 
 
 def _resolve_key(args) -> Optional[str]:
-    """Key precedence: --api-key flag > KORELY_API_KEY env > saved config."""
+    """Key precedence: --api-key flag > KORELY_API_KEY env > saved config.
+    With --profile, the profile's saved key (a profile named is a decision:
+    the environment does not override it)."""
+    profile = getattr(args, "profile", None)
+    if profile:
+        return getattr(args, "api_key", None) or profile_config(profile).get("api_key")
     return (getattr(args, "api_key", None)
             or os.environ.get("KORELY_API_KEY")
-            or _load_config().get("api_key"))
+            or profile_config().get("api_key"))
 
 
 def _resolve_base_url(args) -> Optional[str]:
+    profile = getattr(args, "profile", None)
+    if profile:
+        return getattr(args, "base_url", None) or profile_config(profile).get("base_url")
     return (getattr(args, "base_url", None)
             or os.environ.get("KORELY_BASE_URL")
-            or _load_config().get("base_url"))
+            or profile_config().get("base_url"))
+
+
+def _profile_slot(cfg: dict, profile: Optional[str]) -> dict:
+    """Where `korely init` writes a key: the file's top level for the default
+    profile, `profiles[<name>]` for `--profile <name>` (created)."""
+    if not profile or profile == "default":
+        return cfg
+    return cfg.setdefault("profiles", {}).setdefault(profile, {})
 
 
 # ── output helpers ─────────────────────────────────────────────────────────
@@ -668,7 +683,7 @@ def cmd_batch_status(k: Korely, a) -> int:
     return 0
 
 
-def cmd_init(args) -> int:
+def _init_key(args) -> int:
     """Self-serve signup: mint a hobby key with no Firebase, save it locally.
 
     The one command that runs WITHOUT a key: it is how you get one. Calls
@@ -694,7 +709,8 @@ def cmd_init(args) -> int:
     # `init` overwrote the file, and the first account stayed on the server,
     # with its memories, impossible to close, its key held by nobody. Checked
     # before the signup call, so a refused init mints no account either.
-    saved = _load_config().get("api_key")
+    profile = getattr(args, "profile", None)
+    saved = _profile_slot(_load_config(), profile).get("api_key")
     if saved and saved != given and not getattr(args, "force", False):
         print(f"error: nothing changed. A key is already saved in {_config_path()} "
               f"({_mask(saved)}).\n"
@@ -727,15 +743,16 @@ def cmd_init(args) -> int:
             print(f"error: nothing saved. {e}", file=sys.stderr)
             return 2
         cfg = _load_config()
-        if cfg.get("api_key") != given:
-            cfg.pop("tier", None)  # the plan of the key this one replaces
-        cfg["api_key"] = given
-        cfg["base_url"] = base
+        slot = _profile_slot(cfg, profile)
+        if slot.get("api_key") != given:
+            slot.pop("tier", None)  # the plan of the key this one replaces
+        slot["api_key"] = given
+        slot["base_url"] = base
         path = _save_config(cfg)
         if getattr(args, "json", False):
             _emit_json({"api_key": given, "base_url": base, "config": str(path)})
             return 0
-        print(f"Saved to {path} (chmod 600).")
+        print(f"Saved to {path} (chmod 600)" + (f", profile {profile}." if profile else "."))
         print(f"  key       {_mask(given)}")
         print(f"  base_url  {base}")
         print()
@@ -768,11 +785,12 @@ def cmd_init(args) -> int:
         print("error: server did not return an api_key.", file=sys.stderr)
         return 1
     cfg = _load_config()
-    cfg.pop("tier", None)  # the plan of a key replaced with --force
-    cfg["api_key"] = key
-    cfg["base_url"] = base
+    slot = _profile_slot(cfg, profile)
+    slot.pop("tier", None)  # the plan of a key replaced with --force
+    slot["api_key"] = key
+    slot["base_url"] = base
     if result.tier:
-        cfg["tier"] = result.tier
+        slot["tier"] = result.tier
     path = _save_config(cfg)
 
     if getattr(args, "json", False):
@@ -799,6 +817,242 @@ def cmd_init(args) -> int:
     return 0
 
 
+def cmd_init(args) -> int:
+    """`korely init`, and with `--tool` the hooks of a coding assistant.
+
+    With `--tool` and a key already saved there is nothing to sign up for:
+    the hooks are installed with it. Without a key, the key first (a signup,
+    or `--api-key`), then the hooks. `--remove` needs no key at all.
+    """
+    if getattr(args, "api_key", None) is not None and not args.api_key.strip():
+        # `--api-key ""` is a key that did not arrive (a shell variable left
+        # empty, a paste that missed), never a request for a new account. On
+        # 17 Oct 2026 `read -s K && korely init --api-key "$K"` left K empty,
+        # and init fell through to the signup: a second account with no
+        # login, saved as the default profile, in the founder's own test.
+        print("error: the key is empty: nothing saved, nothing installed, and no account "
+              "created. Paste the key again (korely init --api-key <key>).", file=sys.stderr)
+        return 2
+    tool = getattr(args, "tool", None)
+    if not tool:
+        return _init_key(args)
+    if not getattr(args, "remove", False):
+        given = (getattr(args, "api_key", None) or "").strip()
+        have = (profile_config(args.profile).get("api_key") if getattr(args, "profile", None)
+                else os.environ.get("KORELY_API_KEY") or profile_config().get("api_key"))
+        if given or not have:
+            code = _init_key(args)
+            if code:
+                return code
+            print()
+    return _install_tool(args)
+
+
+def _install_tool(args) -> int:
+    from . import hooks
+
+    tool = args.tool
+    cwd = os.getcwd()
+    project = Path(hooks._git(cwd, "rev-parse", "--show-toplevel") or cwd)
+    everywhere = bool(getattr(args, "global_", False))
+    remove = bool(getattr(args, "remove", False))
+    scope = getattr(args, "user_id", None)
+    try:
+        report = hooks.install(tool, project, everywhere=everywhere, remove=remove,
+                               mcp=not getattr(args, "no_mcp", False), scope=scope,
+                               also_read=getattr(args, "also_read", None) or (),
+                               also_read_user=getattr(args, "also_read_user", None) or ())
+    except (hooks.InstallError, ValueError, OSError) as e:
+        print(f"error: nothing installed. {e}", file=sys.stderr)
+        return 2
+    name = hooks.TOOL_NAMES[tool]
+    if remove:
+        print(f"Korely hooks for {name} removed.")
+        for line in report:
+            print(f"  {line}")
+        return 0
+    memory = scope or (hooks.scope_for(cwd) if not everywhere else "repo:<name of each repository>")
+    print(f"Korely is connected to {name} "
+          f"({'every repository' if everywhere else 'this repository'}).")
+    for line in report:
+        print(f"  {line}")
+    print()
+    print(f"  memory   user_id {memory}: every assistant you connect reads and writes it")
+    print("  start    the assistant is handed what Korely holds for the repository, and on "
+          "the first prompt what matches it")
+    print(f"  saving   every {hooks.DEFAULT_EVERY} answers, before a compaction and at the end, "
+          "as one memory; what looks like a key is masked first")
+    if tool == "codex":
+        print()
+        print("Codex runs a new hook only once you trust it: open /hooks in Codex and trust "
+              "the five korely hooks.")
+    if tool == "cursor":
+        print()
+        print("Cursor runs Claude Code's hooks too; korely's Claude Code hooks step aside "
+              "inside Cursor, so a turn is stored once.")
+        print("Cursor does not wait for sessionStart: the first answer can come before the "
+              "context does.")
+    if tool == "claude-code":
+        print()
+        print("Claude Code runs hooks in a folder you trusted. Restart the session to load them.")
+    if not everywhere:
+        print()
+        print(f"See what it holds:  korely context \"what did we decide\" --user-id {memory}")
+    return 0
+
+
+def cmd_hook(args) -> int:
+    """`korely hook <event>`: what an assistant's hook runs. Reads the event
+    on stdin, prints what the tool expects, and exits 0 whatever happens."""
+    from . import hooks
+
+    if args.event == "flush":
+        from .client import Korely
+
+        try:
+            # Each outbox names the tool that filled it: the memory says which
+            # assistant wrote it (X-Korely-Client), outside the agent cap.
+            hooks.flush(args.session, lambda tool=None: Korely(timeout=hooks.NETWORK_TIMEOUT,
+                                                              client=tool))
+        except Exception as e:  # noqa: BLE001
+            hooks._log(f"flush: {type(e).__name__}: {e}")
+        return 0
+    try:
+        raw = sys.stdin.read() if not sys.stdin.isatty() else ""
+        data = json.loads(raw) if raw.strip() else {}
+        if not isinstance(data, dict):
+            data = {}
+    except (ValueError, OSError):
+        data = {}
+    out = hooks.run_hook(args.event, args.tool, data, every=args.every,
+                         fixed_scope=getattr(args, "user_id", None),
+                         also_read=getattr(args, "also_read", None) or (),
+                         also_read_user=getattr(args, "also_read_user", None) or ())
+    if out:
+        print(out)
+    return 0
+
+
+# ── administration: projects and keys (an admin key) ────────────────────────
+# What the dashboard does, the terminal does too (the founder, 17 Oct 2026).
+_SCOPE_WORDS = {"read": "memories:read", "write": "memories:write", "admin": "admin"}
+
+
+def _project_of(k: Korely, ref: str) -> dict:
+    """A project by id or by name (case folded), archived ones included."""
+    rows = k.projects(include_archived=True)
+    hit = [p for p in rows if p.get("id") == ref] or \
+        [p for p in rows if (p.get("name") or "").lower() == ref.lower()]
+    if len(hit) != 1:
+        raise KorelyError(f"no single project named or numbered {ref!r} "
+                          f"({len(hit)} match; `korely projects` lists them)")
+    return hit[0]
+
+
+def cmd_projects(k: Korely, a) -> int:
+    action = a.action or "list"
+    if action == "list":
+        rows = k.projects(include_archived=a.archived)
+        if a.json:
+            _emit_json(rows)
+            return 0
+        for p in rows:
+            flags = " ".join(f for f in ("default" if p.get("is_default") else "",
+                                         "archived" if p.get("archived_at") else "") if f)
+            print(f"  {p.get('id')}  {p.get('name', ''):24s} region {p.get('region') or '-':6s}"
+                  f"{'  ' + flags if flags else ''}")
+        return 0
+    if action == "create":
+        out = k.create_project(a.name, region=a.region, description=a.description)
+    elif action == "rename":
+        out = k.update_project(_project_of(k, a.project)["id"], name=a.new_name)
+    elif action == "archive":
+        out = k.archive_project(_project_of(k, a.project)["id"])
+    elif action == "unarchive":
+        out = k.unarchive_project(_project_of(k, a.project)["id"])
+    else:  # delete
+        p = _project_of(k, a.project)
+        if not a.yes:
+            what = "erases every memory and fact it holds" if a.erase else \
+                "moves its keys, memories and facts to the default project"
+            print(f"error: deleting {p.get('name')!r} {what}. Re-run with --yes to confirm.",
+                  file=sys.stderr)
+            return 2
+        out = k.delete_project(p["id"], erase=a.erase)
+    if a.json:
+        _emit_json(out)
+    else:
+        print(f"{action}: {out.get('name') or out.get('id') or 'done'}")
+    return 0
+
+
+def _scopes(text: Optional[str]) -> Optional[list]:
+    if not text:
+        return None
+    return [_SCOPE_WORDS.get(w.strip(), w.strip()) for w in text.split(",") if w.strip()]
+
+
+def _users(text: Optional[str]) -> Optional[list]:
+    if not text:
+        return None
+    return [u.strip() for u in text.split(",") if u.strip()] or None
+
+
+def cmd_keys(k: Korely, a) -> int:
+    action = a.action or "list"
+    if action == "list":
+        rows = k.keys()
+        if a.json:
+            _emit_json(rows)
+            return 0
+        for r in rows:
+            users = f"  only {','.join(r['users'])}" if r.get("users") else ""
+            print(f"  {r.get('id')}  {r.get('masked', ''):22s} {(r.get('name') or '')[:24]:24s} "
+                  f"{r.get('state', ''):8s} {','.join(r.get('scopes') or [])}"
+                  f"  [{r.get('project_name') or '-'}]{users}")
+        return 0
+    if action == "create":
+        project = _project_of(k, a.project)["id"] if a.project else None
+        expires: Any = ...
+        if a.expires is not None:
+            expires = None if a.expires == "never" else int(a.expires)
+        out = k.create_key(a.name, project_id=project, scopes=_scopes(a.scopes),
+                           users=_users(a.users), expires_in_days=expires)
+        secret = out.pop("key", None)
+        if a.save_as and secret:
+            # Straight into a profile, never on the screen nor in the
+            # terminal's scrollback.
+            cfg = _load_config()
+            slot = _profile_slot(cfg, a.save_as)
+            slot.pop("tier", None)
+            slot["api_key"] = secret
+            slot["base_url"] = k.base_url
+            path = _save_config(cfg)
+            print(f"created {out.get('name')} ({out.get('masked')}), saved to {path} as profile "
+                  f"{a.save_as}; use it with --profile {a.save_as}")
+            return 0
+        if a.json:
+            _emit_json(dict(out, key=secret))
+            return 0
+        print(f"created {out.get('name')}: {secret}")
+        print("This is the only time the key is shown. Next time, --save-as <profile> keeps it "
+              "off the screen.")
+        return 0
+    if action == "move":
+        out = k.move_key(a.key_id, _project_of(k, a.project)["id"])
+    else:  # revoke
+        if not a.yes:
+            print("error: a revoked key stops working at once and for good. Re-run with --yes.",
+                  file=sys.stderr)
+            return 2
+        out = k.revoke_key(a.key_id)
+    if a.json:
+        _emit_json(out)
+    else:
+        print(f"{action}: {out.get('name') or out.get('id') or 'done'}")
+    return 0
+
+
 # ── parser ──────────────────────────────────────────────────────────────────
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
@@ -814,6 +1068,9 @@ def build_parser() -> argparse.ArgumentParser:
     common.add_argument("--base-url", help="API base URL (default https://api.korely.ai)")
     common.add_argument("--user-id", help="end-user namespace (unlimited per tier)")
     common.add_argument("--agent-id", help="agent namespace (counts against your agent cap)")
+    common.add_argument("--profile",
+                        help="use the key saved with `korely init --profile <name>` "
+                             "(else KORELY_PROFILE, else the default one)")
 
     sub = p.add_subparsers(dest="command", required=True)
 
@@ -834,7 +1091,44 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--force", action="store_true",
                     help="replace a key already saved in ~/.korely/config.json (it is lost)")
     sp.add_argument("--json", action="store_true", help="machine-readable output")
+    sp.add_argument("--profile",
+                    help="save the key under this name, next to the default one (a second "
+                         "project, e.g. a private one); other commands take --profile too")
+    sp.add_argument("--tool", choices=["claude-code", "codex", "cursor"],
+                    help="also connect this coding assistant: hooks that hand it the "
+                         "repository's memory at the start and save the session to it")
+    sp.add_argument("--global", dest="global_", action="store_true",
+                    help="with --tool: every repository (your user settings), each with its "
+                         "own memory; default: this repository only")
+    sp.add_argument("--user-id",
+                    help="with --tool: one memory for all of it instead of repo:<name>")
+    sp.add_argument("--no-mcp", action="store_true",
+                    help="with --tool: hooks only, no korely MCP server")
+    sp.add_argument("--remove", action="store_true",
+                    help="with --tool: take korely's hooks and MCP server out again")
+    sp.add_argument("--also-read-user", action="append", default=[], metavar="USER_ID",
+                    help="with --tool: the session start also reads this user_id of the same "
+                         "project (a memory across repositories, e.g. your own); sessions are "
+                         "still saved to repo:<name>")
+    sp.add_argument("--also-read", action="append", default=[], metavar="PROFILE",
+                    help="with --tool: the session start also reads this profile's project "
+                         "(the whole project), and a second MCP server korely-<profile> is "
+                         "added; sessions are still saved to the default profile only")
     sp.set_defaults(func=cmd_init)
+
+    sp = sub.add_parser("hook", help="what a coding assistant's hook runs (korely init --tool)")
+    sp.add_argument("event", choices=["session-start", "prompt", "stop", "pre-compact",
+                                      "session-end", "flush"])
+    sp.add_argument("--tool", choices=["claude-code", "codex", "cursor"], default="claude-code")
+    sp.add_argument("--user-id", help="the memory to use instead of repo:<name>")
+    sp.add_argument("--every", type=int, default=5,
+                    help="answers kept before they are sent as one memory (default 5)")
+    sp.add_argument("--session", help="flush: only this session")
+    sp.add_argument("--also-read", action="append", default=[], metavar="PROFILE",
+                    help="session-start and prompt: also read this profile's project")
+    sp.add_argument("--also-read-user", action="append", default=[], metavar="USER_ID",
+                    help="session-start and prompt: also read this user_id of the same project")
+    sp.set_defaults(func=cmd_hook)
 
     sp = sub.add_parser("auth", parents=[common], help="verify your API key")
     sp.set_defaults(func=cmd_auth)
@@ -994,6 +1288,51 @@ def build_parser() -> argparse.ArgumentParser:
                     help="every page, for an export (with --json: one streamed JSON document)")
     sp.set_defaults(func=cmd_audit)
 
+    sp = sub.add_parser("projects", parents=[common],
+                        help="the account's projects (an admin key): list, create, rename, "
+                             "archive, unarchive, delete")
+    act = sp.add_subparsers(dest="action")
+    x = act.add_parser("list", parents=[common])
+    x.add_argument("--archived", action="store_true", help="archived ones too")
+    x = act.add_parser("create", parents=[common])
+    x.add_argument("name")
+    x.add_argument("--region", choices=["eu", "global"],
+                   help="where its memories are read by a model (default: the install's)")
+    x.add_argument("--description")
+    x = act.add_parser("rename", parents=[common])
+    x.add_argument("project", help="id or name")
+    x.add_argument("new_name")
+    for name in ("archive", "unarchive"):
+        x = act.add_parser(name, parents=[common])
+        x.add_argument("project", help="id or name")
+    x = act.add_parser("delete", parents=[common])
+    x.add_argument("project", help="id or name")
+    x.add_argument("--erase", action="store_true",
+                   help="erase its memories and facts instead of moving them to the default project")
+    x.add_argument("--yes", action="store_true", help="confirm")
+    sp.set_defaults(func=cmd_projects, archived=False)
+
+    sp = sub.add_parser("keys", parents=[common],
+                        help="the account's API keys (an admin key): list, create, move, revoke")
+    act = sp.add_subparsers(dest="action")
+    act.add_parser("list", parents=[common])
+    x = act.add_parser("create", parents=[common])
+    x.add_argument("--name", required=True)
+    x.add_argument("--project", help="id or name (default: the default project)")
+    x.add_argument("--scopes", help="read,write (the default), read, write, admin")
+    x.add_argument("--users",
+                   help="confine it to these end users: founder,repo:* (a trailing * is a prefix)")
+    x.add_argument("--expires", help="days, or never (default: the server's)")
+    x.add_argument("--save-as", metavar="PROFILE",
+                   help="save the new key in this profile instead of printing it")
+    x = act.add_parser("move", parents=[common])
+    x.add_argument("key_id")
+    x.add_argument("--project", required=True, help="id or name")
+    x = act.add_parser("revoke", parents=[common])
+    x.add_argument("key_id")
+    x.add_argument("--yes", action="store_true", help="confirm")
+    sp.set_defaults(func=cmd_keys)
+
     sp = sub.add_parser("delete-account", parents=[common],
                         help="delete this key's account for good (Cloud, `init --agent` accounts; "
                              "needs --yes)")
@@ -1008,6 +1347,9 @@ def main(argv=None) -> int:
     # `init` is the one command that runs WITHOUT a key: it mints one.
     if getattr(args, "command", None) == "init":
         return cmd_init(args)
+    if getattr(args, "command", None) == "hook":
+        # A hook finds its key itself, and never fails the assistant for want of one.
+        return cmd_hook(args)
     key = _resolve_key(args)
     if not key:
         print("error: no API key. Run `korely init --agent` to get one free, "

@@ -409,6 +409,65 @@ current server. `delete` forgets as `delete()` does; erasure is
 two memories: reads take the newest, and the next `put` or `delete` removes
 the other.
 
+## One memory for your coding assistants
+
+```bash
+pip install -U korely-memory
+cd your-repo
+korely init --tool claude-code      # or: --tool codex, --tool cursor
+```
+
+Each command connects one assistant to the same memory: `repo:<name>`, the
+repository's name, so what Claude Code learnt on Monday, Codex reads on
+Tuesday. It installs hooks, the assistant's own lifecycle commands, that run
+`korely hook`:
+
+| When | What happens |
+|---|---|
+| The session starts | The assistant is handed what Korely holds for the repository |
+| The first prompt | It is handed what matches that prompt |
+| Every 5 answers, before a compaction, at the end | The prompts and the final answers are sent as one memory, from a process of their own, so the assistant never waits |
+
+Before anything leaves the machine, what looks like a generated key, a
+private key or a password in a URL is replaced by `[redacted]`. A hook never
+breaks the assistant: a failure is a line in `~/.korely/hook.log`, without
+the text of the session.
+
+| Tool | Files (this repository) | With `--global` (every repository) | Notes |
+|---|---|---|---|
+| Claude Code | `.claude/settings.local.json`, MCP with `claude mcp add --scope local` | `~/.claude/settings.json`, `--scope user` | Hooks run in a folder you trusted |
+| Codex | `.codex/hooks.json`, `.codex/config.toml` | `~/.codex/` | Trust the five hooks once with `/hooks` |
+| Cursor | `.cursor/hooks.json`, `.cursor/mcp.json` | `~/.cursor/` | Cursor also runs Claude Code's hooks; korely's step aside there, so a turn is stored once. Cursor does not wait for `sessionStart` |
+
+A personal file in a repository is added to `.git/info/exclude`; a file the
+repository already commits is left alone (use `--global`). It also adds the
+`korely-mcp` server with the same scope, for searches and writes the
+assistant decides on (`--no-mcp` to skip it). `--user-id <id>` puts
+everything in one memory instead; `--remove` takes it all out again.
+
+Five answers to a memory is about eight writes for a day of forty exchanges.
+
+### Two projects, one shared and one private
+
+A key reads its whole project, so a private memory is a project of its own.
+Save its key as a named profile, next to the default one, in the same file
+(`~/.korely/config.json`, chmod 600; no key goes into a tool's config):
+
+```bash
+korely init --api-key kor_live_...                      # the shared project
+korely init --api-key kor_live_... --profile private    # the private one
+korely init --tool claude-code --also-read private
+```
+
+The session start then reads the repository's memory and, under a heading of
+its own, the private project; sessions are still saved to the shared one only.
+A second MCP server, `korely-private`, reads and writes the private project on
+purpose. `--also-read-user <id>` does the same for a memory of the same project
+that spans repositories (your own preferences and decisions, e.g. `founder`):
+the start reads it next to `repo:<name>`, and the session is saved to the
+repository. Every command takes `--profile` (or `KORELY_PROFILE`), and so do
+`Korely(profile="private")` and `korely-mcp --profile private`.
+
 ## MCP server
 
 ```bash
@@ -421,7 +480,9 @@ server at `https://api.korely.ai/agent/mcp` offers, with the same arguments
 (`korely_add` takes `timestamp`) and the same fact lines: a fact whose end date
 is still to come reads `[until 2027-01-01]`, not `[superseded ...]`, and dates
 are UTC days. It reads the key from `KORELY_API_KEY` or from the file
-`korely init` saved.
+`korely init` saved. `--user-id <id>` is the user_id of a call that names
+none; `--repo-scope` makes it `repo:<name>` of the folder the assistant starts
+the server in, the memory `korely hook` writes.
 
 ## Links
 
