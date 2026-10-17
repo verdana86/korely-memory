@@ -632,6 +632,29 @@ class InitDoesNotLoseASavedKey(_CleanEnv):
         self.assertEqual(rc, 0)
         self.assertEqual(self._config()["api_key"], self._OLD["api_key"])
 
+    def test_a_named_profile_is_guarded_too(self):
+        """17 Oct 2026: a key saved under a profile is no more replaced, and no
+        more signed up over, than the default one."""
+        import json as _json
+
+        cfg = dict(self._OLD, profiles={"private": {"api_key": "kor_live_priv000000000000000000000000000",
+                                                    "base_url": "https://api.korely.ai"}})
+        with open(os.path.join(self.cfg_dir, "config.json"), "w", encoding="utf-8") as fh:
+            _json.dump(cfg, fh)
+        rc, err, calls = self._init(["init", "--agent", "--profile", "private"])
+        self.assertEqual((rc, calls), (2, []))
+        self.assertEqual(self._config(), cfg)
+        self.assertIn("--force", err)
+
+    def test_installing_a_tool_over_a_saved_key_makes_no_account(self):
+        from unittest import mock
+
+        with mock.patch.object(cli, "_install_tool", return_value=0) as install:
+            rc, _, calls = self._init(["init", "--tool", "claude-code"])
+        self.assertEqual((rc, calls), (0, []))
+        install.assert_called_once()
+        self.assertEqual(self._config(), self._OLD)
+
 
 class AuthSpendsNothing(unittest.TestCase):
     """`korely auth` called GET /v1/users: it needs memories:read, so a
