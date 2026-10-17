@@ -22,6 +22,14 @@ and a batch `timestamp` is refused there with a 422.
   prints what the tool expects and always exits 0.
 - `korely-mcp --user-id <id>` and `--repo-scope`: the user_id of a call
   that names none.
+- `korely-mcp --also-read-user <id>` (repeatable), and `korely init --tool
+  ... --also-read-user <id>` passes it to the server as well as to the hooks:
+  a context, a search or a facts read without user_id covers the
+  repository's memory and each id (one block per id, one ranking for the
+  search, one section per id for the facts), and the tools' descriptions
+  tell the model that what holds beyond the repository goes to one of
+  those ids. Before, only the hooks read them, and a tool called in the
+  middle of a session saw the repository alone.
 - Named profiles: `korely init --api-key ... --profile private` saves a
   second key next to the default one in `~/.korely/config.json`; every
   command, `Korely(profile=)`, `AsyncKorely(profile=)` and `korely-mcp` take

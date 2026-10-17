@@ -50,6 +50,13 @@ _DEFAULT_USER: Optional[str] = None
 # The profile whose key this server uses (`main`, `--profile`): a second
 # project next to the default one, e.g. a private one.
 _PROFILE: Optional[str] = None
+# The user_ids a read also covers when the model names none (`main`,
+# `--also-read-user`): a memory that spans repositories next to the
+# repository's own, e.g. `founder`. The hooks read them at the start of a
+# session (hooks._context_text); without this the tools in the middle of it
+# saw `repo:<name>` alone, unless the model guessed the id (window A, 17 Oct
+# 2026).
+_ALSO_READ: tuple = ()
 
 
 def _client() -> Korely:
@@ -63,6 +70,31 @@ def _client() -> Korely:
 
 def _user(user_id: Optional[str]) -> Optional[str]:
     return user_id or _DEFAULT_USER
+
+
+def _readers(user_id: Optional[str]) -> list:
+    """The user_ids a read covers: the one named; else this server's default
+    and each `--also-read-user`, in that order. Without a default there is
+    nothing to add to: no user_id already reads the whole project."""
+    if user_id or not _DEFAULT_USER or not _ALSO_READ:
+        return [_user(user_id)]
+    return [_DEFAULT_USER] + [u for u in _ALSO_READ if u != _DEFAULT_USER]
+
+
+def _note_the_scope() -> None:
+    """Tell the model, in each tool's description, what a call without a
+    user_id covers and where a write may go instead (`--also-read-user`)."""
+    if not (_DEFAULT_USER and _ALSO_READ):
+        return
+    others = ", ".join(repr(u) for u in _ALSO_READ)
+    reads = (f"\n\nWithout user_id this reads {_DEFAULT_USER!r} (this repository) and {others}. "
+             f"Name one to read it alone.")
+    writes = (f"\n\nWithout user_id the memory goes to {_DEFAULT_USER!r}, this repository's. "
+              f"What holds beyond this repository (a decision, a rule, a fact about the person "
+              f"or the company) goes to one of {others}: pass it as user_id.")
+    for fn in (korely_get_context, korely_search, korely_get_facts):
+        fn.__doc__ = (fn.__doc__ or "") + reads
+    korely_add.__doc__ = (korely_add.__doc__ or "") + writes
 
 
 def _name(label: Optional[str], canonical: Optional[str]) -> str:
@@ -134,7 +166,17 @@ def korely_get_context(query: str, user_id: Optional[str] = None,
     scopes to one end user (omit for the account-wide default). `known_as_of`
     (ISO date) rebuilds the block as Korely knew it then.
     """
+    readers = _readers(user_id)
     try:
+        if len(readers) > 1 and not known_as_of:
+            # The blocks the session start gets, one per user_id under its
+            # heading (hooks._context_text): one way of reading them.
+            from .hooks import _context_text, repo_name
+
+            text = _context_text(lambda profile=None: _client(), _DEFAULT_USER,
+                                 repo_name(os.getcwd()), query, token_budget,
+                                 also_read_user=readers[1:])
+            return text or "(nothing remembered yet for this query)"
         ctx = _client().get_context(query=query, user_id=_user(user_id), token_budget=token_budget,
                                     known_as_of=known_as_of)
     except KorelyError as e:
@@ -179,16 +221,26 @@ def korely_search(query: str, user_id: Optional[str] = None, limit: int = 10,
     Use when you want the underlying memories rather than the assembled context
     block (for that, use korely_get_context).
     """
+    readers = _readers(user_id)
     try:
-        hits = _client().search(query, user_id=_user(user_id), limit=limit, min_score=min_score)
+        client = _client()
+        hits = [(u, h) for u in readers
+                for h in client.search(query, user_id=u, limit=limit, min_score=min_score)]
     except KorelyError as e:
         return f"error: {e}"
     if not hits:
         return "no matches."
+    if len(readers) > 1:
+        # One ranking over the user_ids read: the scores are cosines of the
+        # same question, comparable across them.
+        hits.sort(key=lambda uh: uh[1].score if isinstance(uh[1].score, (int, float)) else -1.0,
+                  reverse=True)
+        hits = hits[:limit]
     lines = []
-    for h in hits:
+    for u, h in hits:
         score = f"{h.score:.3f}" if isinstance(h.score, (int, float)) else "n/a"
-        lines.append(f"[{score}] {h.snippet or ''}".rstrip() + f"  ({h.id})")
+        whose = f", {u}" if len(readers) > 1 else ""
+        lines.append(f"[{score}] {h.snippet or ''}".rstrip() + f"  ({h.id}{whose})")
     return "\n".join(lines)
 
 
@@ -204,36 +256,45 @@ def korely_get_facts(user_id: Optional[str] = None, entity: Optional[str] = None
     that day (a change told later is not in it); `include_invalidated` also
     shows superseded facts. Deterministic: no model runs.
     """
+    readers = _readers(user_id)
     try:
-        facts = _client().get_facts(
-            user_id=_user(user_id), entity=entity, subject=subject,
+        client = _client()
+        found = [(u, client.get_facts(
+            user_id=u, entity=entity, subject=subject,
             predicate_family=predicate_family, as_of=as_of,
             include_invalidated=include_invalidated, limit=limit,
             known_as_of=known_as_of,
-        )
+        )) for u in readers]
     except KorelyError as e:
         return f"error: {e}"
     when = ", ".join(w for w in (f"as of {as_of}" if as_of else "",
                                  f"as known on {known_as_of}" if known_as_of else "") if w)
-    if not facts:
+    if not any(facts for _u, facts in found):
         return "no facts." + (f" ({when})" if when else "")
     head = f"# facts {when}\n" if when else ""
-    return head + "\n".join(f"- {_fact_line(f)}" for f in facts)
+    if len(readers) == 1:
+        return head + "\n".join(f"- {_fact_line(f)}" for f in found[0][1])
+    return head + "\n\n".join(f"## user_id {u}\n" + "\n".join(f"- {_fact_line(f)}" for f in facts)
+                              for u, facts in found if facts)
 
 
 def main(argv: Optional[list] = None) -> None:
     """Console entry point (`korely-mcp`). Runs the stdio MCP server."""
     import argparse
 
-    global _DEFAULT_USER, _PROFILE
+    global _DEFAULT_USER, _PROFILE, _ALSO_READ
     p = argparse.ArgumentParser(prog="korely-mcp")
     p.add_argument("--profile", help="the key saved with `korely init --profile <name>`")
     p.add_argument("--user-id", help="the user_id of a call that names none")
     p.add_argument("--repo-scope", action="store_true",
                    help="that user_id is repo:<name> of the current folder's repository, "
                         "the memory `korely hook` writes (korely init --tool)")
+    p.add_argument("--also-read-user", action="append", default=[], metavar="USER_ID",
+                   help="a read without user_id also covers this one (repeatable), e.g. founder; "
+                        "a write may name it")
     args = p.parse_args(argv)
     _PROFILE = args.profile
+    _ALSO_READ = tuple(u.strip() for u in args.also_read_user if u.strip())
     if args.user_id:
         _DEFAULT_USER = args.user_id
     elif args.repo_scope:
@@ -244,6 +305,7 @@ def main(argv: Optional[list] = None) -> None:
         # a folder's name would invent one.
         if _git(cwd, "rev-parse", "--show-toplevel"):
             _DEFAULT_USER = scope_for(cwd)
+    _note_the_scope()
     mcp.run()
 
 

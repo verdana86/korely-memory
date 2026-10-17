@@ -810,7 +810,7 @@ def install(tool: str, project: Path, *, everywhere: bool = False, remove: bool 
         _save_json(path, merge_hooks(_load_json(path), tool, commands))
         report.append(f"{'removed from' if remove else 'hooks in'} {path}")
 
-    servers = [("korely", _mcp_command(base, scope))]
+    servers = [("korely", _mcp_command(base, scope, also_read_user=also_read_user))]
     servers += [(f"korely-{p}", _mcp_command(base, None, profile=p)) for p in also_read]
     for name, command in servers:
         _install_server(tool, files, project, name, None if (remove or not mcp) else command,
@@ -862,9 +862,11 @@ def _install_server(tool: str, files: Dict[str, Path], project: Path, name: str,
                 report.append(f"MCP server {name} in {mp}")
 
 
-def _mcp_command(base: str, scope: Optional[str], profile: Optional[str] = None) -> List[str]:
+def _mcp_command(base: str, scope: Optional[str], profile: Optional[str] = None,
+                 also_read_user: Sequence[str] = ()) -> List[str]:
     """The stdio server next to the CLI, scoped like the hooks: `--repo-scope`
-    reads and writes `repo:<name>` of the folder the tool starts it in. With
+    reads and writes `repo:<name>` of the folder the tool starts it in, and
+    `--also-read-user` reads the same user_ids the hooks read. With
     `profile`, that profile's key and its whole project (no scope)."""
     import shlex
 
@@ -875,7 +877,8 @@ def _mcp_command(base: str, scope: Optional[str], profile: Optional[str] = None)
         cmd = [parts[0], "-m", "korely_memory.mcp_server"]
     if profile:
         return cmd + ["--profile", profile]
-    return cmd + (["--user-id", scope] if scope else ["--repo-scope"])
+    return (cmd + (["--user-id", scope] if scope else ["--repo-scope"])
+            + [arg for u in also_read_user for arg in ("--also-read-user", u)])
 
 
 def _quiet_run(run: Callable[..., Any], cmd: List[str], cwd: Path) -> bool:
