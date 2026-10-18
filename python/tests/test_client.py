@@ -1191,7 +1191,7 @@ class BatchItemsTakeATimestamp(unittest.TestCase):
 
         self.assertEqual(BatchMemory.__required_keys__, frozenset({"content"}))
         self.assertEqual(BatchMemory.__optional_keys__,
-                         frozenset({"user_id", "agent_id", "run_id", "metadata", "timestamp"}))
+                         frozenset({"user_id", "agent_id", "run_id", "metadata", "timestamp", "kind"}))
 
 
 class CorrectionsSayWhatTheyClosed(unittest.TestCase):

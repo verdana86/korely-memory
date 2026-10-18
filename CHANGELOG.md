@@ -8,6 +8,11 @@ The server side of the entries marked "API" shipped on 2026-09-28. Against an
 older server these clients keep working: the old field names are still read,
 and a batch `timestamp` is refused there with a 422.
 
+## npm, not released yet
+
+- `Memory.kind` ("note" or "session") in the type of what the server sends,
+  and `kind` in a `batch()` item.
+
 ## npm 0.1.16 (2026-10-18)
 
 - `korely.declareName(name, { user_id })`: declare that an end user is also
@@ -20,6 +25,11 @@ and a batch `timestamp` is refused there with a 422.
   when true): the work sessions apart from the notes, as in Python 0.1.26.
 
 ## Python, not released yet
+
+- `Memory.kind` ("note" or "session") as the server sends it, and `kind` in
+  a `batch()` item. The CLI takes `korely add --kind session` and
+  `--exclude-sessions` on `search`, `context`, `facts`, `profile` and
+  `list`.
 
 - `korely init --name` can be given more than once: the full name and the
   short one the person is also called by (`--name "Tomas Radek" --name Tomas

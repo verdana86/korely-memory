@@ -77,6 +77,8 @@ export interface Memory {
   updated_at?: string;
   /** Facts extracted from this memory on the write path. */
   facts?: Fact[];
+  /** "note" or "session" (Korely Agent 0.1.42); absent from an older server. */
+  kind?: "note" | "session";
 }
 
 export interface SearchHit {
@@ -172,6 +174,8 @@ export interface BatchMemory {
    * queued.
    */
   timestamp?: string;
+  /** "note" (default) or "session", as on `add()` (Korely Agent 0.1.42). */
+  kind?: "note" | "session";
 }
 
 export interface BatchJob {

@@ -91,6 +91,8 @@ class Memory:
     created_at: Optional[str] = None
     updated_at: Optional[str] = None
     facts: List[Fact] = field(default_factory=list)
+    # "note" or "session" (Korely Agent 0.1.42); None from an older server.
+    kind: Optional[str] = None
 
     @classmethod
     def from_dict(cls, d: dict) -> "Memory":
@@ -258,12 +260,15 @@ class BatchMemory(_BatchMemoryRequired, total=False):
     ``timestamp`` (ISO 8601 date or datetime) is when the item's events
     happened; its facts inherit it as ``valid_from``, exactly as on ``add()``.
     An unreadable value refuses the whole batch with a 422 naming
-    ``memories[i].timestamp``, before anything is queued."""
+    ``memories[i].timestamp``, before anything is queued. ``kind`` is
+    ``"note"`` (the default) or ``"session"``, as on ``add()`` (Korely Agent
+    0.1.42)."""
     user_id: str
     agent_id: str
     run_id: str
     metadata: dict
     timestamp: str
+    kind: str
 
 
 @dataclass

@@ -307,7 +307,7 @@ def cmd_add(k: Korely, a) -> int:
         print("error: no content (pass text, '-' for stdin, or pipe it).", file=sys.stderr)
         return 2
     m = k.add(content, user_id=a.user_id, agent_id=a.agent_id, run_id=a.run_id,
-              timestamp=getattr(a, "timestamp", None))
+              timestamp=getattr(a, "timestamp", None), kind=getattr(a, "kind", None))
     if a.json:
         _emit_json(m)
     else:
@@ -338,7 +338,8 @@ def cmd_update(k: Korely, a) -> int:
 
 def cmd_list(k: Korely, a) -> int:
     page = k.get_all(user_id=a.user_id, agent_id=a.agent_id, run_id=a.run_id,
-                     limit=a.limit, offset=a.offset)
+                     limit=a.limit, offset=a.offset,
+                     exclude_sessions=getattr(a, "exclude_sessions", False))
     if a.json:
         _emit_json(page)  # {"memories": [...], "total": n}, the API's shape
         return 0
@@ -384,7 +385,8 @@ def cmd_events(k: Korely, a) -> int:
 
 def cmd_search(k: Korely, a) -> int:
     hits = k.search(a.query, run_id=getattr(a, 'run_id', None), user_id=a.user_id, agent_id=a.agent_id,
-                    limit=a.limit, min_score=getattr(a, 'min_score', None))
+                    limit=a.limit, min_score=getattr(a, 'min_score', None),
+                    exclude_sessions=getattr(a, "exclude_sessions", False))
     if a.json:
         # The API's own shape (GET /v1/memories/search answers {"results": [...]}),
         # so `jq '.results[0].snippet'` from the docs works (2026-09-29: it was a
@@ -403,7 +405,8 @@ def cmd_search(k: Korely, a) -> int:
 
 def cmd_context(k: Korely, a) -> int:
     ctx = k.get_context(query=a.query, user_id=a.user_id, agent_id=a.agent_id,
-                        token_budget=a.token_budget, known_as_of=a.known_as_of)
+                        token_budget=a.token_budget, known_as_of=a.known_as_of,
+                        exclude_sessions=getattr(a, "exclude_sessions", False))
     if a.json:
         _emit_json(ctx)
         return 0
@@ -430,6 +433,7 @@ def cmd_facts(k: Korely, a) -> int:
                         predicate_family=a.family,
                         user_id=a.user_id, agent_id=a.agent_id, as_of=a.as_of,
                         include_invalidated=a.include_invalidated, limit=a.limit,
+                        exclude_sessions=getattr(a, "exclude_sessions", False),
                         known_as_of=a.known_as_of)
     if a.json:
         # The API's own shape ({"facts": [...], "total": n}), as the docs show
@@ -450,7 +454,7 @@ def cmd_facts(k: Korely, a) -> int:
 
 def cmd_profile(k: Korely, a) -> int:
     p = k.get_profile(user_id=a.user_id, agent_id=a.agent_id, as_of=a.as_of,
-                      known_as_of=a.known_as_of)
+                      known_as_of=a.known_as_of, exclude_sessions=getattr(a, "exclude_sessions", False))
     if a.json:
         _emit_json(p)
         return 0
@@ -1211,6 +1215,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--run-id", help="optional run/session id")
     sp.add_argument("--timestamp",
                     help="ISO date the events happened (backfill): the facts take it as valid_from")
+    sp.add_argument("--kind", choices=["note", "session"],
+                    help="what the text is: a note (default) or the log of a work session")
     sp.set_defaults(func=cmd_add)
 
     sp = sub.add_parser("update", parents=[common],
@@ -1231,6 +1237,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="max hits (default: the server's, 15; max 50)")
     sp.add_argument("--min-score", type=float, default=None,
                     help="leave out hits scored below this, 0 to 1 (0.20 measured on LongMemEval)")
+    sp.add_argument("--exclude-sessions", action="store_true",
+                    help="leave out the work sessions and what only they stated")
     sp.set_defaults(func=cmd_search)
 
     sp = sub.add_parser("context", parents=[common],
@@ -1238,6 +1246,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("query")
     sp.add_argument("--token-budget", type=int, default=800)
     sp.add_argument("--known-as-of", help="ISO date: the block as Korely knew it then")
+    sp.add_argument("--exclude-sessions", action="store_true",
+                    help="leave out the work sessions and what only they stated")
     sp.set_defaults(func=cmd_context)
 
     sp = sub.add_parser("facts", parents=[common],
@@ -1252,6 +1262,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--include-invalidated", action="store_true",
                     help="also show superseded facts")
     sp.add_argument("--limit", type=int, default=50)
+    sp.add_argument("--exclude-sessions", action="store_true",
+                    help="leave out the work sessions and what only they stated")
     sp.set_defaults(func=cmd_facts)
 
     sp = sub.add_parser("add-fact", parents=[common],
@@ -1286,6 +1298,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("profile", parents=[common], help="assembled profile of one end user")
     sp.add_argument("--as-of", help="ISO date: the point-in-time profile")
     sp.add_argument("--known-as-of", help="ISO date: the profile as Korely knew it then")
+    sp.add_argument("--exclude-sessions", action="store_true",
+                    help="leave out the work sessions and what only they stated")
     sp.set_defaults(func=cmd_profile)
 
     sp = sub.add_parser("users", parents=[common], help="end users you've stored data for")
@@ -1302,6 +1316,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--run-id", help="one run/session")
     sp.add_argument("--limit", type=int, default=50, help="up to 200 (default 50)")
     sp.add_argument("--offset", type=int, default=0)
+    sp.add_argument("--exclude-sessions", action="store_true",
+                    help="leave out the work sessions and what only they stated")
     sp.set_defaults(func=cmd_list)
 
     sp = sub.add_parser("get", parents=[common], help="one memory by id")
