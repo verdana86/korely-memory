@@ -156,8 +156,27 @@ class SessionFlow(Base):
         self.assertEqual(kw["run_id"], "s1")
         self.assertEqual(kw["metadata"], {"source": "claude-code", "repo": "shop-api"})
         self.assertTrue(kw["timestamp"])
+        self.assertEqual(kw["kind"], "session")  # a read can leave it out
         # Sent once: a second flush has nothing to send.
         self.assertEqual(hooks.flush("s1", lambda tool=None: client), 0)
+
+    def test_a_server_that_does_not_know_kind_gets_the_session_as_a_note(self):
+        from korely_memory.exceptions import APIError
+
+        class Older(FakeClient):
+            def add(self, content, **kw):
+                if "kind" in kw:
+                    raise APIError("body.kind: Extra inputs are not permitted", status=422)
+                super().add(content, **kw)
+
+        client = Older()
+        self.hook("prompt", "claude-code", {"session_id": "s1", "prompt": "step"}, client)
+        self.hook("stop", "claude-code", {"session_id": "s1", "last_assistant_message": "done"},
+                  client)
+        self.assertEqual(hooks.flush("s1", lambda tool=None: client), 1)
+        content, kw = client.added[0]
+        self.assertNotIn("kind", kw)
+        self.assertIn("Developer: step", content)
 
     def test_session_end_sends_the_rest_and_leaves_no_file(self):
         client = FakeClient()

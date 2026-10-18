@@ -36,6 +36,7 @@ from .models import (
     BatchJob,
     BatchMemory,
     BulkReceipt,
+    DeclaredName,
     Context,
     DeleteReceipt,
     EventsResponse,
@@ -759,7 +760,7 @@ class Korely:
     def add(self, content: "str | list", *, agent_id: Optional[str] = None,
             user_id: Optional[str] = None, run_id: Optional[str] = None,
             metadata: Optional[dict] = None,
-            timestamp: Optional[str] = None) -> Memory:
+            timestamp: Optional[str] = None, kind: Optional[str] = None) -> Memory:
         """POST /v1/memories: store a memory; returns it with extracted facts.
 
         ``content`` is a string, or a list of chat messages
@@ -769,13 +770,18 @@ class Korely:
         Pass ``timestamp`` (ISO date/datetime) when the events happened in the
         past (backfill / migration): facts extracted inherit it as ``valid_from``,
         so ``as_of`` point-in-time queries reflect when things were true, not when
-        they were ingested. Defaults to now."""
+        they were ingested. Defaults to now.
+
+        ``kind``: ``"note"`` (the server's default) or ``"session"``, the log
+        of a work session, which a read can leave out (``exclude_sessions``).
+        Korely Agent after 0.1.41; an older server refuses it (422)."""
         text = _coerce_content(content)
         if not text.strip():
             raise KorelyError("content is empty: pass a non-blank string or messages with content.")
         body = self._call("POST", "/v1/memories", json_body=_clean({
             "content": text, "agent_id": agent_id, "user_id": user_id,
             "run_id": run_id, "metadata": metadata, "timestamp": timestamp,
+            "kind": kind,
         }))
         return Memory.from_dict(body)
 
@@ -783,7 +789,8 @@ class Korely:
                agent_id: Optional[str] = None, run_id: Optional[str] = None,
                metadata: Optional[dict] = None,
                limit: Optional[int] = None,
-               min_score: Optional[float] = None) -> List[SearchHit]:
+               min_score: Optional[float] = None,
+               exclude_sessions: bool = False) -> List[SearchHit]:
         """POST /v1/memories/search: semantic search over raw memories, ranked
         by score (vector similarity to the query).
 
@@ -797,17 +804,22 @@ class Korely:
         it, compared as the response shows the score; None is no floor, and
         fewer than ``limit`` results can come back. 0.20 is the value measured
         on LongMemEval with EmbeddingGemma; the right one depends on your
-        texts. A server older than the parameter answers 422."""
+        texts. A server older than the parameter answers 422.
+
+        ``exclude_sessions=True`` leaves out the work sessions (memories
+        written with ``kind="session"``, what a coding assistant's hooks save)
+        and the facts only they state. Korely Agent after 0.1.41."""
         body = self._call("POST", "/v1/memories/search", json_body=_clean({
             "query": query, "user_id": user_id, "agent_id": agent_id,
             "run_id": run_id, "metadata": metadata, "limit": limit,
-            "min_score": min_score,
+            "min_score": min_score, "exclude_sessions": exclude_sessions or None,
         }))
         return [SearchHit.from_dict(h) for h in body.get("results", [])]
 
     def get_all(self, *, user_id: Optional[str] = None, agent_id: Optional[str] = None,
                 run_id: Optional[str] = None,
-                limit: int = 50, offset: int = 0) -> MemoryPage:
+                limit: int = 50, offset: int = 0,
+                exclude_sessions: bool = False) -> MemoryPage:
         """GET /v1/memories: list a scope, newest first.
 
         ``run_id`` narrows to one session. Metadata filtering lives on
@@ -817,6 +829,7 @@ class Korely:
         body = self._call("GET", "/v1/memories", params=_clean({
             "user_id": user_id, "agent_id": agent_id, "run_id": run_id,
             "limit": limit, "offset": offset,
+            "exclude_sessions": "true" if exclude_sessions else None,
         }))
         return MemoryPage.from_dict(body)
 
@@ -856,6 +869,20 @@ class Korely:
         return BulkReceipt.from_dict(
             self._call("DELETE", "/v1/users/" + _seg(user_id, "user_id") + "/memories")
         )
+
+    def declare_name(self, name: str, *, user_id: str,
+                     agent_id: Optional[str] = None) -> DeclaredName:
+        """POST /v1/users/:user_id/names: declare that this end user is also
+        called ``name`` (a full name for the id: ``declare_name("Maria Rossi",
+        user_id="maria")``). The store never merges two names of a person by
+        itself, since two people can share one; after this the facts about
+        ``name`` in the end user's memory read as the end user's, those
+        already written included. In the key's project. Declaring the same
+        name again answers the same; a name already declared for somebody
+        else in that memory raises ``ConflictError``."""
+        return DeclaredName.from_dict(self._call(
+            "POST", "/v1/users/" + _seg(user_id, "user_id") + "/names",
+            json_body=_clean({"name": name, "agent_id": agent_id})))
 
     def history(self, memory_id: str) -> MemoryHistory:
         """GET /v1/memories/:id/history: the lifecycle timeline of a memory:
@@ -979,7 +1006,8 @@ class Korely:
                   include_invalidated: bool = False, as_of: Optional[str] = None,
                   user_id: Optional[str] = None, agent_id: Optional[str] = None,
                   limit: int = 50, offset: int = 0,
-                  known_as_of: Optional[str] = None) -> FactList:
+                  known_as_of: Optional[str] = None,
+                  exclude_sessions: bool = False) -> FactList:
         """GET /v1/facts: typed (subject, predicate, object) triples with
         bi-temporal validity. Pass ``as_of`` (ISO date) for a point-in-time
         query: what was true on that date.
@@ -1002,6 +1030,8 @@ class Korely:
         })
         if include_invalidated:
             params["include_invalidated"] = "true"
+        if exclude_sessions:
+            params["exclude_sessions"] = "true"
         body = self._call("GET", "/v1/facts", params=params)
         return FactList([Fact.from_dict(f) for f in body.get("facts", [])],
                         total=body.get("total"))
@@ -1081,7 +1111,8 @@ class Korely:
 
     def get_profile(self, *, user_id: str, agent_id: Optional[str] = None,
                     as_of: Optional[str] = None,
-                    known_as_of: Optional[str] = None) -> Profile:
+                    known_as_of: Optional[str] = None,
+                    exclude_sessions: bool = False) -> Profile:
         """GET /v1/profile: the assembled profile of one end user, the active
         typed facts known about them, the end user's own facts first, grouped by
         predicate family. ``user_id`` is required. Pass ``as_of`` (ISO date) for
@@ -1091,13 +1122,15 @@ class Korely:
         body = self._call("GET", "/v1/profile", params=_clean({
             "user_id": user_id, "agent_id": agent_id, "as_of": as_of,
             "known_as_of": known_as_of,
+            "exclude_sessions": "true" if exclude_sessions else None,
         }))
         return Profile.from_dict(body)
 
     # ── context ──────────────────────────────────────────────────────────────
     def get_context(self, query: Optional[str] = None, *, user_id: Optional[str] = None,
                     agent_id: Optional[str] = None, token_budget: int = 800,
-                    known_as_of: Optional[str] = None) -> Context:
+                    known_as_of: Optional[str] = None,
+                    exclude_sessions: bool = False) -> Context:
         """GET /v1/context: one call that assembles a prompt-ready context
         block (profile + relevant facts + memories) within a token budget.
 
@@ -1113,6 +1146,7 @@ class Korely:
         body = self._call("GET", "/v1/context", params=_clean({
             "query": query, "user_id": user_id, "agent_id": agent_id,
             "token_budget": token_budget, "known_as_of": known_as_of,
+            "exclude_sessions": "true" if exclude_sessions else None,
         }))
         return Context.from_dict(body)
 

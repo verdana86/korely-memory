@@ -152,6 +152,21 @@ class DeleteReceipt:
 
 
 @dataclass
+class DeclaredName:
+    """What ``declare_name`` declared: in ``user_id``'s memory (``agent_id``
+    the namespace, none for the end user's own) the facts about ``name`` are
+    read as the end user's, since ``since``."""
+    user_id: Optional[str] = None
+    name: Optional[str] = None
+    agent_id: Optional[str] = None
+    since: Optional[str] = None
+
+    @classmethod
+    def from_dict(cls, d: dict) -> "DeclaredName":
+        return cls(**_take(cls, d))
+
+
+@dataclass
 class BulkReceipt:
     """What ``delete_all`` erased. Every row is physically deleted, and
     ``erasure`` is ``"permanent"``.

@@ -135,6 +135,30 @@ class TestMemories(unittest.TestCase):
         self.assertEqual(r.status, "forgotten")
         self.assertEqual(r.audit_id, "aud_3d0f")
 
+    def test_kind_and_exclude_sessions_are_sent_only_when_asked(self):
+        rec = _Recorder().queue(201, {"id": "mem_1", "content": "c"}).queue(201, {"id": "mem_2", "content": "c"})
+        k = _client(rec)
+        k.add("log", user_id="u", kind="session")
+        self.assertEqual(rec.last["json"]["kind"], "session")
+        k.add("note", user_id="u")
+        self.assertNotIn("kind", rec.last["json"], "an older server refuses an unknown field")
+        k.search("q", user_id="u", exclude_sessions=True)
+        self.assertIs(rec.last["json"]["exclude_sessions"], True)
+        k.search("q", user_id="u")
+        self.assertNotIn("exclude_sessions", rec.last["json"])
+        k.get_facts(user_id="u", exclude_sessions=True)
+        self.assertEqual(rec.last["params"]["exclude_sessions"], "true")
+        k.get_context("q", user_id="u", exclude_sessions=True)
+        self.assertEqual(rec.last["params"]["exclude_sessions"], "true")
+
+    def test_declare_name_posts_the_name_for_the_end_user(self):
+        rec = _Recorder().queue(201, {"user_id": "maria", "name": "Maria Rossi",
+                                      "agent_id": None, "since": "2026-10-18T10:00:00Z"})
+        d = _client(rec).declare_name("Maria Rossi", user_id="maria")
+        self.assertEqual((rec.last["method"], rec.last["path"]), ("POST", "/v1/users/maria/names"))
+        self.assertEqual(rec.last["json"], {"name": "Maria Rossi"})
+        self.assertEqual((d.user_id, d.name), ("maria", "Maria Rossi"))
+
     def test_delete_all_receipt(self):
         rec = _Recorder().queue(200, {"user_id": "c1", "memories_forgotten": 218, "facts_invalidated": 64, "audit_id": "aud_91xb"})
         r = _client(rec).delete_all(user_id="c1")

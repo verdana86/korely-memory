@@ -468,6 +468,25 @@ the start reads it next to `repo:<name>`, and the session is saved to the
 repository. Every command takes `--profile` (or `KORELY_PROFILE`), and so do
 `Korely(profile="private")` and `korely-mcp --profile private`.
 
+Your full name, once, for that memory of yours:
+
+```bash
+korely init --name "Maria Rossi" --user-id maria
+```
+
+The store never merges two names of a person by itself (two people can share
+one), so "I moved to Turin" written under `maria` and "Maria Rossi moved to
+Turin" in another note stay two people until the name is declared. After it,
+what the memories say about "Maria Rossi" is about `maria`, the facts already
+written included. A repository's memory (`repo:<name>`) is not a person:
+`--name` needs `--user-id`. In code: `k.declare_name("Maria Rossi",
+user_id="maria")`.
+
+The hooks save each session with `kind="session"`. A read that wants what was
+said and decided, not the work logs, passes `exclude_sessions=True`
+(`get_context`, `search`, `get_all`, `get_facts`, `get_profile`): the sessions
+and the facts only they state stay out.
+
 ## MCP server
 
 ```bash
