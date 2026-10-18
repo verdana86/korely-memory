@@ -61,6 +61,8 @@ export type {
   AuditOptions,
   IterAuditOptions,
   AddOptions,
+  DeclaredName,
+  DeclareNameOptions,
   SearchOptions,
   ListOptions,
   UpdateOptions,

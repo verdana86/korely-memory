@@ -999,3 +999,40 @@ test("a quota refusal carries limit, used and resets_at, read from the body, nev
   await assert.rejects(() => k.add("x", { user_id: "u" }), (e) =>
     e instanceof QuotaExceededError && e.limit === undefined && e.retryAfter === 7);
 });
+
+// ── Korely Agent 0.1.42: declared names, work sessions ────────────────────────
+
+test("declareName posts the name to the end user's names", async () => {
+  const { k, f } = client([{ status: 201, body: { user_id: "maria", name: "Maria Rossi", agent_id: null } }]);
+  const d = await k.declareName("Maria Rossi", { user_id: "maria" });
+  assert.equal(d.name, "Maria Rossi");
+  assert.match(f.calls[0].url, /\/v1\/users\/maria\/names$/);
+  assert.equal(f.calls[0].init.method, "POST");
+  assert.deepEqual(JSON.parse(f.calls[0].init.body), { name: "Maria Rossi" });
+});
+
+test("declareName refuses a blank name and an unknown option before sending", async () => {
+  const { k, f } = client([]);
+  await assert.rejects(k.declareName("  ", { user_id: "maria" }), KorelyError);
+  await assert.rejects(k.declareName("Maria", { user_id: "maria", userId: "x" }), KorelyError);
+  assert.equal(f.calls.length, 0);
+});
+
+test("add sends the kind of the text", async () => {
+  const { k, f } = client([{ status: 201, body: { id: "mem_1" } }]);
+  await k.add("Ran the tests.", { user_id: "repo:x", kind: "session" });
+  assert.equal(JSON.parse(f.calls[0].init.body).kind, "session");
+});
+
+test("exclude_sessions is sent only when true", async () => {
+  const { k, f } = client([{ body: { results: [] } }, { body: { results: [] } },
+                           { body: { facts: [], total: 0 } }, { body: { memories: [], total: 0 } }]);
+  await k.search("editor", { user_id: "maria", exclude_sessions: true });
+  await k.search("editor", { user_id: "maria" });
+  await k.getFacts({ user_id: "maria", exclude_sessions: true });
+  await k.getAll({ user_id: "maria", exclude_sessions: false });
+  assert.equal(JSON.parse(f.calls[0].init.body).exclude_sessions, true);
+  assert.equal("exclude_sessions" in JSON.parse(f.calls[1].init.body), false);
+  assert.match(f.calls[2].url, /exclude_sessions=true/);
+  assert.doesNotMatch(f.calls[3].url, /exclude_sessions/);
+});

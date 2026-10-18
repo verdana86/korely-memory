@@ -415,6 +415,28 @@ export interface AddOptions {
    * reflect when things were true, not when they were ingested. Defaults to now.
    */
   timestamp?: string;
+  /**
+   * What the text is: "note" (the default) or "session", the log of a work
+   * session (Korely Agent 0.1.42). A read with `exclude_sessions` leaves the
+   * sessions and the facts only they stated out. An older server refuses the
+   * field with a 422.
+   */
+  kind?: "note" | "session";
+}
+
+/** What `declareName` declared: in `user_id`'s memory (`agent_id` the
+ *  namespace, none for the end user's own) the facts about `name` read as the
+ *  end user's, since `since`. */
+export interface DeclaredName {
+  user_id: string;
+  name: string;
+  agent_id?: string | null;
+  since?: string | null;
+}
+
+export interface DeclareNameOptions {
+  user_id: string;
+  agent_id?: string;
 }
 
 export interface SearchOptions {
@@ -433,6 +455,8 @@ export interface SearchOptions {
    * LongMemEval with EmbeddingGemma; the right one depends on your texts.
    */
   min_score?: number;
+  /** Leave out the work sessions (`kind: "session"`) and what only they stated (Korely Agent 0.1.42). */
+  exclude_sessions?: boolean;
 }
 
 export interface ListOptions {
@@ -443,6 +467,8 @@ export interface ListOptions {
   /** Default 50, up to 200. */
   limit?: number;
   offset?: number;
+  /** Leave out the work sessions (`kind: "session"`) and what only they stated (Korely Agent 0.1.42). */
+  exclude_sessions?: boolean;
 }
 
 export interface UpdateOptions {
@@ -511,6 +537,8 @@ export interface GetFactsOptions {
   agent_id?: string;
   limit?: number;
   offset?: number;
+  /** Leave out the work sessions (`kind: "session"`) and what only they stated (Korely Agent 0.1.42). */
+  exclude_sessions?: boolean;
 }
 
 export interface AddFactTripleOptions {
@@ -536,6 +564,8 @@ export interface GetProfileOptions {
   as_of?: string;
   /** ISO date: the profile as the store knew it on that date. */
   known_as_of?: string;
+  /** Leave out the work sessions (`kind: "session"`) and what only they stated (Korely Agent 0.1.42). */
+  exclude_sessions?: boolean;
 }
 
 export interface GetContextOptions {
@@ -548,6 +578,8 @@ export interface GetContextOptions {
    * knew and the memories it had received (Korely Agent 0.1.26).
    */
   known_as_of?: string;
+  /** Leave out the work sessions (`kind: "session"`) and what only they stated (Korely Agent 0.1.42). */
+  exclude_sessions?: boolean;
 }
 
 

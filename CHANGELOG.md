@@ -8,6 +8,17 @@ The server side of the entries marked "API" shipped on 2026-09-28. Against an
 older server these clients keep working: the old field names are still read,
 and a batch `timestamp` is refused there with a 422.
 
+## npm 0.1.16 (2026-10-18)
+
+- `korely.declareName(name, { user_id })`: declare that an end user is also
+  called `name` (API: `POST /v1/users/{user_id}/names`, Korely Agent
+  0.1.42). The store never merges two names of a person by itself; after the
+  declaration the facts about the name read as that user's. A name declared
+  for somebody else in that memory rejects with `ConflictError`.
+- `add(content, { kind: "session" })`, and `exclude_sessions: true` on
+  `search`, `getAll`, `getFacts`, `getProfile` and `getContext` (sent only
+  when true): the work sessions apart from the notes, as in Python 0.1.26.
+
 ## Python, not released yet
 
 - `korely init --name` can be given more than once: the full name and the

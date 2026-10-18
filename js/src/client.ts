@@ -24,6 +24,8 @@ import type {
   AccountDeleteReceipt,
   AddFactTripleOptions,
   AddOptions,
+  DeclaredName,
+  DeclareNameOptions,
   AgentDeleteReceipt,
   AgentInitResult,
   AgentScope,
@@ -63,7 +65,7 @@ import type {
 
 /** Must equal `version` in package.json (a test checks). It goes out in the
  *  X-Korely-Client header, and said 0.1.1 from 0.1.1 to 0.1.6. */
-export const VERSION = "0.1.15";
+export const VERSION = "0.1.16";
 
 const REGIONS: Record<string, string> = { eu: "https://api.korely.ai" };
 
@@ -106,9 +108,11 @@ export interface InitAgentOptions extends Pick<KorelyOptions, "region" | "baseUr
 // its type, and every method refuses a key that is not on its list.
 const CLIENT_KEYS = keysOf<KorelyOptions>()("apiKey", "region", "baseUrl", "timeoutMs", "fetch", "client");
 const INIT_KEYS = keysOf<InitAgentOptions>()("region", "baseUrl", "timeoutMs", "fetch", "processingRegion");
-const ADD_KEYS = keysOf<AddOptions>()("agent_id", "user_id", "run_id", "metadata", "timestamp");
-const SEARCH_KEYS = keysOf<SearchOptions>()("user_id", "agent_id", "run_id", "metadata", "limit", "min_score");
-const LIST_KEYS = keysOf<ListOptions>()("user_id", "agent_id", "run_id", "limit", "offset");
+const ADD_KEYS = keysOf<AddOptions>()("agent_id", "user_id", "run_id", "metadata", "timestamp", "kind");
+const SEARCH_KEYS = keysOf<SearchOptions>()(
+  "user_id", "agent_id", "run_id", "metadata", "limit", "min_score", "exclude_sessions");
+const LIST_KEYS = keysOf<ListOptions>()("user_id", "agent_id", "run_id", "limit", "offset", "exclude_sessions");
+const NAME_KEYS = keysOf<DeclareNameOptions>()("user_id", "agent_id");
 const UPDATE_KEYS = keysOf<UpdateOptions>()("content", "expected_updated_at");
 const USERS_KEYS = keysOf<UsersOptions>()("agent_id", "limit", "offset");
 const AGENTS_KEYS = keysOf<ListAgentsOptions>()("limit", "offset");
@@ -117,15 +121,16 @@ const AUDIT_KEYS = keysOf<AuditOptions>()("user_id", "action", "since", "until",
 const ITER_AUDIT_KEYS = keysOf<IterAuditOptions>()("user_id", "action", "since", "until", "offset", "page_size");
 const FACTS_KEYS = keysOf<GetFactsOptions>()(
   "subject", "entity", "predicate", "predicate_family", "include_invalidated", "as_of",
-  "known_as_of", "user_id", "agent_id", "limit", "offset");
+  "known_as_of", "user_id", "agent_id", "limit", "offset", "exclude_sessions");
 const TRIPLE_KEYS = keysOf<AddFactTripleOptions>()(
   "user_id", "agent_id", "run_id", "subject_type", "object_is_literal", "confidence",
   "valid_from", "tense");
-const PROFILE_KEYS = keysOf<GetProfileOptions>()("user_id", "agent_id", "as_of", "known_as_of");
+const PROFILE_KEYS = keysOf<GetProfileOptions>()(
+  "user_id", "agent_id", "as_of", "known_as_of", "exclude_sessions");
 const CONTEXT_KEYS = keysOf<GetContextOptions>()(
-  "query", "user_id", "agent_id", "token_budget", "known_as_of");
+  "query", "user_id", "agent_id", "token_budget", "known_as_of", "exclude_sessions");
 const CONTEXT_EXTRA_KEYS = keysOf<Omit<GetContextOptions, "query">>()(
-  "user_id", "agent_id", "token_budget", "known_as_of");
+  "user_id", "agent_id", "token_budget", "known_as_of", "exclude_sessions");
 
 /** Refuse an option this method does not read (options.ts). */
 function checkOptions(method: string, opts: unknown, known: readonly string[]): void {
@@ -786,6 +791,7 @@ export class Korely {
         run_id: opts.run_id,
         metadata: opts.metadata,
         timestamp: opts.timestamp,
+        kind: opts.kind,
       },
     });
   }
@@ -807,6 +813,8 @@ export class Korely {
         metadata: opts.metadata,
         limit: opts.limit,
         min_score: opts.min_score,
+        // Sent only when true: an older server does not know the field.
+        exclude_sessions: opts.exclude_sessions ? true : undefined,
       },
     });
     return (body.results ?? []) as SearchHit[];
@@ -827,9 +835,30 @@ export class Korely {
           run_id: opts.run_id,
           limit: opts.limit ?? 50,
           offset: opts.offset ?? 0,
+          exclude_sessions: opts.exclude_sessions ? "true" : undefined,
         },
       });
     return iterableOver(page, "memories");
+  }
+
+  /**
+   * POST /v1/users/:user_id/names: declare that this end user is also called
+   * `name` (`declareName("Maria Rossi", { user_id: "maria" })`), Korely Agent
+   * 0.1.42. The store never merges two names of a person by itself, since two
+   * people can share one; after this the facts about `name` in the end user's
+   * memory read as the end user's, those already written included. In the
+   * key's project. Declaring the same name again answers the same; a name
+   * already declared for somebody else in that memory rejects with a
+   * ConflictError. Call it once per name the person is called by.
+   */
+  async declareName(name: string, opts: DeclareNameOptions): Promise<DeclaredName> {
+    checkOptions("declareName", opts, NAME_KEYS);
+    if (typeof name !== "string" || !name.trim()) {
+      throw new KorelyError("declareName needs a name.");
+    }
+    return this.request("POST", `/v1/users/${seg(opts.user_id, "user_id")}/names`, {
+      body: { name, agent_id: opts.agent_id },
+    });
   }
 
   /** GET /v1/memories/:id: full content, metadata, extracted facts. */
@@ -972,6 +1001,7 @@ export class Korely {
       offset: opts.offset ?? 0,
     };
     if (opts.include_invalidated) params.include_invalidated = "true";
+    if (opts.exclude_sessions) params.exclude_sessions = "true";
     const body = await this.request("GET", "/v1/facts", { params });
     const facts = [...((body.facts ?? []) as Fact[])] as FactList;
     Object.defineProperty(facts, "total", {
@@ -1077,6 +1107,7 @@ export class Korely {
         agent_id: opts.agent_id,
         as_of: opts.as_of,
         known_as_of: opts.known_as_of,
+        exclude_sessions: opts.exclude_sessions ? "true" : undefined,
       },
     });
   }
@@ -1106,6 +1137,7 @@ export class Korely {
         agent_id: o.agent_id,
         token_budget: o.token_budget ?? 800,
         known_as_of: o.known_as_of,
+        exclude_sessions: o.exclude_sessions ? "true" : undefined,
       },
     });
   }
