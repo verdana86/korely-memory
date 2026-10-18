@@ -36,6 +36,7 @@ from .models import (
     BatchJob,
     BatchMemory,
     BulkReceipt,
+    DeclaredName,
     Context,
     DeleteReceipt,
     EventsResponse,
@@ -856,6 +857,20 @@ class Korely:
         return BulkReceipt.from_dict(
             self._call("DELETE", "/v1/users/" + _seg(user_id, "user_id") + "/memories")
         )
+
+    def declare_name(self, name: str, *, user_id: str,
+                     agent_id: Optional[str] = None) -> DeclaredName:
+        """POST /v1/users/:user_id/names: declare that this end user is also
+        called ``name`` (a full name for the id: ``declare_name("Maria Rossi",
+        user_id="maria")``). The store never merges two names of a person by
+        itself, since two people can share one; after this the facts about
+        ``name`` in the end user's memory read as the end user's, those
+        already written included. In the key's project. Declaring the same
+        name again answers the same; a name already declared for somebody
+        else in that memory raises ``ConflictError``."""
+        return DeclaredName.from_dict(self._call(
+            "POST", "/v1/users/" + _seg(user_id, "user_id") + "/names",
+            json_body=_clean({"name": name, "agent_id": agent_id})))
 
     def history(self, memory_id: str) -> MemoryHistory:
         """GET /v1/memories/:id/history: the lifecycle timeline of a memory:

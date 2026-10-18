@@ -48,6 +48,7 @@ from .models import (
     BatchJob,
     BatchMemory,
     BulkReceipt,
+    DeclaredName,
     Context,
     DeleteReceipt,
     EventsResponse,
@@ -120,6 +121,9 @@ class AsyncKorely:
 
     async def delete_all(self, **kw) -> BulkReceipt:
         return await self._run(lambda: self._sync.delete_all(**kw))
+
+    async def declare_name(self, name: str, **kw) -> DeclaredName:
+        return await self._run(lambda: self._sync.declare_name(name, **kw))
 
     async def add_fact_triple(self, subject: str, predicate: str, object: str, **kw) -> Fact:
         return await self._run(

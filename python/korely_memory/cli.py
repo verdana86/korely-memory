@@ -833,8 +833,28 @@ def cmd_init(args) -> int:
         print("error: the key is empty: nothing saved, nothing installed, and no account "
               "created. Paste the key again (korely init --api-key <key>).", file=sys.stderr)
         return 2
+    name = (getattr(args, "name", None) or "").strip()
+    if name and not getattr(args, "user_id", None):
+        # A repository's memory (repo:<name>) is not a person: a name declared
+        # there would read your own sentences as the repository's, the defect
+        # of 17 Oct 2026 this option exists to get away from.
+        print("error: --name needs --user-id: a name belongs to a person's memory, never to "
+              "a repository's (repo:<name>).", file=sys.stderr)
+        return 2
+    code = _init_without_the_name(args)
+    if code or not name:
+        return code
+    return _declare_name(args, name)
+
+
+def _init_without_the_name(args) -> int:
     tool = getattr(args, "tool", None)
     if not tool:
+        if getattr(args, "name", None) and not getattr(args, "api_key", None) \
+                and _resolve_key(args):
+            # The key is already there and only the name is asked for: no
+            # signup, and no "a key is already saved" refusal.
+            return 0
         return _init_key(args)
     if not getattr(args, "remove", False):
         given = (getattr(args, "api_key", None) or "").strip()
@@ -846,6 +866,26 @@ def cmd_init(args) -> int:
                 return code
             print()
     return _install_tool(args)
+
+
+def _declare_name(args, name: str) -> int:
+    """`--name`: the person's full name, declared for `--user-id` in the key's
+    project (POST /v1/users/{id}/names). The store never merges two names of a
+    person by itself; on the identity bench a declared name united the full
+    name and the id in 23 pairs of 28, with no wrong merge."""
+    key = _resolve_key(args)
+    if not key:
+        print("error: no API key to declare the name with.", file=sys.stderr)
+        return 2
+    try:
+        d = Korely(api_key=key, base_url=_resolve_base_url(args)).declare_name(
+            name, user_id=args.user_id)
+    except KorelyError as e:
+        print(f"error: the name was not declared: {e}", file=sys.stderr)
+        return 1
+    print(f"name     \"{d.name}\" is {d.user_id}: what the memories say about it is theirs, "
+          "the facts already written included")
+    return 0
 
 
 def _install_tool(args) -> int:
@@ -1101,7 +1141,13 @@ def build_parser() -> argparse.ArgumentParser:
                     help="with --tool: every repository (your user settings), each with its "
                          "own memory; default: this repository only")
     sp.add_argument("--user-id",
-                    help="with --tool: one memory for all of it instead of repo:<name>")
+                    help="with --tool: one memory for all of it instead of repo:<name>; "
+                         "with --name: the person the name is declared for")
+    sp.add_argument("--name",
+                    help="declare a person's full name for --user-id (e.g. --name "
+                         "\"Maria Rossi\" --user-id maria): the memories' facts about that "
+                         "name are read as that user's. The store never merges two names "
+                         "of a person by itself")
     sp.add_argument("--no-mcp", action="store_true",
                     help="with --tool: hooks only, no korely MCP server")
     sp.add_argument("--remove", action="store_true",

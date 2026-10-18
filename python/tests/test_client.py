@@ -135,6 +135,14 @@ class TestMemories(unittest.TestCase):
         self.assertEqual(r.status, "forgotten")
         self.assertEqual(r.audit_id, "aud_3d0f")
 
+    def test_declare_name_posts_the_name_for_the_end_user(self):
+        rec = _Recorder().queue(201, {"user_id": "maria", "name": "Maria Rossi",
+                                      "agent_id": None, "since": "2026-10-18T10:00:00Z"})
+        d = _client(rec).declare_name("Maria Rossi", user_id="maria")
+        self.assertEqual((rec.last["method"], rec.last["path"]), ("POST", "/v1/users/maria/names"))
+        self.assertEqual(rec.last["json"], {"name": "Maria Rossi"})
+        self.assertEqual((d.user_id, d.name), ("maria", "Maria Rossi"))
+
     def test_delete_all_receipt(self):
         rec = _Recorder().queue(200, {"user_id": "c1", "memories_forgotten": 218, "facts_invalidated": 64, "audit_id": "aud_91xb"})
         r = _client(rec).delete_all(user_id="c1")
