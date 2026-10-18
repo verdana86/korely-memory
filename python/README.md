@@ -482,6 +482,11 @@ written included. A repository's memory (`repo:<name>`) is not a person:
 `--name` needs `--user-id`. In code: `k.declare_name("Maria Rossi",
 user_id="maria")`.
 
+The hooks save each session with `kind="session"`. A read that wants what was
+said and decided, not the work logs, passes `exclude_sessions=True`
+(`get_context`, `search`, `get_all`, `get_facts`, `get_profile`): the sessions
+and the facts only they state stay out.
+
 ## MCP server
 
 ```bash

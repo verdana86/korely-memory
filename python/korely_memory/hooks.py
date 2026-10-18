@@ -363,10 +363,10 @@ def send_outbox(box_path: Path, client_factory: Callable[[Optional[str]], Any]) 
         return True
     try:
         client = client_factory(box.get("tool"))
-        client.add(memory_text(box), user_id=box.get("scope"),
-                   run_id=(box.get("session") or None) and str(box["session"])[:255],
-                   metadata={"source": box.get("tool"), "repo": box.get("repo")},
-                   timestamp=turns[0]["at"])
+        _save_the_session(client, memory_text(box), user_id=box.get("scope"),
+                          run_id=(box.get("session") or None) and str(box["session"])[:255],
+                          metadata={"source": box.get("tool"), "repo": box.get("repo")},
+                          timestamp=turns[0]["at"])
     except Exception as e:  # noqa: BLE001 - a hook must never raise
         attempts = int(box.get("attempts", 0)) + 1
         if attempts >= 5:
@@ -379,6 +379,22 @@ def send_outbox(box_path: Path, client_factory: Callable[[Optional[str]], Any]) 
         return False
     work.unlink(missing_ok=True)
     return True
+
+
+def _save_the_session(client, text: str, **kw) -> None:
+    """The session, saved as what it is: `kind="session"`, so a read can
+    leave the work sessions out (`exclude_sessions`; Korely Agent after
+    0.1.41, the founder's yes to question 16.1 of 18 Oct 2026). A server that
+    does not know the field refuses it (422, the body takes no unknown field):
+    then it is saved as before, a note, rather than lost."""
+    from .exceptions import APIError
+
+    try:
+        client.add(text, kind="session", **kw)
+    except APIError as e:
+        if getattr(e, "status", None) != 422 or "kind" not in str(e):
+            raise
+        client.add(text, **kw)
 
 
 def flush(session: Optional[str], client_factory: Callable[[Optional[str]], Any]) -> int:

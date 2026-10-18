@@ -18,6 +18,12 @@ and a batch `timestamp` is refused there with a 422.
   about the name read as that user's, those already written included. A name
   declared for somebody else in that memory raises `ConflictError`. `--name`
   needs `--user-id`: a repository's memory is not a person.
+- The hooks of `korely init --tool` save each session with `kind="session"`,
+  so a read can leave the work sessions out; a server that does not know
+  the field (Korely Agent 0.1.41 and earlier) refuses it and the session is
+  saved as before, a note. `add(kind=...)`, and `exclude_sessions=True` on
+  `search`, `get_all`, `get_facts`, `get_profile` and `get_context` (sent
+  only when true).
 
 ## Python 0.1.25 (2026-10-18)
 
