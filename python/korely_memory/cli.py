@@ -833,8 +833,8 @@ def cmd_init(args) -> int:
         print("error: the key is empty: nothing saved, nothing installed, and no account "
               "created. Paste the key again (korely init --api-key <key>).", file=sys.stderr)
         return 2
-    name = (getattr(args, "name", None) or "").strip()
-    if name and not getattr(args, "user_id", None):
+    names = _names(args)
+    if names and not getattr(args, "user_id", None):
         # A repository's memory (repo:<name>) is not a person: a name declared
         # there would read your own sentences as the repository's, the defect
         # of 17 Oct 2026 this option exists to get away from.
@@ -842,9 +842,31 @@ def cmd_init(args) -> int:
               "a repository's (repo:<name>).", file=sys.stderr)
         return 2
     code = _init_without_the_name(args)
-    if code or not name:
+    if code or not names:
         return code
-    return _declare_name(args, name)
+    for name in names:
+        code = _declare_name(args, name)
+        if code:
+            return code
+    return 0
+
+
+def _names(args) -> list:
+    """The names of `--name`, which can be given more than once: the full name
+    and the short one a person is also called by ("Tomas Rossi", "Tomas"). On
+    the identity bench of 18 Oct 2026 a user called by an undeclared short name
+    read as somebody else, and no rule can tell that short name from a
+    namesake's ("Marco" and "Marco Bianchi"): only the person can, by
+    declaring it. Each once, in the order given."""
+    given = getattr(args, "name", None) or []
+    if isinstance(given, str):
+        given = [given]
+    out = []
+    for n in given:
+        n = (n or "").strip()
+        if n and n not in out:
+            out.append(n)
+    return out
 
 
 def _init_without_the_name(args) -> int:
@@ -1143,11 +1165,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--user-id",
                     help="with --tool: one memory for all of it instead of repo:<name>; "
                          "with --name: the person the name is declared for")
-    sp.add_argument("--name",
-                    help="declare a person's full name for --user-id (e.g. --name "
-                         "\"Maria Rossi\" --user-id maria): the memories' facts about that "
-                         "name are read as that user's. The store never merges two names "
-                         "of a person by itself")
+    sp.add_argument("--name", action="append",
+                    help="declare a person's name for --user-id (e.g. --name "
+                         "\"Maria Rossi\" --name Maria --user-id maria): the memories' facts "
+                         "about that name are read as that user's. Give it once per name the "
+                         "person is called by: the store never merges two names of a person "
+                         "by itself")
     sp.add_argument("--no-mcp", action="store_true",
                     help="with --tool: hooks only, no korely MCP server")
     sp.add_argument("--remove", action="store_true",
