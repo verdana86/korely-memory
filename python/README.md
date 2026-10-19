@@ -143,8 +143,7 @@ raises `NotFoundError` for a name this project does not use, and its receipt's
 of the account still uses the name).
 
 `delete_all(user_id=)` answers with `memories_deleted` and `facts_deleted`, the
-rows physically erased. `memories_forgotten` and `facts_invalidated` carry the
-same numbers under their old names and are deprecated.
+rows physically erased.
 
 `correct_fact()` returns the new fact, whose `invalidated` lists every fact the
 correction superseded (the corrected one, plus any the contradiction check

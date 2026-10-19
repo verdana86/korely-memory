@@ -100,7 +100,7 @@ Every method maps to one REST endpoint.
 | `get(id)` | `GET /v1/memories/:id` | One memory, with its facts. |
 | `update(id, { content })` | `PATCH /v1/memories/:id` | Re-runs extraction. |
 | `delete(id)` | `DELETE /v1/memories/:id` | Forget one (audited). |
-| `deleteAll({ user_id })` | `DELETE /v1/users/:user_id/memories` | Erase everything for a user (GDPR). The receipt counts `memories_deleted` and `facts_deleted`; `memories_forgotten` and `facts_invalidated` are deprecated aliases. |
+| `deleteAll({ user_id })` | `DELETE /v1/users/:user_id/memories` | Erase everything about one end user in one call. The receipt counts `memories_deleted` and `facts_deleted`. |
 | `history(id)` | `GET /v1/memories/:id/history` | A memory's timeline + the facts it produced. |
 | `users(opts?)` | `GET /v1/users` | Your end users, with counts. |
 | `listAgents(opts?)` | `GET /v1/agents` | This project's agent namespaces, with counts. `total` counts this project's names, `used` the cap slots taken across the account. Call after `agent_cap_exceeded` to reuse an id. |
