@@ -172,6 +172,14 @@ def _read_content(value: Optional[str]) -> Optional[str]:
     return value
 
 
+def _fact_row(f) -> str:
+    """A fact in a listing: its id first, the id `forget-fact` and
+    `correct-fact` take. Without it a listing gave nothing to pass them, and
+    an id guessed from elsewhere (a memory's `mem_...`) is not_found."""
+    fid = getattr(f, "id", None)
+    return f"{fid}  {_fact_line(f)}" if fid else _fact_line(f)
+
+
 def _fact_line(f) -> str:
     """One fact, and the right tense for its dates.
 
@@ -315,7 +323,7 @@ def cmd_add(k: Korely, a) -> int:
         if m.facts:
             print(f"  extracted {len(m.facts)} fact(s):")
             for f in m.facts:
-                print("   ·", _fact_line(f))
+                print("   ·", _fact_row(f))
     return 0
 
 
@@ -332,7 +340,7 @@ def cmd_update(k: Korely, a) -> int:
         if m.facts:
             print(f"  extracted {len(m.facts)} fact(s):")
             for f in m.facts:
-                print("   ·", _fact_line(f))
+                print("   ·", _fact_row(f))
     return 0
 
 
@@ -448,7 +456,7 @@ def cmd_facts(k: Korely, a) -> int:
     if when:
         print(f"# {when}\n")
     for f in facts:
-        print(" ", _fact_line(f))
+        print(" ", _fact_row(f))
     return 0
 
 
@@ -464,10 +472,10 @@ def cmd_profile(k: Korely, a) -> int:
     for family, facts in (p.by_family or {}).items():
         print(f"\n{family}:")
         for f in facts:
-            print("   ·", _fact_line(f))
+            print("   ·", _fact_row(f))
     if not p.by_family:
         for f in p.facts:
-            print("   ·", _fact_line(f))
+            print("   ·", _fact_row(f))
     return 0
 
 
@@ -496,7 +504,7 @@ def cmd_get(k: Korely, a) -> int:
     if m.facts:
         print(f"\nfacts ({len(m.facts)}):")
         for f in m.facts:
-            print("   ·", _fact_line(f))
+            print("   ·", _fact_row(f))
     return 0
 
 

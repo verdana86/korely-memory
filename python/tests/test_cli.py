@@ -158,6 +158,16 @@ class TestParserWiring(unittest.TestCase):
             cli.cmd_facts(k, _args(["facts", "--predicate", "subscribes_to"]))
         self.assertEqual(rec.last["params"].get("predicate"), "subscribes_to")
 
+    def test_facts_lists_the_id_forget_fact_takes(self):
+        rec = _Recorder().queue(200, {"facts": [{"id": "fct_" + "a" * 32, "subject": "maria",
+                                                 "predicate": "lives_in", "object": "Milan"}]})
+        k = Korely(api_key="kor_live_x")
+        k._send = rec
+        out = io.StringIO()
+        with redirect_stdout(out):
+            cli.cmd_facts(k, _args(["facts"]))
+        self.assertIn("fct_" + "a" * 32 + "  maria · lives_in · Milan", out.getvalue())
+
     def test_all_subcommands_present(self):
         # every documented command must parse (regression on accidental drops)
         for argv in (

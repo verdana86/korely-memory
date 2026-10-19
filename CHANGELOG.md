@@ -8,6 +8,14 @@ The server side of the entries marked "API" shipped on 2026-09-28. Against an
 older server these clients keep working: the old field names are still read,
 and a batch `timestamp` is refused there with a 422.
 
+## Python, unreleased
+
+- `korely facts`, `korely profile` and the facts printed by `add`, `update`
+  and `get` start each line with the fact's id (`fct_...`), the id
+  `forget-fact` and `correct-fact` take. Until now only `--json` showed it.
+  A script that reads the plain listing sees one more column; `--json` is
+  unchanged.
+
 ## npm 0.1.17 (2026-10-19)
 
 - `Memory.kind` ("note" or "session") in the type of what the server sends,
