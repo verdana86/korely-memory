@@ -8,7 +8,7 @@ The server side of the entries marked "API" shipped on 2026-09-28. Against an
 older server these clients keep working: the old field names are still read,
 and a batch `timestamp` is refused there with a 422.
 
-## npm, not released yet
+## npm 0.1.17 (2026-10-19)
 
 - `Memory.kind` ("note" or "session") in the type of what the server sends,
   and `kind` in a `batch()` item.
@@ -24,7 +24,7 @@ and a batch `timestamp` is refused there with a 422.
   `search`, `getAll`, `getFacts`, `getProfile` and `getContext` (sent only
   when true): the work sessions apart from the notes, as in Python 0.1.26.
 
-## Python, not released yet
+## Python 0.1.27 (2026-10-19)
 
 - `Memory.kind` ("note" or "session") as the server sends it, and `kind` in
   a `batch()` item. The CLI takes `korely add --kind session` and
