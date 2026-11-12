@@ -143,11 +143,17 @@ With the Vercel AI SDK, `withKorelyMemory(model, { userId })` from `korely-memor
 ## CLI
 
 ```bash
-korely add "Maria downgraded to Free." --user-id maria
+korely init --user-id maria                  # whose memory your writes are, said once
+korely add "Maria downgraded to Free."
 korely context "what plan is Maria on?" --user-id maria
 korely facts --as-of 2026-03-01 --user-id maria
 korely audit --user-id maria --all --json > maria.json   # everything that touched Maria
 ```
+
+Every write says whose memory it is: `user_id` (the end user it belongs to) or
+`agent_id` (the agent writing it), or both. Korely 1.0.19 and later refuse a
+write with neither, with a 422 whose code is `identity_required`, and store
+nothing; the SDKs send the ids each call names.
 
 Every command is listed in [python/README.md](python/README.md#cli).
 

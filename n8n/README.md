@@ -49,9 +49,10 @@ at all: nothing has to infer a contradiction, because you said so.
 
 ## Two things worth knowing
 
-**End User ID scopes everything.** Leaving it empty files the row under nobody,
-and reads scoped to a user will not find it. It is the commonest way to end up
-with a store that looks empty.
+**End User ID scopes everything.** A write (Memory Add, Fact Write) needs it or
+an Agent ID (under Additional Fields): Korely 1.0.19 and later refuse a write
+that says neither, and the node stops before sending one, naming the fields.
+Reads without it cover every end user.
 
 **True From matters when you backfill.** A fact written without it starts today,
 and a later Close on an older date is then refused, because a fact cannot stop

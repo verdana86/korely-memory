@@ -241,6 +241,24 @@ class InitSavesTheIdentity(_OwnConfig):
         self.assertNotIn("korely init --user-id <id>", out)
 
 
+    def test_with_a_coding_assistant(self):
+        """`init --tool X --user-id u` puts the hooks in `u` and saves it; with
+        `--remove` nothing is saved."""
+        installed = []
+        with mock.patch.object(cli, "_install_tool", lambda a: installed.append(a.user_id) or 0), \
+                self.no_signup():
+            self.save({"api_key": "kor_live_saved"})
+            self.assertEqual(self.init(["--tool", "claude-code", "--user-id", "maria"])[0], 0)
+            self.assertEqual(self.config()["user_id"], "maria")
+            self.init(["--tool", "claude-code", "--remove", "--agent-id", "bot"])
+            self.assertEqual(self.config().get("agent_id"), None)
+            os.remove(os.path.join(self.home, "config.json"))
+            self.init(["--tool", "codex", "--api-key", "kor_self_mine", "--base-url",
+                       "https://mine.example", "--agent-id", "bot"])
+            self.assertEqual(self.config()["agent_id"], "bot")
+        self.assertEqual(installed, ["maria", None, None])
+
+
 class TheServersRefusal(_OwnConfig):
     """An id the server reads as nobody (U+200B ZERO WIDTH SPACE alone) is
     sent: what names somebody is the server's rule, and its refusal arrives

@@ -94,7 +94,7 @@ Every method maps to one REST endpoint.
 
 | Method | Endpoint | |
 |---|---|---|
-| `add(content, opts?)` | `POST /v1/memories` | Write. `content` is a string or a list of chat messages. `opts.timestamp` (ISO) backfills the past: facts inherit it as `valid_from`. |
+| `add(content, opts?)` | `POST /v1/memories` | Write. `content` is a string or a list of chat messages. `opts.user_id` or `opts.agent_id` says whose memory it is (Korely 1.0.19 and later refuse neither). `opts.timestamp` (ISO) backfills the past: facts inherit it as `valid_from`. |
 | `search(query, opts?)` | `POST /v1/memories/search` | Semantic search over memories; filter by `user_id`, `agent_id`, `run_id`, `metadata`; `min_score` (0 to 1) leaves out hits scored below it. |
 | `getAll(opts?)` | `GET /v1/memories` | List a scope, newest first. The page is iterable; `limit` up to 200. |
 | `get(id)` | `GET /v1/memories/:id` | One memory, with its facts. |
@@ -112,7 +112,7 @@ Every method maps to one REST endpoint.
 | `getProfile({ user_id, as_of?, known_as_of? })` | `GET /v1/profile` | The assembled profile of one end user. |
 | `getContext({ query, user_id?, known_as_of? })` | `GET /v1/context` | One call, a prompt-ready context block; `known_as_of` rebuilds it as the store could have built it then. |
 | `events(opts?)` | `GET /v1/events` | Which writes are still being extracted; `limit` up to 200. |
-| `batch(memories)` | `POST /v1/batch` | Bulk import, for migrations. Each item takes `timestamp`, as `add()` does. |
+| `batch(memories)` | `POST /v1/batch` | Bulk import, for migrations. Each item takes `user_id` or `agent_id` and `timestamp`, as `add()` does. |
 | `batchStatus(jobId)` | `GET /v1/batch/:id` | Poll an import job. |
 | `ping()` | `GET /v1/ping` | Check a key without spending anything (no scope, rate limit or quota): its `tier`, `region` and `scopes`. Both products. |
 | `Korely.initAgent(agentCaller?, opts?)` | `POST /v1/agents/init` | Cloud only. Static, no key needed: sign up for a free hobby key (shown once, save it), then `new Korely({ apiKey: result.api_key })`. `opts` takes `baseUrl`, `region`, `timeoutMs`, `fetch`. |
@@ -174,7 +174,9 @@ subclass `StaleWriteError`) ·
 undefined for the monthly `quota_exceeded`) · `TooManyBatchesError` (a
 `QuotaExceededError`: `too_many_batches` from `batch()`, Cloud only, three
 imports still running; send again when one finishes) · `APIError` (the base
-of all of these, and everything else: 422, 503). Every `APIError` has
+of all of these, and everything else: 422, 503; a write that names neither
+`user_id` nor `agent_id` is a 422 `identity_required` on Korely 1.0.19 and
+later, and this client sends only the ids each call names). Every `APIError` has
 `retryAfter` when the server sent `Retry-After`: a rate limit, and the Cloud's
 503 `writes_paused` (writes that need a model are paused until 00:00 UTC). The
 SDK does not retry on its own.

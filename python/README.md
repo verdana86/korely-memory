@@ -198,6 +198,13 @@ results = korely.search("contact preference", user_id="customer-4812")
 > Always pass `user_id` on reads in multi-tenant products. Filters are additive
 > (AND); a search without `user_id` spans every end user in the namespace.
 
+Every write says whose memory it is: `user_id`, `agent_id`, or both (`add`,
+`add_fact_triple`, each `batch` item). Korely 1.0.19 and later refuse a write
+with neither and store nothing: an `APIError` with `status` 422,
+`code == "identity_required"` and the server's message (in a batch it names the
+item). An older server accepts it. `run_id` alone is not an identity. The SDK
+sends the ids each call names and no others.
+
 ## Error handling
 
 Every error the server answers with is an `APIError` carrying the stable `code`
@@ -251,9 +258,23 @@ Every command takes `--json` (the API's own shape; an error is a JSON object on
 stderr), `--api-key` and `--base-url`; `--user-id` and `--agent-id` scope the
 ones that read or write memories.
 
+A write (`add`, `add-fact`, `batch`) says whose memory it is. Say it once and
+every write that names neither id sends it:
+
+```bash
+korely init --user-id maria        # or --agent-id my-agent, or both
+korely add "Maria moved to Milan."  # sent with user_id maria
+```
+
+The id is saved next to the profile's key (`--profile work` for a named one);
+`--user-id` or `--agent-id` on a command still win, and the ids given are the
+whole identity. With no id given and none saved, a write stops before sending
+with `identity_required` and the flags to add, the code Korely 1.0.19 gives the
+same refusal.
+
 | Command | Call |
 |---|---|
-| `korely init [--agent] [--processing-region eu\|global] [--api-key KEY] [--force]` | `POST /v1/agents/init`, or save a key you have; `--processing-region eu` reads the new account's memories in Europe (Global, the default, otherwise); `--force` to replace a saved one |
+| `korely init [--agent] [--processing-region eu\|global] [--api-key KEY] [--force] [--user-id U] [--agent-id A]` | `POST /v1/agents/init`, or save a key you have; `--processing-region eu` reads the new account's memories in Europe (Global, the default, otherwise); `--force` to replace a saved one; `--user-id`/`--agent-id` save whose memory your writes are (with a key already saved, only that) |
 | `korely auth` / `korely ping` | `GET /v1/ping` |
 | `korely add TEXT` / `korely update ID TEXT` | `POST /v1/memories` / `PATCH /v1/memories/:id` (`-` or a pipe reads stdin) |
 | `korely search QUERY` | `POST /v1/memories/search` |
@@ -277,7 +298,9 @@ ones that read or write memories.
 
 `korely batch` reads a JSON array, an object with `memories`, or JSON Lines
 (`-` for stdin); an item is the body of one `add`, or a string taken as its
-content. `--user-id` and `--agent-id` scope the items that name none.
+content. `--user-id` and `--agent-id` scope the items that name none; an item
+that still names neither takes the id `korely init` saved, and with none saved
+the batch stops before sending, naming the item.
 
 `korely audit --all` walks every page, for an export; with `--json` it is one
 JSON document in the API's shape, streamed, so a long trail never sits in
@@ -500,7 +523,15 @@ is still to come reads `[until 2027-01-01]`, not `[superseded ...]`, and dates
 are UTC days. It reads the key from `KORELY_API_KEY` or from the file
 `korely init` saved. `--user-id <id>` is the user_id of a call that names
 none; `--repo-scope` makes it `repo:<name>` of the folder the assistant starts
-the server in, the memory `korely hook` writes.
+the server in, the memory `korely hook` writes; `--agent-id <id>` is the
+agent_id of a write that names none.
+
+`korely_add` sends the ids the model passes, else those flags, else the id
+`korely init` saved for the profile. With none of them it answers an error and
+sends nothing, and its description tells the model to pass `user_id` or
+`agent_id` (Korely 1.0.19 and later refuse a write with neither). `korely init
+--tool` starts it with `--repo-scope` or `--user-id`; outside a git repository
+`--repo-scope` gives no id.
 
 ## Links
 

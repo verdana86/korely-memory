@@ -8,6 +8,70 @@ The server side of the entries marked "API" shipped on 2026-09-28. Against an
 older server these clients keep working: the old field names are still read,
 and a batch `timestamp` is refused there with a 422.
 
+## Python 0.1.29, npm 0.1.18, n8n-nodes-korely 0.1.1 (Unreleased)
+
+For Korely 1.0.19, which refuses a write that names neither `user_id` (the
+end user the memory belongs to) nor `agent_id` (the agent writing it): a 422
+with the code `identity_required`, and nothing is stored. A batch with one
+such item is refused whole, the item named (`memories[3]`). Older servers
+accept such a write.
+
+### Python 0.1.29
+
+- `korely init --user-id <id>` (or `--agent-id <id>`, or both) saves whose
+  memory your writes are, next to the profile's key. `korely add`,
+  `korely add-fact` and `korely batch` send it when a write names neither id.
+  `--user-id` or `--agent-id` on a command still win, and the ids given are
+  the whole identity: with `user_id maria` saved, `--agent-id bot` writes as
+  the agent alone. In a batch only the items that name neither id take it.
+  With a key already saved, `korely init --user-id <id>` saves the id and
+  nothing else; the ids of a later `init` replace the saved ones; each profile
+  has its own (`korely init --profile work --agent-id bot`); an empty id is
+  refused and nothing is saved. `init --name ... --user-id` and
+  `init --tool ... --user-id` save the id too.
+- With no id given and none saved, `add`, `add-fact` and `batch` stop before
+  sending: `error: user_id or agent_id is required: ... [identity_required]`,
+  exit 1, naming `--user-id <id>`, `--agent-id <id>` and
+  `korely init --user-id <id>`; with `--json`, `{"code": "identity_required",
+  ...}` on stderr, the code the server gives. **This is new against an older
+  server too**, which stored such a write with no id: saving an id once is
+  enough for both. A new account's "Next:" lines say so.
+- `korely-mcp`: `korely_add` sends the `user_id` or `agent_id` the model
+  passes, else the server's `--user-id`, `--repo-scope` or the new
+  `--agent-id`, else the id `korely init` saved for its profile. With none of
+  them it answers an error and sends nothing, and the tool's description tells
+  the model to pass one. `korely init --tool` starts it with `--repo-scope`
+  (or `--user-id`) and needs nothing; outside a git repository `--repo-scope`
+  gives no id, and the `korely-<profile>` servers of `--also-read` use the id
+  saved for that profile. Reads are unchanged.
+- The SDK (`Korely`, `AsyncKorely`) sends the ids each call names and no
+  others, and does not read the saved id: a program says whose memory each of
+  its writes is. Against Korely 1.0.19, `add()`, `add_fact_triple()` and a
+  `batch()` item with neither id raise `APIError` with `status` 422, `code`
+  `"identity_required"` and the server's message; the docstrings say so.
+- `korely hook` (the coding assistants' hooks) and the LangGraph integration
+  already write with a `user_id`: unchanged.
+
+### npm 0.1.18
+
+- The types and docs of `add()`, `addFactTriple()` and `batch()` say a write
+  needs `user_id` or `agent_id` on Korely 1.0.19, which refuses one with
+  neither: an `APIError` with `status` 422, `code === "identity_required"` and
+  the server's message. The fields stay optional in the type, so a program
+  that talks to an older server still compiles. Nothing else changes; the
+  client sends the ids each call names. `withKorelyMemory` and `korelyTools`
+  (`korely-memory/ai-sdk`) already require a `userId`.
+
+### n8n-nodes-korely 0.1.1
+
+- Memory Add and Fact Write need an End User ID or an Agent ID (under
+  Additional Fields): with neither, the node stops before sending, naming the
+  fields. A workflow that wrote with neither stops after this update, against
+  an older server too, until one is filled in.
+- With "Continue On Fail", a failed item carries the server's message (for a
+  write with no id, which id is missing) instead of "Request failed with
+  status code 422".
+
 ## Python 0.1.28 (2026-10-20)
 
 - `korely facts`, `korely profile` and the facts printed by `add`, `update`
