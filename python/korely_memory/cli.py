@@ -102,8 +102,12 @@ def _ids_text(ids: dict) -> str:
 
 
 def _init_hint(args) -> str:
-    profile = getattr(args, "profile", None)
-    return "korely init " + (f"--profile {profile} " if profile else "") + "--user-id <id>"
+    """The command that saves an id where this command reads it: the profile
+    of --profile, else of KORELY_PROFILE, which `korely init` itself does not
+    read (it saves where --profile says)."""
+    profile = getattr(args, "profile", None) or os.environ.get("KORELY_PROFILE")
+    named = profile and profile != "default"
+    return "korely init " + (f"--profile {profile} " if named else "") + "--user-id <id>"
 
 
 def _writer(args) -> dict:

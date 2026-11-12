@@ -106,6 +106,9 @@ class AWriteWithNoIdentity(_OwnConfig):
         rc, _, err = self.run_cli(["add", "x", "--profile", "work"], rec)
         self.assertEqual((rc, rec.calls), (1, []))
         self.assertIn("korely init --profile work --user-id <id>", err)
+        with mock.patch.dict(os.environ, {"KORELY_PROFILE": "work"}):
+            rc, _, err = self.run_cli(["add", "x"], rec)
+        self.assertIn("korely init --profile work --user-id <id>", err)
 
     def test_reads_need_no_identity(self):
         rec = _Recorder((200, {"results": []}), (200, {"facts": [], "total": 0}))
