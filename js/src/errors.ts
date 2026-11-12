@@ -37,7 +37,9 @@ export class KorelyError extends Error {
  * The server answered with a non-2xx status. `status` is the HTTP status,
  * `code` the stable error code (`invalid_key`, `not_found`, `quota_exceeded`,
  * `search_unavailable` and so on). Anything without a subclass below (422
- * validation, 503 unavailable, other 5xx) is a plain APIError.
+ * validation, 503 unavailable, other 5xx) is a plain APIError. A write that
+ * names neither `user_id` nor `agent_id` is a 422 with
+ * `code === "identity_required"` on Korely 1.0.19 and later.
  *
  * The subclasses were siblings of this class in 0.1.6 and earlier, so the pattern the
  * public docs teach, `err instanceof APIError` and branch on `err.code`, let a

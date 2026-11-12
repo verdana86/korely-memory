@@ -774,6 +774,11 @@ export class Korely {
    * `content` is a string, or a list of chat messages (role/content), joined
    * into one block before sending. Pass `timestamp` (ISO date/datetime) for
    * backfill: facts extracted inherit it as `valid_from`.
+   *
+   * Say whose memory it is with `user_id` or `agent_id` (or both): Korely
+   * 1.0.19 and later refuse a write with neither, a 422 APIError with
+   * `code === "identity_required"`. This client sends the ids each call names
+   * and no others.
    */
   async add(content: string | Message[], opts: AddOptions = {}): Promise<Memory> {
     checkOptions("add", opts, ADD_KEYS);
@@ -1016,7 +1021,8 @@ export class Korely {
    * skipping extraction. The server runs the contradiction check; the fact is
    * bi-temporal (pass `valid_from` for a historical fact, `tense: "past"` for
    * one that is over). Resolves to the written Fact, with `invalidated`
-   * listing any fact ids it superseded.
+   * listing any fact ids it superseded. `user_id` or `agent_id` says whose
+   * fact it is, as on `add()` (Korely 1.0.19 and later refuse neither).
    */
   async addFactTriple(
     subject: string,
@@ -1171,7 +1177,10 @@ export class Korely {
    * POST /v1/batch: bulk import, up to 500 memory objects, processed
    * asynchronously. Each object is the body of one `add()` (see
    * `BatchMemory`): `content` and optionally `user_id`, `agent_id`, `run_id`,
-   * `metadata` and `timestamp`.
+   * `metadata` and `timestamp`. On Korely 1.0.19 and later each object needs
+   * `user_id` or `agent_id`: one with neither refuses the whole batch before
+   * anything is queued, a 422 (`code === "identity_required"`) whose message
+   * names it, `memories[3].user_id or memories[3].agent_id is required`.
    *
    * `timestamp` means what it means on `add()`: when the events happened.
    * The facts extracted from the item inherit it as `valid_from`, so a

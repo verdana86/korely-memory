@@ -1036,3 +1036,38 @@ test("exclude_sessions is sent only when true", async () => {
   assert.match(f.calls[2].url, /exclude_sessions=true/);
   assert.doesNotMatch(f.calls[3].url, /exclude_sessions/);
 });
+
+test("a write with no identity: the server's 422 identity_required arrives with its message", async () => {
+  // Korely 1.0.19 sends the pair at the top and inside `detail`; an install
+  // that sends `detail` alone reads the same. The client sends what the call
+  // names and nothing else: whose memory it is stays the program's to say.
+  const message =
+    "user_id or agent_id is required: say whose memory this is, with user_id (the end user " +
+    "it belongs to) or agent_id (the agent writing it); an id of spaces or invisible characters names nobody";
+  const pair = { code: "identity_required", message };
+  for (const body of [{ detail: pair, ...pair }, { detail: pair }]) {
+    const { k, f } = client([{ status: 422, body }]);
+    await assert.rejects(k.add("Maria is on Pro."), (e) => {
+      assert.ok(e instanceof APIError);
+      assert.equal(e.status, 422);
+      assert.equal(e.code, "identity_required");
+      assert.equal(e.message, message);
+      return true;
+    });
+    const sent = JSON.parse(f.calls[0].init.body);
+    assert.equal("user_id" in sent || "agent_id" in sent, false);
+  }
+});
+
+test("the ids a write names are the ids it sends", async () => {
+  const { k, f } = client([{ status: 201, body: { id: "m" } }, { status: 201, body: { id: "f" } },
+                           { status: 202, body: { id: "j" } }]);
+  await k.add("x", { agent_id: "bot" });
+  await k.addFactTriple("maria", "subscribes_to", "Pro", { user_id: "maria" });
+  await k.batch([{ content: "a", user_id: "maria" }, { content: "b", agent_id: "bot" }]);
+  const [add, fact, batch] = f.calls.map((c) => JSON.parse(c.init.body));
+  assert.equal(add.agent_id, "bot");
+  assert.equal("user_id" in add, false);
+  assert.equal(fact.user_id, "maria");
+  assert.deepEqual(batch.memories, [{ content: "a", user_id: "maria" }, { content: "b", agent_id: "bot" }]);
+});

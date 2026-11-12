@@ -196,7 +196,7 @@ export class Korely implements INodeType {
 				type: 'string',
 				default: '',
 				description:
-					'Who this is about. Everything is scoped to it, so leaving it empty files the row under nobody and reads scoped to a user will not find it.',
+					'Who this is about. Everything is scoped to it. A write (Memory Add, Fact Write) needs it or an Agent ID under Additional Fields: Korely 1.0.19 and later refuse a write that says neither, and the node stops before sending one.',
 			},
 			{
 				displayName: 'Additional Fields',
@@ -205,7 +205,14 @@ export class Korely implements INodeType {
 				placeholder: 'Add field',
 				default: {},
 				options: [
-					{ displayName: 'Agent ID', name: 'agent_id', type: 'string', default: '' },
+					{
+						displayName: 'Agent ID',
+						name: 'agent_id',
+						type: 'string',
+						default: '',
+						description:
+							'The agent writing. A write needs it or an End User ID; with both, it is that agent\'s memory of that user.',
+					},
 					{
 						displayName: 'Run ID',
 						name: 'run_id',
@@ -264,6 +271,20 @@ export class Korely implements INodeType {
 						);
 					}
 					scope.run_id = extra.run_id;
+				}
+
+				// Whose memory a write is (Korely 1.0.19): the server refuses one that
+				// names neither id, so the node says it before sending, with the
+				// field to fill. An older server accepts the same ids.
+				const writes =
+					(resource === 'memory' && operation === 'add') ||
+					(resource === 'fact' && operation === 'write');
+				if (writes && !scope.user_id && !scope.agent_id) {
+					throw new NodeOperationError(
+						this.getNode(),
+						`${resource === 'memory' ? 'Memory Add' : 'Fact Write'} needs an End User ID or an Agent ID (Additional Fields): say whose memory this is.`,
+						{ itemIndex: i },
+					);
 				}
 
 				if (resource === 'memory' && operation === 'add') {
@@ -339,12 +360,20 @@ export class Korely implements INodeType {
 				);
 				out.push({ json: response as IDataObject, pairedItem: { item: i } });
 			} catch (error) {
+				const failure =
+					error instanceof NodeOperationError
+						? error
+						: new NodeApiError(this.getNode(), error as JsonObject, { itemIndex: i });
 				if (this.continueOnFail()) {
-					out.push({ json: { error: (error as Error).message }, pairedItem: { item: i } });
+					// The server's own words (a 422 says which id is missing), not the
+					// HTTP library's "Request failed with status code 422".
+					out.push({
+						json: { error: failure.description || failure.message },
+						pairedItem: { item: i },
+					});
 					continue;
 				}
-				if (error instanceof NodeOperationError) throw error;
-				throw new NodeApiError(this.getNode(), error as JsonObject, { itemIndex: i });
+				throw failure;
 			}
 		}
 

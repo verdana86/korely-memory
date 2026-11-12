@@ -163,7 +163,14 @@ export interface Context {
  */
 export interface BatchMemory {
   content: string;
+  /**
+   * Whose memory the item is: `user_id`, the end user it belongs to, or
+   * `agent_id`, the agent writing it. Korely 1.0.19 and later need one of the
+   * two in every item: an item with neither refuses the whole batch with a
+   * 422 (`code === "identity_required"`) naming `memories[i]`.
+   */
   user_id?: string;
+  /** The agent writing the item; see `user_id`. */
   agent_id?: string;
   run_id?: string;
   metadata?: Record<string, unknown>;
@@ -409,7 +416,16 @@ export interface AuditPage extends Iterable<AuditEvent> {
 // ── method option types (snake_case keys mirror the REST params) ────────────
 
 export interface AddOptions {
+  /** The agent writing the memory; see `user_id`. */
   agent_id?: string;
+  /**
+   * Whose memory it is: `user_id`, the end user it belongs to, or `agent_id`,
+   * the agent writing it (or both: that agent's memory of that user). Korely
+   * 1.0.19 and later refuse a write with neither, and store nothing: a 422
+   * APIError with `code === "identity_required"` and the server's message.
+   * An older server accepts it. `run_id` alone is not an identity. Optional in
+   * the type so that a program talking to an older server still compiles.
+   */
   user_id?: string;
   run_id?: string;
   metadata?: Record<string, unknown>;
@@ -546,7 +562,12 @@ export interface GetFactsOptions {
 }
 
 export interface AddFactTripleOptions {
+  /**
+   * Whose fact it is, as on `add()`: `user_id` or `agent_id`. Korely 1.0.19
+   * and later refuse a fact with neither (422, `code === "identity_required"`).
+   */
   user_id?: string;
+  /** The agent writing the fact; see `user_id`. */
   agent_id?: string;
   run_id?: string;
   subject_type?: string;
