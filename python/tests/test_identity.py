@@ -266,8 +266,8 @@ class TheServersRefusal(_OwnConfig):
 
     def test_reaches_the_command_line(self):
         rec = _Recorder((422, dict(_REFUSAL)))
-        rc, _, err = self.run_cli(["add", "x", "--user-id", "​"], rec)
-        self.assertEqual(rec.calls[0]["json"]["user_id"], "​")
+        rc, _, err = self.run_cli(["add", "x", "--user-id", "\u200b"], rec)
+        self.assertEqual(rec.calls[0]["json"]["user_id"], "\u200b")
         self.assertEqual(rc, 1)
         self.assertIn(_MESSAGE, err)
         self.assertIn("[identity_required]", err)
