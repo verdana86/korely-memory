@@ -266,9 +266,10 @@ korely init --user-id maria        # or --agent-id my-agent, or both
 korely add "Maria moved to Milan."  # sent with user_id maria
 ```
 
-The id is saved next to the profile's key (`--profile work` for a named one);
-`--user-id` or `--agent-id` on a command still win, and the ids given are the
-whole identity. With no id given and none saved, a write stops before sending
+The id is saved next to the profile's key (`--profile work` for a named one)
+and is sent only with that key: a key from `KORELY_API_KEY`, `--api-key` or
+another profile takes no saved id. `--user-id` or `--agent-id` on a command
+still win, and the ids given are the whole identity. With no id given and none saved, a write stops before sending
 with `identity_required` and the flags to add, the code Korely 1.0.19 gives the
 same refusal.
 
@@ -527,7 +528,8 @@ the server in, the memory `korely hook` writes; `--agent-id <id>` is the
 agent_id of a write that names none.
 
 `korely_add` sends the ids the model passes, else those flags, else the id
-`korely init` saved for the profile. With none of them it answers an error and
+`korely init` saved for the profile, when the server's key is the one saved
+with it. With none of them it answers an error and
 sends nothing, and its description tells the model to pass `user_id` or
 `agent_id` (Korely 1.0.19 and later refuse a write with neither). `korely init
 --tool` starts it with `--repo-scope` or `--user-id`; outside a git repository

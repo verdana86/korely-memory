@@ -188,16 +188,23 @@ def _from_config(field: str, profile: Optional[str] = None) -> Optional[str]:
     return value if isinstance(value, str) and value else None
 
 
-def saved_identity(profile: Optional[str] = None) -> dict:
+def saved_identity(profile: Optional[str], api_key: Optional[str]) -> dict:
     """The ids `korely init --user-id` / `--agent-id` saved for a profile:
     whose memory a write of the `korely` command line or of `korely-mcp` is
-    when the write names neither. ``{}`` when none was saved.
+    when the write names neither. ``{}`` when none was saved, and when
+    ``api_key``, the key the write goes with, is not the key saved in that
+    same profile: a key from KORELY_API_KEY, ``--api-key`` or another
+    profile may be another project's or another account's, where the id
+    saved for one's own use would name one of its end users.
 
     This class does not read it: a program says whose memory each of its
     writes is, so a file on one machine never changes where a program's
     memories go."""
-    return {f: v for f, v in ((f, _from_config(f, profile)) for f in ("user_id", "agent_id"))
-            if v is not None}
+    saved = profile_config(profile)
+    if not api_key or saved.get("api_key") != api_key:
+        return {}
+    return {f: v for f, v in ((f, saved.get(f)) for f in ("user_id", "agent_id"))
+            if isinstance(v, str) and v}
 
 
 def _key_from_config(profile: Optional[str] = None) -> Optional[str]:

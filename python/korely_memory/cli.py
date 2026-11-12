@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from . import __version__
+from ._files import read_config, write_private
 from .client import (Korely, _refuse_a_mismatched_pair, config_path, profile_config,
                      saved_identity)
 from .exceptions import APIError, KorelyError
@@ -36,20 +37,17 @@ def _config_path() -> Path:
 
 
 def _load_config() -> dict:
-    try:
-        return json.loads(_config_path().read_text(encoding="utf-8"))
-    except Exception:
-        return {}
+    """The config file, to change it. A file that is there and cannot be read
+    raises (KorelyError) instead of reading as empty: the next save would
+    have replaced it, keys and profiles lost. Called before anything is done
+    on the server, so a refusal leaves nothing half done."""
+    return read_config(_config_path())
 
 
 def _save_config(data: dict) -> Path:
+    """Owner-only (0600) from the first byte, written whole or not at all."""
     p = _config_path()
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(data, indent=2), encoding="utf-8")
-    try:
-        os.chmod(p, 0o600)  # the key is a secret: owner read/write only
-    except OSError:
-        pass
+    write_private(p, json.dumps(data, indent=2))
     return p
 
 
@@ -110,15 +108,25 @@ def _init_hint(args) -> str:
     return "korely init " + (f"--profile {profile} " if named else "") + "--user-id <id>"
 
 
-def _writer(args) -> dict:
-    """The ids a write of this command sends: those given, else the saved ones."""
-    ids = _ids_given(args) or saved_identity(getattr(args, "profile", None))
+def _writer(args, api_key: str) -> dict:
+    """The ids a write of this command sends: those given, else the ones
+    saved next to `api_key` in the profile (none for a key from elsewhere)."""
+    ids = _ids_given(args) or saved_identity(getattr(args, "profile", None), api_key)
     if not ids:
         raise KorelyError(
             "user_id or agent_id is required: say whose memory this is. Add --user-id <id> "
-            "(the end user it belongs to) or --agent-id <id> (the agent writing it), or save "
-            f"one for every write: {_init_hint(args)}", code="identity_required")
+            "(the end user it belongs to) or --agent-id <id> (the agent writing it). "
+            + _save_hint(args, api_key), code="identity_required")
     return ids
+
+
+def _save_hint(args, api_key: str) -> str:
+    """How to stop giving the id every time: save it next to this key, when
+    the key is the profile's; a key from elsewhere takes no saved id."""
+    if profile_config(getattr(args, "profile", None)).get("api_key") == api_key:
+        return f"Or save one for every write with this key: {_init_hint(args)}"
+    return ("An id saved by `korely init` goes only with the key saved next to it, not with "
+            "a key from KORELY_API_KEY, --api-key or another profile.")
 
 
 # ── output helpers ─────────────────────────────────────────────────────────
@@ -330,10 +338,12 @@ def cmd_delete_account(k: Korely, a) -> int:
               "memory and fact of it. It is for an account made by `korely init --agent` "
               "(Cloud only). Re-run with --yes to confirm.", file=sys.stderr)
         return 2
-    r = k.delete_account(confirm=True)
-    # The key is dead now. Left in the config file, every later command would
-    # fail with a 401 on it, and `korely init` would refuse to replace it.
+    # The key will be dead. Left in the config file, every later command would
+    # fail with a 401 on it, and `korely init` would refuse to replace it. The
+    # file is read first: one that cannot be read stops the command here,
+    # before the account goes.
     cfg = _load_config()
+    r = k.delete_account(confirm=True)
     forgot = cfg.get("api_key") == k.api_key
     if forgot:
         cfg.pop("api_key", None)
@@ -355,7 +365,7 @@ def cmd_add(k: Korely, a) -> int:
         print("error: no content (pass text, '-' for stdin, or pipe it).", file=sys.stderr)
         return 2
     m = k.add(content, run_id=a.run_id, timestamp=getattr(a, "timestamp", None),
-              kind=getattr(a, "kind", None), **_writer(a))
+              kind=getattr(a, "kind", None), **_writer(a, k.api_key))
     if a.json:
         _emit_json(m)
     else:
@@ -619,7 +629,7 @@ def cmd_add_fact(k: Korely, a) -> int:
     f = k.add_fact_triple(a.subject, a.predicate, a.object, run_id=a.run_id,
                           subject_type=a.subject_type, object_is_literal=a.literal,
                           confidence=a.confidence, valid_from=a.valid_from, tense=a.tense,
-                          **_writer(a))
+                          **_writer(a, k.api_key))
     if a.json:
         _emit_json(f)
         return 0
@@ -712,14 +722,13 @@ def cmd_batch(k: Korely, a) -> int:
     # with none saved, the batch is refused here, by the item's index, as the
     # server refuses the whole batch for it.
     nobody = [i for i, item in enumerate(items) if all(item.get(f) is None for f in _IDS)]
-    saved = saved_identity(getattr(a, "profile", None)) if nobody else {}
+    saved = saved_identity(getattr(a, "profile", None), k.api_key) if nobody else {}
     if nobody and not saved:
         i = nobody[0]
         raise KorelyError(
             f"memories[{i}].user_id or memories[{i}].agent_id is required: say whose memory "
-            "each item is. Give the item one, pass --user-id <id> or --agent-id <id> for the "
-            f"items that name none, or save one for every write: {_init_hint(a)}",
-            code="identity_required")
+            "each item is. Give the item one, or pass --user-id <id> or --agent-id <id> for "
+            "the items that name none. " + _save_hint(a, k.api_key), code="identity_required")
     for i in nobody:
         items[i].update(saved)
     job = k.batch(items)
@@ -992,13 +1001,26 @@ def _put_identity(slot: dict, args) -> dict:
 
 
 def _save_identity(args) -> int:
-    """The identity alone, for a profile whose key is already saved."""
+    """The identity alone, for a profile whose key is already saved. It goes
+    only with that key (`saved_identity`), so with no key saved in the
+    profile (the key only in KORELY_API_KEY) nothing is saved: it would never
+    be sent. With --name the name is still declared."""
+    if not _ids_given(args):
+        return 0
     cfg = _load_config()
-    ids = _put_identity(_profile_slot(cfg, getattr(args, "profile", None)), args)
-    if ids:
-        path = _save_config(cfg)
-        if not getattr(args, "json", False):
-            print(f"writes   as {_ids_text(ids)} when a write names neither id (saved in {path})")
+    slot = _profile_slot(cfg, getattr(args, "profile", None))
+    if not slot.get("api_key"):
+        flags = " ".join(f"--{f.replace('_', '-')} {v}" for f, v in _ids_given(args).items())
+        alone = not (_names(args) or getattr(args, "tool", None))  # nothing else asked
+        print(f"{'error' if alone else 'note'}: the id was not saved: it goes with the "
+              "key saved in this profile, and none is. Save both: korely init "
+              + (f"--profile {args.profile} " if getattr(args, "profile", None) else "")
+              + f"--api-key <key> {flags}", file=sys.stderr)
+        return 2 if alone else 0
+    ids = _put_identity(slot, args)
+    path = _save_config(cfg)
+    if not getattr(args, "json", False):
+        print(f"writes   as {_ids_text(ids)} when a write names neither id (saved in {path})")
     return 0
 
 
@@ -1190,13 +1212,15 @@ def cmd_keys(k: Korely, a) -> int:
         expires: Any = ...
         if a.expires is not None:
             expires = None if a.expires == "never" else int(a.expires)
+        # A file that cannot be read stops the command before the key exists:
+        # made first, it would be shown nowhere.
+        cfg = _load_config() if a.save_as else {}
         out = k.create_key(a.name, project_id=project, scopes=_scopes(a.scopes),
                            users=_users(a.users), expires_in_days=expires)
         secret = out.pop("key", None)
         if a.save_as and secret:
             # Straight into a profile, never on the screen nor in the
             # terminal's scrollback.
-            cfg = _load_config()
             slot = _profile_slot(cfg, a.save_as)
             slot.pop("tier", None)
             slot["api_key"] = secret
@@ -1546,7 +1570,11 @@ def main(argv=None) -> int:
     args = build_parser().parse_args(argv)
     # `init` is the one command that runs WITHOUT a key: it mints one.
     if getattr(args, "command", None) == "init":
-        return cmd_init(args)
+        try:
+            return cmd_init(args)
+        except KorelyError as e:  # a config file it cannot read
+            print(f"error: {e}", file=sys.stderr)
+            return 2
     if getattr(args, "command", None) == "hook":
         # A hook finds its key itself, and never fails the assistant for want of one.
         return cmd_hook(args)

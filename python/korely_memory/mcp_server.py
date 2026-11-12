@@ -80,22 +80,32 @@ def _user(user_id: Optional[str]) -> Optional[str]:
     return user_id or _DEFAULT_USER
 
 
-def _writer(user_id: Optional[str], agent_id: Optional[str]) -> dict:
+def _writer(user_id: Optional[str], agent_id: Optional[str], api_key: Optional[str]) -> dict:
     """The ids a write sends: the call's, else this server's (`--user-id`,
     `--repo-scope`, `--agent-id`), else the identity `korely init --user-id`
-    saved for the profile. Korely 1.0.19 refuses a write that names neither
-    (422 identity_required); with none of the three it is refused here,
-    before anything is sent, with the same code."""
+    saved for the profile, when `api_key` is the key saved with it (not one
+    from KORELY_API_KEY: `saved_identity`). Korely 1.0.19 refuses a write
+    that names neither (422 identity_required); with none of the three it is
+    refused here, before anything is sent, with the same code."""
     ids = {f: v for f, v in (("user_id", _user(user_id)), ("agent_id", agent_id or _DEFAULT_AGENT))
            if v is not None}
-    ids = ids or saved_identity(_PROFILE)
+    ids = ids or saved_identity(_PROFILE, api_key)
     if not ids:
         raise KorelyError(
             "user_id or agent_id is required: say whose memory this is. Pass user_id (the end "
             "user it belongs to) or agent_id (the agent writing it). To give every write one, "
             "start korely-mcp with --user-id <id>, --agent-id <id> or --repo-scope, or save "
-            "one: korely init --user-id <id>", code="identity_required")
+            "one next to its key: korely init --user-id <id> (an id saved so goes only with "
+            "the key saved next to it, not with KORELY_API_KEY)", code="identity_required")
     return ids
+
+
+def _key() -> Optional[str]:
+    """The key this server's writes go with, or None when there is none."""
+    try:
+        return _client().api_key
+    except KorelyError:
+        return None
 
 
 def _readers(user_id: Optional[str]) -> list:
@@ -119,7 +129,7 @@ def _note_the_scope() -> None:
     and, when this server has no identity of its own, that a write names one."""
     for fn in (korely_get_context, korely_search, korely_get_facts, korely_add):
         fn.__doc__ = _PLAIN_DOCS.setdefault(fn.__name__, fn.__doc__ or "")
-    if not (_DEFAULT_USER or _DEFAULT_AGENT or saved_identity(_PROFILE)):
+    if not (_DEFAULT_USER or _DEFAULT_AGENT or saved_identity(_PROFILE, _key())):
         korely_add.__doc__ += ("\n\nThis server gives a write no id of its own: pass user_id "
                                "or agent_id, or the write is refused.")
     if not (_DEFAULT_USER and _ALSO_READ):
@@ -235,8 +245,9 @@ def korely_add(content: str, user_id: Optional[str] = None,
     was true then. Omitted: now.
     """
     try:
-        m = _client().add(content, run_id=run_id, timestamp=timestamp,
-                          **_writer(user_id, agent_id))
+        client = _client()
+        m = client.add(content, run_id=run_id, timestamp=timestamp,
+                       **_writer(user_id, agent_id, client.api_key))
     except KorelyError as e:
         return f"error: {e}"
     out = [f"Stored {m.id}."]

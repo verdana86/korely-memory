@@ -38,6 +38,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
+from ._files import write_private
+
 TOOLS = ("claude-code", "codex", "cursor")
 EVENTS = ("session-start", "prompt", "stop", "pre-compact", "session-end")
 TOOL_NAMES = {"claude-code": "Claude Code", "codex": "Codex", "cursor": "Cursor"}
@@ -292,10 +294,7 @@ def _read(path: Path) -> Dict[str, Any]:
 
 
 def _write(path: Path, data: Dict[str, Any]) -> None:
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
-    os.chmod(tmp, 0o600)
-    os.replace(tmp, path)
+    write_private(path, json.dumps(data, ensure_ascii=False))
 
 
 def remember_turn(ev: Event, tool: str, scope: str, role: str, text: str) -> int:

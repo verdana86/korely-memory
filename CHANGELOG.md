@@ -20,7 +20,12 @@ accept such a write.
 
 - `korely init --user-id <id>` (or `--agent-id <id>`, or both) saves whose
   memory your writes are, next to the profile's key. `korely add`,
-  `korely add-fact` and `korely batch` send it when a write names neither id.
+  `korely add-fact` and `korely batch` send it when a write names neither id,
+  and only with that key: a key from `KORELY_API_KEY`, `--api-key` or another
+  profile may be another project's or another account's, and takes no saved
+  id (the write is refused as below, with the flags to pass). With no key
+  saved in the profile (the key only in `KORELY_API_KEY`), `korely init
+  --user-id` saves nothing and says to save the key with it.
   `--user-id` or `--agent-id` on a command still win, and the ids given are
   the whole identity: with `user_id maria` saved, `--agent-id bot` writes as
   the agent alone. In a batch only the items that name neither id take it.
@@ -40,7 +45,9 @@ accept such a write.
   passes, else the server's `--user-id`, `--repo-scope` or the new
   `--agent-id`, else the id `korely init` saved for its profile. With none of
   them it answers an error and sends nothing, and the tool's description tells
-  the model to pass one. `korely init --tool` starts it with `--repo-scope`
+  the model to pass one. The saved id goes only with the key saved next to
+  it, as on the command line: started with `KORELY_API_KEY` set to another
+  key, it takes none. `korely init --tool` starts it with `--repo-scope`
   (or `--user-id`) and needs nothing; outside a git repository `--repo-scope`
   gives no id, and the `korely-<profile>` servers of `--also-read` use the id
   saved for that profile. Reads are unchanged.
@@ -51,6 +58,18 @@ accept such a write.
   `"identity_required"` and the server's message; the docstrings say so.
 - `korely hook` (the coding assistants' hooks) and the LangGraph integration
   already write with a `user_id`: unchanged.
+- `~/.korely/config.json`, which holds the keys, is created readable by its
+  owner alone (0600) from its first byte, in a folder made 0700 when it is
+  new; it is written to a temporary file in the same folder and renamed over
+  the old one, so it is whole or unchanged, and a symbolic link at its place
+  is replaced, not written through. Until now a new file held the key for a
+  moment with the default mode (0644 with the usual umask). The buffers of
+  `korely hook` are written the same way.
+- A config file that cannot be read (not JSON, or not a JSON object) is no
+  longer read as empty and replaced, keys and profiles lost: `korely init`,
+  `korely keys create --save-as` and `korely delete-account` stop with its
+  path and what to do, before anything is done on the server. An empty file
+  is still an empty config.
 
 ### npm 0.1.18
 

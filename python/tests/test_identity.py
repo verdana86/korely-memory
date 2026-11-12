@@ -57,11 +57,12 @@ class _OwnConfig(unittest.TestCase):
         with open(os.path.join(self.home, "config.json"), encoding="utf-8") as fh:
             return json.load(fh)
 
-    def run_cli(self, argv, rec, stdin=None):
+    def run_cli(self, argv, rec, stdin=None, key="kor_live_test"):
+        """`key` None: the command finds its key itself (the saved one)."""
         out, err = io.StringIO(), io.StringIO()
         with mock.patch.object(Korely, "_send", rec), redirect_stdout(out), redirect_stderr(err), \
                 mock.patch.object(sys, "stdin", io.StringIO(stdin or "")):
-            rc = cli.main(argv + ["--api-key", "kor_live_test"])
+            rc = cli.main(argv + (["--api-key", key] if key else []))
         return rc, out.getvalue(), err.getvalue()
 
     def batch_file(self, items):
@@ -84,8 +85,14 @@ class AWriteWithNoIdentity(_OwnConfig):
                 self.assertEqual(rc, 1)
                 self.assertIn("--user-id <id>", err)
                 self.assertIn("--agent-id <id>", err)
-                self.assertIn("korely init --user-id <id>", err)
                 self.assertIn("[identity_required]", err)
+
+    def test_with_the_saved_key_the_hint_is_to_save_an_id(self):
+        self.save({"api_key": "kor_live_saved"})
+        rec = _Recorder()
+        rc, _, err = self.run_cli(["add", "x"], rec, key=None)
+        self.assertEqual((rc, rec.calls), (1, []))
+        self.assertIn("korely init --user-id <id>", err)
 
     def test_the_refusal_has_the_server_s_code_in_json(self):
         rc, out, err = self.run_cli(["add", "x", "--json"], _Recorder())
@@ -101,13 +108,14 @@ class AWriteWithNoIdentity(_OwnConfig):
         self.assertIn("memories[1].user_id or memories[1].agent_id is required", err)
 
     def test_a_named_profile_is_named_in_the_hint(self):
-        self.save({"user_id": "maria", "profiles": {"work": {"api_key": "kor_live_w"}}})
+        self.save({"api_key": "kor_live_saved", "user_id": "maria",
+                   "profiles": {"work": {"api_key": "kor_live_w"}}})
         rec = _Recorder()
-        rc, _, err = self.run_cli(["add", "x", "--profile", "work"], rec)
+        rc, _, err = self.run_cli(["add", "x", "--profile", "work"], rec, key=None)
         self.assertEqual((rc, rec.calls), (1, []))
         self.assertIn("korely init --profile work --user-id <id>", err)
         with mock.patch.dict(os.environ, {"KORELY_PROFILE": "work"}):
-            rc, _, err = self.run_cli(["add", "x"], rec)
+            rc, _, err = self.run_cli(["add", "x"], rec, key=None)
         self.assertIn("korely init --profile work --user-id <id>", err)
 
     def test_reads_need_no_identity(self):
@@ -120,46 +128,84 @@ class AWriteWithNoIdentity(_OwnConfig):
 
 class TheSavedIdentity(_OwnConfig):
     def test_every_write_that_names_none_sends_it(self):
-        self.save({"user_id": "maria"})
+        self.save({"api_key": "kor_live_saved", "user_id": "maria"})
         rec = _Recorder()
-        self.assertEqual(self.run_cli(["add", "Maria is on Pro."], rec)[0], 0)
+        self.assertEqual(self.run_cli(["add", "Maria is on Pro."], rec, key=None)[0], 0)
         self.assertEqual(rec.calls[-1]["json"]["user_id"], "maria")
         self.assertNotIn("agent_id", rec.calls[-1]["json"])
-        self.assertEqual(self.run_cli(["add-fact", "maria", "subscribes_to", "Pro"], rec)[0], 0)
+        self.assertEqual(self.run_cli(["add-fact", "maria", "subscribes_to", "Pro"], rec,
+                                      key=None)[0], 0)
         self.assertEqual(rec.calls[-1]["json"]["user_id"], "maria")
 
     def test_the_ids_given_win_and_are_the_whole_identity(self):
         """`--agent-id bot` with `user_id maria` saved writes as the agent
         alone: the saved pair fills a write that names neither, never half of
         one that names an id."""
-        self.save({"user_id": "maria"})
+        self.save({"api_key": "kor_live_saved", "user_id": "maria"})
         rec = _Recorder()
-        self.run_cli(["add", "x", "--agent-id", "bot"], rec)
+        self.run_cli(["add", "x", "--agent-id", "bot"], rec, key=None)
         self.assertEqual(rec.calls[-1]["json"]["agent_id"], "bot")
         self.assertNotIn("user_id", rec.calls[-1]["json"])
-        self.run_cli(["add", "x", "--user-id", "franco"], rec)
+        self.run_cli(["add", "x", "--user-id", "franco"], rec, key=None)
         self.assertEqual(rec.calls[-1]["json"]["user_id"], "franco")
 
     def test_a_batch_fills_only_the_items_that_name_none(self):
-        self.save({"agent_id": "importer"})
+        self.save({"api_key": "kor_live_saved", "agent_id": "importer"})
         path = self.batch_file([{"content": "a"}, {"content": "b", "user_id": "maria"},
                                 {"content": "c", "agent_id": "bot"}, "d"])
         rec = _Recorder((202, {"id": "job_1", "status": "processing", "received": 4}))
-        self.assertEqual(self.run_cli(["batch", path], rec)[0], 0)
+        self.assertEqual(self.run_cli(["batch", path], rec, key=None)[0], 0)
         self.assertEqual(rec.calls[0]["json"]["memories"], [
             {"content": "a", "agent_id": "importer"}, {"content": "b", "user_id": "maria"},
             {"content": "c", "agent_id": "bot"}, {"content": "d", "agent_id": "importer"}])
 
     def test_each_profile_has_its_own(self):
-        self.save({"user_id": "maria",
+        self.save({"api_key": "kor_live_saved", "user_id": "maria",
                    "profiles": {"work": {"api_key": "kor_live_w", "agent_id": "bot"}}})
         rec = _Recorder()
-        self.run_cli(["add", "x", "--profile", "work"], rec)
+        self.run_cli(["add", "x", "--profile", "work"], rec, key=None)
         self.assertEqual(rec.calls[-1]["json"].get("agent_id"), "bot")
         self.assertNotIn("user_id", rec.calls[-1]["json"])
         with mock.patch.dict(os.environ, {"KORELY_PROFILE": "work"}):
-            self.run_cli(["add", "x"], rec)
+            self.run_cli(["add", "x"], rec, key=None)
         self.assertEqual(rec.calls[-1]["json"].get("agent_id"), "bot")
+
+    def test_it_goes_only_with_the_key_saved_next_to_it(self):
+        """A key from KORELY_API_KEY, --api-key or another profile may be
+        another project's or account's: the id saved for one's own use would
+        name one of its end users. Refused before sending, with the flags."""
+        self.save({"api_key": "kor_live_saved", "user_id": "maria",
+                   "profiles": {"work": {"api_key": "kor_live_w"}}})
+        path = self.batch_file([{"content": "a"}])
+        for how, argv, env, hint in (
+                ("KORELY_API_KEY", [], {"KORELY_API_KEY": "kor_live_other"},
+                 "goes only with the key saved next to it"),
+                ("--api-key", ["--api-key", "kor_live_w"], {},
+                 "goes only with the key saved next to it"),
+                # the profile's own key, and no id saved next to it
+                ("another profile", ["--profile", "work"], {},
+                 "korely init --profile work --user-id <id>")):
+            for cmd in (["add", "x"], ["add-fact", "a", "b", "c"], ["batch", path]):
+                with self.subTest(how=how, cmd=cmd[0]), mock.patch.dict(os.environ, env):
+                    rec = _Recorder()
+                    rc, _, err = self.run_cli(cmd + argv, rec, key=None)
+                    self.assertEqual((rc, rec.calls), (1, []))
+                    self.assertIn("--user-id <id>", err)
+                    self.assertIn(hint, err)
+        with mock.patch.dict(os.environ, {"KORELY_API_KEY": "kor_live_saved"}):
+            rec = _Recorder()
+            self.assertEqual(self.run_cli(["add", "x"], rec, key=None)[0], 0)
+        self.assertEqual(rec.calls[-1]["json"]["user_id"], "maria")
+
+    def test_init_does_not_save_an_id_that_no_saved_key_would_carry(self):
+        with mock.patch.dict(os.environ, {"KORELY_API_KEY": "kor_live_env"}), \
+                mock.patch.object(Korely, "init_agent", side_effect=AssertionError("no signup")):
+            err = io.StringIO()
+            with redirect_stderr(err), redirect_stdout(io.StringIO()):
+                rc = cli.main(["init", "--user-id", "maria"])
+        self.assertEqual(rc, 2)
+        self.assertIn("--api-key <key> --user-id maria", err.getvalue())
+        self.assertFalse(os.path.exists(os.path.join(self.home, "config.json")))
 
     def test_the_sdk_does_not_read_it(self):
         """A program says whose memory each of its writes is: a file on one
@@ -316,7 +362,7 @@ class KorelyMcp(_OwnConfig):
         self.assertEqual(self.rec.calls, [])
 
     def test_the_ids_in_order(self):
-        self.save({"user_id": "maria"})
+        self.save({"api_key": "kor_live_test", "user_id": "maria"})
         self.m.korely_add("x")
         self.assertEqual(self.rec.calls[-1]["json"].get("user_id"), "maria")
         self.m._DEFAULT_AGENT = "bot"
@@ -327,6 +373,13 @@ class KorelyMcp(_OwnConfig):
         self.m.korely_add("x", agent_id="other")
         self.assertEqual((self.rec.calls[-1]["json"]["user_id"],
                           self.rec.calls[-1]["json"]["agent_id"]), ("repo:shop", "other"))
+
+    def test_the_saved_id_goes_only_with_its_key(self):
+        self.save({"api_key": "kor_live_saved", "user_id": "maria"})  # the client's is another
+        out = self.m.korely_add("x")
+        self.assertTrue(out.startswith("error: user_id or agent_id is required"), out)
+        self.assertIn("not with KORELY_API_KEY", out)
+        self.assertEqual(self.rec.calls, [])
 
     def test_the_tool_says_so_when_the_server_has_none(self):
         self.m._note_the_scope()
