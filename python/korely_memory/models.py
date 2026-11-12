@@ -255,7 +255,9 @@ class _BatchMemoryRequired(TypedDict):
 class BatchMemory(_BatchMemoryRequired, total=False):
     """One item of ``batch()``: the body of a single ``add()``, as a plain
     dict. ``content`` is required, every other key optional, and a key not
-    listed here refuses the whole batch with a 422.
+    listed here refuses the whole batch with a 422. Korely 1.0.19 and later
+    also need ``user_id`` or ``agent_id`` in each item: an item with neither
+    refuses the whole batch (422, ``code == "identity_required"``).
 
     ``timestamp`` (ISO 8601 date or datetime) is when the item's events
     happened; its facts inherit it as ``valid_from``, exactly as on ``add()``.

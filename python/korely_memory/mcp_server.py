@@ -20,19 +20,25 @@ Claude Code / Cursor config:
       "mcpServers": {
         "korely": {
           "command": "korely-mcp",
+          "args": ["--user-id", "alex"],
           "env": { "KORELY_API_KEY": "kor_live_..." }
         }
       }
     }
 
 (Omit env if the key is already in ~/.korely/config.json from `korely init`.)
+
+A write says whose memory it is (Korely 1.0.19 refuses one that names neither
+id): the user_id or agent_id the model passes, else `--user-id`, `--agent-id`
+or `--repo-scope`, else the identity `korely init --user-id` saved. With none
+of them, `korely_add` answers an error and sends nothing.
 """
 from __future__ import annotations
 
 import os
 from typing import Optional
 
-from .client import Korely
+from .client import Korely, saved_identity
 from .exceptions import KorelyError
 
 # The protocol, standard library only (_mcp_stdio.py): the `mcp` package needs
@@ -47,6 +53,8 @@ mcp = Server("korely", __version__)
 # starts this server in, the scope `korely hook` writes to. Without either, as
 # before: no user_id.
 _DEFAULT_USER: Optional[str] = None
+# The agent_id a write gets when the model leaves it out (`--agent-id`).
+_DEFAULT_AGENT: Optional[str] = None
 # The profile whose key this server uses (`main`, `--profile`): a second
 # project next to the default one, e.g. a private one.
 _PROFILE: Optional[str] = None
@@ -72,6 +80,24 @@ def _user(user_id: Optional[str]) -> Optional[str]:
     return user_id or _DEFAULT_USER
 
 
+def _writer(user_id: Optional[str], agent_id: Optional[str]) -> dict:
+    """The ids a write sends: the call's, else this server's (`--user-id`,
+    `--repo-scope`, `--agent-id`), else the identity `korely init --user-id`
+    saved for the profile. Korely 1.0.19 refuses a write that names neither
+    (422 identity_required); with none of the three it is refused here,
+    before anything is sent, with the same code."""
+    ids = {f: v for f, v in (("user_id", _user(user_id)), ("agent_id", agent_id or _DEFAULT_AGENT))
+           if v is not None}
+    ids = ids or saved_identity(_PROFILE)
+    if not ids:
+        raise KorelyError(
+            "user_id or agent_id is required: say whose memory this is. Pass user_id (the end "
+            "user it belongs to) or agent_id (the agent writing it). To give every write one, "
+            "start korely-mcp with --user-id <id>, --agent-id <id> or --repo-scope, or save "
+            "one: korely init --user-id <id>", code="identity_required")
+    return ids
+
+
 def _readers(user_id: Optional[str]) -> list:
     """The user_ids a read covers: the one named; else this server's default
     and each `--also-read-user`, in that order. Without a default there is
@@ -81,9 +107,21 @@ def _readers(user_id: Optional[str]) -> list:
     return [_DEFAULT_USER] + [u for u in _ALSO_READ if u != _DEFAULT_USER]
 
 
+# Each tool's own description, before the notes of this server's scope: the
+# notes are written over it, so setting the scope twice in one process (a
+# test, a second `main`) says it once.
+_PLAIN_DOCS: dict = {}
+
+
 def _note_the_scope() -> None:
     """Tell the model, in each tool's description, what a call without a
-    user_id covers and where a write may go instead (`--also-read-user`)."""
+    user_id covers and where a write may go instead (`--also-read-user`);
+    and, when this server has no identity of its own, that a write names one."""
+    for fn in (korely_get_context, korely_search, korely_get_facts, korely_add):
+        fn.__doc__ = _PLAIN_DOCS.setdefault(fn.__name__, fn.__doc__ or "")
+    if not (_DEFAULT_USER or _DEFAULT_AGENT or saved_identity(_PROFILE)):
+        korely_add.__doc__ += ("\n\nThis server gives a write no id of its own: pass user_id "
+                               "or agent_id, or the write is refused.")
     if not (_DEFAULT_USER and _ALSO_READ):
         return
     others = ", ".join(repr(u) for u in _ALSO_READ)
@@ -197,8 +235,8 @@ def korely_add(content: str, user_id: Optional[str] = None,
     was true then. Omitted: now.
     """
     try:
-        m = _client().add(content, user_id=_user(user_id), agent_id=agent_id, run_id=run_id,
-                          timestamp=timestamp)
+        m = _client().add(content, run_id=run_id, timestamp=timestamp,
+                          **_writer(user_id, agent_id))
     except KorelyError as e:
         return f"error: {e}"
     out = [f"Stored {m.id}."]
@@ -282,10 +320,11 @@ def main(argv: Optional[list] = None) -> None:
     """Console entry point (`korely-mcp`). Runs the stdio MCP server."""
     import argparse
 
-    global _DEFAULT_USER, _PROFILE, _ALSO_READ
+    global _DEFAULT_USER, _DEFAULT_AGENT, _PROFILE, _ALSO_READ
     p = argparse.ArgumentParser(prog="korely-mcp")
     p.add_argument("--profile", help="the key saved with `korely init --profile <name>`")
     p.add_argument("--user-id", help="the user_id of a call that names none")
+    p.add_argument("--agent-id", help="the agent_id of a write that names none")
     p.add_argument("--repo-scope", action="store_true",
                    help="that user_id is repo:<name> of the current folder's repository, "
                         "the memory `korely hook` writes (korely init --tool)")
@@ -295,6 +334,7 @@ def main(argv: Optional[list] = None) -> None:
     args = p.parse_args(argv)
     _PROFILE = args.profile
     _ALSO_READ = tuple(u.strip() for u in args.also_read_user if u.strip())
+    _DEFAULT_AGENT = args.agent_id or None
     if args.user_id:
         _DEFAULT_USER = args.user_id
     elif args.repo_scope:

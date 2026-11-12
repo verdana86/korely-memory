@@ -23,7 +23,8 @@ from pathlib import Path
 from typing import Any, Optional
 
 from . import __version__
-from .client import Korely, _refuse_a_mismatched_pair, config_path, profile_config
+from .client import (Korely, _refuse_a_mismatched_pair, config_path, profile_config,
+                     saved_identity)
 from .exceptions import APIError, KorelyError
 
 _DEFAULT_BASE = "https://api.korely.ai"
@@ -79,6 +80,41 @@ def _profile_slot(cfg: dict, profile: Optional[str]) -> dict:
     if not profile or profile == "default":
         return cfg
     return cfg.setdefault("profiles", {}).setdefault(profile, {})
+
+
+# ── whose memory a write is ─────────────────────────────────────────────────
+# Korely 1.0.19 refuses a write that names neither id (422 identity_required):
+# without one, every writer that sent none was read as one person. The ids a
+# command is given win; else the identity `korely init --user-id` (or
+# `--agent-id`) saved for the profile; else the write is refused here, before
+# anything is sent, with the code the server gives the same refusal. An older
+# server is sent the saved id, which it has always accepted.
+_IDS = ("user_id", "agent_id")
+
+
+def _ids_given(args) -> dict:
+    """--user-id / --agent-id as given, the ones that were."""
+    return {f: getattr(args, f) for f in _IDS if getattr(args, f, None) is not None}
+
+
+def _ids_text(ids: dict) -> str:
+    return " and ".join(f"{f} {ids[f]}" for f in _IDS if f in ids)
+
+
+def _init_hint(args) -> str:
+    profile = getattr(args, "profile", None)
+    return "korely init " + (f"--profile {profile} " if profile else "") + "--user-id <id>"
+
+
+def _writer(args) -> dict:
+    """The ids a write of this command sends: those given, else the saved ones."""
+    ids = _ids_given(args) or saved_identity(getattr(args, "profile", None))
+    if not ids:
+        raise KorelyError(
+            "user_id or agent_id is required: say whose memory this is. Add --user-id <id> "
+            "(the end user it belongs to) or --agent-id <id> (the agent writing it), or save "
+            f"one for every write: {_init_hint(args)}", code="identity_required")
+    return ids
 
 
 # ── output helpers ─────────────────────────────────────────────────────────
@@ -314,8 +350,8 @@ def cmd_add(k: Korely, a) -> int:
     if not content or not content.strip():
         print("error: no content (pass text, '-' for stdin, or pipe it).", file=sys.stderr)
         return 2
-    m = k.add(content, user_id=a.user_id, agent_id=a.agent_id, run_id=a.run_id,
-              timestamp=getattr(a, "timestamp", None), kind=getattr(a, "kind", None))
+    m = k.add(content, run_id=a.run_id, timestamp=getattr(a, "timestamp", None),
+              kind=getattr(a, "kind", None), **_writer(a))
     if a.json:
         _emit_json(m)
     else:
@@ -576,10 +612,10 @@ def cmd_delete_agent(k: Korely, a) -> int:
 
 
 def cmd_add_fact(k: Korely, a) -> int:
-    f = k.add_fact_triple(a.subject, a.predicate, a.object, user_id=a.user_id,
-                          agent_id=a.agent_id, run_id=a.run_id, subject_type=a.subject_type,
-                          object_is_literal=a.literal, confidence=a.confidence,
-                          valid_from=a.valid_from, tense=a.tense)
+    f = k.add_fact_triple(a.subject, a.predicate, a.object, run_id=a.run_id,
+                          subject_type=a.subject_type, object_is_literal=a.literal,
+                          confidence=a.confidence, valid_from=a.valid_from, tense=a.tense,
+                          **_writer(a))
     if a.json:
         _emit_json(f)
         return 0
@@ -668,6 +704,20 @@ def cmd_batch(k: Korely, a) -> int:
             item.setdefault("user_id", a.user_id)
         if a.agent_id:
             item.setdefault("agent_id", a.agent_id)
+    # An item that still names neither takes the identity `korely init` saved;
+    # with none saved, the batch is refused here, by the item's index, as the
+    # server refuses the whole batch for it.
+    nobody = [i for i, item in enumerate(items) if all(item.get(f) is None for f in _IDS)]
+    saved = saved_identity(getattr(a, "profile", None)) if nobody else {}
+    if nobody and not saved:
+        i = nobody[0]
+        raise KorelyError(
+            f"memories[{i}].user_id or memories[{i}].agent_id is required: say whose memory "
+            "each item is. Give the item one, pass --user-id <id> or --agent-id <id> for the "
+            f"items that name none, or save one for every write: {_init_hint(a)}",
+            code="identity_required")
+    for i in nobody:
+        items[i].update(saved)
     job = k.batch(items)
     if a.json:
         _emit_json(job)
@@ -760,13 +810,16 @@ def _init_key(args) -> int:
             slot.pop("tier", None)  # the plan of the key this one replaces
         slot["api_key"] = given
         slot["base_url"] = base
+        ids = _put_identity(slot, args)
         path = _save_config(cfg)
         if getattr(args, "json", False):
-            _emit_json({"api_key": given, "base_url": base, "config": str(path)})
+            _emit_json({"api_key": given, "base_url": base, "config": str(path), **ids})
             return 0
         print(f"Saved to {path} (chmod 600)" + (f", profile {profile}." if profile else "."))
         print(f"  key       {_mask(given)}")
         print(f"  base_url  {base}")
+        if ids:
+            print(f"  writes    as {_ids_text(ids)} when a write names neither id")
         print()
         print("Check it reaches your server:")
         print("  korely auth")
@@ -803,10 +856,11 @@ def _init_key(args) -> int:
     slot["base_url"] = base
     if result.tier:
         slot["tier"] = result.tier
+    ids = _put_identity(slot, args)
     path = _save_config(cfg)
 
     if getattr(args, "json", False):
-        _emit_json(dataclasses.asdict(result))
+        _emit_json(dict(dataclasses.asdict(result), **ids))
         return 0
 
     q = result.quotas or {}
@@ -822,8 +876,14 @@ def _init_key(args) -> int:
         print("  terms   creating the account accepts the Terms and the Privacy Policy:")
         print(f"          {result.terms_url}")
         print(f"          {result.privacy_url}")
+    if ids:
+        print(f"  writes  as {_ids_text(ids)} when a write names neither id")
     print()
     print("Next:")
+    if not ids:
+        # A write says whose memory it is (Korely 1.0.19): the first command
+        # this block suggested failed on a new account.
+        print(f"  {_init_hint(args)}   # whose memory your writes are, said once")
     print('  korely add "I am using Korely"')
     print('  korely search "am I using Korely"')
     return 0
@@ -845,6 +905,14 @@ def cmd_init(args) -> int:
         print("error: the key is empty: nothing saved, nothing installed, and no account "
               "created. Paste the key again (korely init --api-key <key>).", file=sys.stderr)
         return 2
+    for f, v in _ids_given(args).items():
+        if not v.strip():
+            # The same reason as the key above: a shell variable left empty.
+            # Saved, it would name nobody on every write that relies on it.
+            flag = "--" + f.replace("_", "-")
+            print(f"error: {flag} is empty: nothing saved, nothing installed, and no account "
+                  f"created. Give the id ({flag} <id>).", file=sys.stderr)
+            return 2
     names = _names(args)
     if names and not getattr(args, "user_id", None):
         # A repository's memory (repo:<name>) is not a person: a name declared
@@ -884,11 +952,11 @@ def _names(args) -> list:
 def _init_without_the_name(args) -> int:
     tool = getattr(args, "tool", None)
     if not tool:
-        if getattr(args, "name", None) and not getattr(args, "api_key", None) \
-                and _resolve_key(args):
-            # The key is already there and only the name is asked for: no
-            # signup, and no "a key is already saved" refusal.
-            return 0
+        if (getattr(args, "name", None) or _ids_given(args)) \
+                and not getattr(args, "api_key", None) and _resolve_key(args):
+            # The key is already there and only the name or the identity is
+            # asked for: no signup, and no "a key is already saved" refusal.
+            return _save_identity(args)
         return _init_key(args)
     if not getattr(args, "remove", False):
         given = (getattr(args, "api_key", None) or "").strip()
@@ -899,7 +967,35 @@ def _init_without_the_name(args) -> int:
             if code:
                 return code
             print()
+        else:
+            _save_identity(args)
     return _install_tool(args)
+
+
+def _put_identity(slot: dict, args) -> dict:
+    """`--user-id` / `--agent-id` of `korely init`: whose memory every write
+    of the profile is when the write names neither, kept next to its key. The
+    ids given replace the saved pair: `--agent-id bot` after `--user-id maria`
+    writes as the agent alone. Nothing given, nothing changes."""
+    ids = _ids_given(args)
+    if ids:
+        for f in _IDS:
+            if f in ids:
+                slot[f] = ids[f]
+            else:
+                slot.pop(f, None)
+    return ids
+
+
+def _save_identity(args) -> int:
+    """The identity alone, for a profile whose key is already saved."""
+    cfg = _load_config()
+    ids = _put_identity(_profile_slot(cfg, getattr(args, "profile", None)), args)
+    if ids:
+        path = _save_config(cfg)
+        if not getattr(args, "json", False):
+            print(f"writes   as {_ids_text(ids)} when a write names neither id (saved in {path})")
+    return 0
 
 
 def _declare_name(args, name: str) -> int:
@@ -1140,7 +1236,9 @@ def build_parser() -> argparse.ArgumentParser:
     common.add_argument("--json", action="store_true", help="machine-readable output")
     common.add_argument("--api-key", help="override KORELY_API_KEY")
     common.add_argument("--base-url", help="API base URL (default https://api.korely.ai)")
-    common.add_argument("--user-id", help="end-user namespace (unlimited per tier)")
+    common.add_argument("--user-id",
+                        help="end-user namespace (unlimited per tier); a write needs it or "
+                             "--agent-id, unless `korely init --user-id` saved one")
     common.add_argument("--agent-id", help="agent namespace (counts against your agent cap)")
     common.add_argument("--profile",
                         help="use the key saved with `korely init --profile <name>` "
@@ -1175,8 +1273,13 @@ def build_parser() -> argparse.ArgumentParser:
                     help="with --tool: every repository (your user settings), each with its "
                          "own memory; default: this repository only")
     sp.add_argument("--user-id",
-                    help="with --tool: one memory for all of it instead of repo:<name>; "
-                         "with --name: the person the name is declared for")
+                    help="save it as whose memory a write is when the write names neither "
+                         "--user-id nor --agent-id (the end user it belongs to); with --tool: "
+                         "one memory for all of it instead of repo:<name>; with --name: the "
+                         "person the name is declared for")
+    sp.add_argument("--agent-id",
+                    help="save it as the agent writing, for a write that names neither id; "
+                         "with --user-id, both")
     sp.add_argument("--name", action="append",
                     help="declare a person's name for --user-id (e.g. --name "
                          "\"Maria Rossi\" --name Maria --user-id maria): the memories' facts "

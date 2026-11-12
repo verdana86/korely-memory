@@ -113,7 +113,7 @@ class TheSameToolsAsTheHostedServer(unittest.TestCase):
         with mock.patch.object(m, "_client", lambda: k):
             out = m.korely_add("Franco signed up on Pro.", user_id="franco",
                                timestamp="2026-01-15")
-            m.korely_add("no date")
+            m.korely_add("no date", user_id="franco")
         self.assertIn("Stored mem_1", out)
         self.assertEqual(sent[0]["timestamp"], "2026-01-15")
         self.assertNotIn("timestamp", sent[1])

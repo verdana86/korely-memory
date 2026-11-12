@@ -188,6 +188,18 @@ def _from_config(field: str, profile: Optional[str] = None) -> Optional[str]:
     return value if isinstance(value, str) and value else None
 
 
+def saved_identity(profile: Optional[str] = None) -> dict:
+    """The ids `korely init --user-id` / `--agent-id` saved for a profile:
+    whose memory a write of the `korely` command line or of `korely-mcp` is
+    when the write names neither. ``{}`` when none was saved.
+
+    This class does not read it: a program says whose memory each of its
+    writes is, so a file on one machine never changes where a program's
+    memories go."""
+    return {f: v for f, v in ((f, _from_config(f, profile)) for f in ("user_id", "agent_id"))
+            if v is not None}
+
+
 def _key_from_config(profile: Optional[str] = None) -> Optional[str]:
     """Fall back to the key `korely init` saved.
 
@@ -767,6 +779,14 @@ class Korely:
         ``[{"role": ..., "content": ...}]`` (Mem0/Supermemory shape), which is
         joined into one text block before sending.
 
+        Say whose memory it is: ``user_id``, the end user it belongs to, or
+        ``agent_id``, the agent writing it (or both: that agent's memory of
+        that user). Korely 1.0.19 and later refuse a write with neither, and
+        store nothing: a 422 (APIError, ``code == "identity_required"``) with
+        the server's message. An older server accepts it. ``run_id`` alone is
+        not an identity. For a program that writes for one person only, any
+        stable id will do, its own name for instance.
+
         Pass ``timestamp`` (ISO date/datetime) when the events happened in the
         past (backfill / migration): facts extracted inherit it as ``valid_from``,
         so ``as_of`` point-in-time queries reflect when things were true, not when
@@ -1048,7 +1068,11 @@ class Korely:
         historical fact. ``tense`` is ``"current"`` (the server default),
         ``"past"`` (the fact is over, and closes the open fact it restates) or
         ``"planned"``. Returns the written Fact, with ``invalidated`` listing
-        any fact ids it superseded."""
+        any fact ids it superseded.
+
+        ``user_id`` or ``agent_id`` says whose fact it is, as on ``add()``:
+        Korely 1.0.19 and later refuse a fact with neither (422,
+        ``code == "identity_required"``)."""
         body = self._call("POST", "/v1/facts", json_body=_clean({
             "subject": subject, "predicate": predicate, "object": object,
             "user_id": user_id, "agent_id": agent_id, "run_id": run_id,
@@ -1196,6 +1220,12 @@ class Korely:
         (APIError, ``code == "invalid_request"``) whose message names the item,
         e.g. ``memories[3].timestamp``. Any key not listed above is refused the
         same way. Servers older than 2026-09-28 refuse ``timestamp`` itself.
+
+        Each object says whose memory it is with ``user_id`` or ``agent_id``,
+        as on ``add()``. On Korely 1.0.19 and later one object with neither
+        refuses the whole batch before anything is queued: a 422 (APIError,
+        ``code == "identity_required"``) whose message names it,
+        ``memories[3].user_id or memories[3].agent_id is required``.
 
         On the Cloud a batch is also refused, before anything is stored, with
         a 429: ``quota_exceeded`` (QuotaExceededError) when its memories do not

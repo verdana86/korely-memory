@@ -13,7 +13,9 @@ statuses also have their own subclass, so both styles work:
 
 A ``KorelyError`` that is not an ``APIError`` never reached the server, or got
 no usable answer from it: no API key, a key and address that do not belong
-together, a connection or timeout error.
+together, a connection or timeout error, or a refusal made before sending
+that carries the code the server would give (``confirmation_required``, and
+``identity_required`` from the ``korely`` command line and ``korely-mcp``).
 """
 from __future__ import annotations
 
@@ -45,6 +47,8 @@ class APIError(KorelyError):
     and so on), ``body`` the response as the server sent it. The subclasses
     below cover the statuses a caller usually handles on their own; anything
     else (422 validation, 503 unavailable, other 5xx) is a plain ``APIError``.
+    A write that names neither ``user_id`` nor ``agent_id`` is a 422 with
+    ``code == "identity_required"`` on Korely 1.0.19 and later.
 
     The subclasses were siblings of this class in 0.1.14 and earlier, so the pattern the
     public docs teach, ``except APIError`` and branch on ``err.code``, let a

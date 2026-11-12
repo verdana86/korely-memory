@@ -443,7 +443,8 @@ class TestLaConformitaDel29Set(unittest.TestCase):
     def test_add_takes_a_timestamp(self):
         rec = _Recorder().queue(201, {"id": "mem_1", "content": "x", "facts": []})
         with redirect_stdout(io.StringIO()):
-            cli.cmd_add(_client(rec), _args(["add", "Price went up", "--timestamp", "2026-06-15"]))
+            cli.cmd_add(_client(rec), _args(["add", "Price went up", "--timestamp", "2026-06-15",
+                                              "--user-id", "maria"]))
         self.assertEqual(rec.last["json"]["timestamp"], "2026-06-15")
 
     def test_get_context_takes_the_query_by_position(self):
