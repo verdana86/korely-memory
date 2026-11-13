@@ -8,7 +8,7 @@ The server side of the entries marked "API" shipped on 2026-09-28. Against an
 older server these clients keep working: the old field names are still read,
 and a batch `timestamp` is refused there with a 422.
 
-## Python 0.1.29, npm 0.1.18, n8n-nodes-korely 0.1.1 (Unreleased)
+## Python 0.1.29, npm 0.1.18, n8n-nodes-korely 0.1.1 (2026-11-13)
 
 For Korely 1.0.19, which refuses a write that names neither `user_id` (the
 end user the memory belongs to) nor `agent_id` (the agent writing it): a 422
