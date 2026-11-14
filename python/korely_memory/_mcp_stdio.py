@@ -2,7 +2,7 @@
 
 Why not the `mcp` package (2026-09-28): it needs Python 3.10, and the Python
 macOS ships is 3.9, so `korely-mcp` could not start on a Mac out of the box
-(found by the blind installs of korely-agent 0.1.13); and mcp 2.0 removed
+(found by the blind installs of Korely Agent 0.1.13); and mcp 2.0 removed
 `mcp.server.fastmcp`, which the server imported, so every major release of
 that package was a way to break it. What this server needs is small: four
 tools, over stdio.

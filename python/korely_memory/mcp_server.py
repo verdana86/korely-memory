@@ -62,8 +62,7 @@ _PROFILE: Optional[str] = None
 # `--also-read-user`): a memory that spans repositories next to the
 # repository's own, e.g. `founder`. The hooks read them at the start of a
 # session (hooks._context_text); without this the tools in the middle of it
-# saw `repo:<name>` alone, unless the model guessed the id (window A, 17 Oct
-# 2026).
+# saw `repo:<name>` alone, unless the model guessed the id (17 Oct 2026).
 _ALSO_READ: tuple = ()
 
 
@@ -257,9 +256,8 @@ def korely_add(content: str, user_id: Optional[str] = None,
     return "\n".join(out)
 
 
-# `limit` defaults to 10, as `korely_search` on both hosted MCP servers
-# (GordonPro app/mcp/agent_server.py, korely-agent korely_agent/mcp/server.py,
-# checked 2026-10-06). It was 15, the REST default of POST /v1/memories/search,
+# `limit` defaults to 10, as the `korely_search` tool of Korely's server's
+# own MCP door (checked 2026-10-06). It was 15, the REST default of POST /v1/memories/search,
 # so the same tool call gave a model more hits here than on the hosted server.
 @mcp.tool()
 def korely_search(query: str, user_id: Optional[str] = None, limit: int = 10,

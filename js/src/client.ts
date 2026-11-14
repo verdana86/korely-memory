@@ -486,7 +486,7 @@ async function exchange(
     }
   }
   if (!resp.ok) {
-    raiseFor(resp.status, parsed, resp.headers.get("retry-after"), redirectOf(resp, url));
+    raiseFor(resp.status, parsed, resp.headers.get("retry-after"), redirectOf(resp, url), method);
   }
   return parsed && typeof parsed === "object" ? parsed : {};
 }
@@ -515,7 +515,13 @@ function redirectOf(resp: Response, url: string): string | undefined {
 }
 
 /** The error an answer that is not a success maps to, by status and code. */
-function raiseFor(status: number, body: any, retryAfter: string | null, redirect?: string): never {
+function raiseFor(
+  status: number,
+  body: any,
+  retryAfter: string | null,
+  redirect?: string,
+  method?: string,
+): never {
   let { code, message: msg } = errorFields(status, body);
   if (status === 401 && redirect) {
     msg += ` The call was redirected to ${redirect}, and fetch does not send the key to ` +
@@ -523,9 +529,14 @@ function raiseFor(status: number, body: any, retryAfter: string | null, redirect
   }
   if ((status >= 300 && status < 400) || status === 0) {
     // 0: a browser's "opaqueredirect", which shows neither status nor Location.
-    msg = `The server answered ${status || "with"} a redirect${redirect ? ` to ${redirect}` : ""} ` +
-      "this client does not follow (a call that is not a GET is never redirected): that " +
-      "is not the answer to the call, and nothing says it was done.";
+    const answered = status ? `The server answered ${status} to a ${method ?? "call"}, a redirect`
+      : `The server answered a ${method ?? "call"} with a redirect`;
+    const to = redirect ? ` to ${redirect}` : "";
+    msg = method === "GET"
+      // fetch follows a GET's redirect: a 300, a 304 or a fetch told not to reach here.
+      ? `${answered}${to} that fetch did not follow: that is not the answer to the call.`
+      : `${answered}${to} this client does not follow: a call that is not a GET is never ` +
+        "redirected, so that is not its answer, and nothing says it was done.";
   }
   // Retry-After on every status (2026-10-06), not only on a 429: the Cloud's
   // 503 `writes_paused` sends it too, and it is the one number that says
@@ -584,7 +595,7 @@ export function useNodeFiles(files: NodeFiles): void {
  * What `korely init` saved: the key and the server, in ~/.korely/config.json
  * (or $KORELY_CONFIG_HOME/config.json). The Python client reads them; this one
  * did not, so the documented path, `korely init` and then `new Korely()`,
- * threw "No API key" in Node (window A's new-customer test, 2026-10-07). Node
+ * threw "No API key" in Node (a new customer's first test, 2026-10-07). Node
  * only and best effort: a browser or an edge runtime has no such file, and a
  * file that cannot be read leaves the usual missing-key error.
  */

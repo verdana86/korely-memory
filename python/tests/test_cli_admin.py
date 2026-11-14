@@ -33,11 +33,11 @@ class TestProjects(unittest.TestCase):
         self.assertEqual(rec.last["path"], "/admin/projects")
 
     def test_rename_finds_the_project_by_name(self):
-        rec = _Recorder().queue(200, PROJECTS).queue(200, {"id": "p-default", "name": "Hermes"})
-        rc, out, _ = _run(cli.cmd_projects, rec, ["projects", "rename", "default", "Hermes"])
+        rec = _Recorder().queue(200, PROJECTS).queue(200, {"id": "p-default", "name": "Atlas"})
+        rc, out, _ = _run(cli.cmd_projects, rec, ["projects", "rename", "default", "Atlas"])
         self.assertEqual(rc, 0)
         self.assertEqual((rec.last["method"], rec.last["path"], rec.last["json"]),
-                         ("PATCH", "/admin/projects/p-default", {"name": "Hermes"}))
+                         ("PATCH", "/admin/projects/p-default", {"name": "Atlas"}))
 
     def test_create_with_a_region(self):
         rec = _Recorder().queue(201, {"id": "p-new", "name": "Lumen"})
@@ -62,13 +62,13 @@ class TestProjects(unittest.TestCase):
 class TestKeys(_CleanEnv):
     def test_create_a_confined_key(self):
         rec = _Recorder().queue(200, PROJECTS).queue(201, {
-            "id": "k1", "name": "hermes", "masked": "kor_live_••••abcd", "key": "kor_live_SECRET",
+            "id": "k1", "name": "atlas", "masked": "kor_live_••••abcd", "key": "kor_live_SECRET",
             "users": ["founder", "repo:*"]})
-        rc, out, _ = _run(cli.cmd_keys, rec, ["keys", "create", "--name", "hermes",
+        rc, out, _ = _run(cli.cmd_keys, rec, ["keys", "create", "--name", "atlas",
                                               "--project", "Founder tools", "--scopes", "read,write",
                                               "--users", "founder, repo:*", "--expires", "never"])
         self.assertEqual(rc, 0)
-        self.assertEqual(rec.last["json"], {"name": "hermes", "project_id": "p-tools",
+        self.assertEqual(rec.last["json"], {"name": "atlas", "project_id": "p-tools",
                                             "scopes": ["memories:read", "memories:write"],
                                             "users": ["founder", "repo:*"], "expires_in_days": None})
         self.assertIn("kor_live_SECRET", out)
@@ -90,7 +90,7 @@ class TestKeys(_CleanEnv):
         self.assertEqual(rec.calls, [])
 
     def test_list_shows_the_confinement(self):
-        rec = _Recorder().queue(200, [{"id": "k1", "masked": "kor_live_••••abcd", "name": "hermes",
+        rec = _Recorder().queue(200, [{"id": "k1", "masked": "kor_live_••••abcd", "name": "atlas",
                                        "state": "live", "scopes": ["memories:read"],
                                        "project_name": "Founder tools", "users": ["founder", "repo:*"]}])
         rc, out, _ = _run(cli.cmd_keys, rec, ["keys"])

@@ -606,13 +606,14 @@ class Korely:
             if retry_after is not None:
                 parsed["_retry_after"] = retry_after
             # Where a redirect pointed: the Location of a 3xx not followed,
-            # or the address a followed GET ended at (its 401 is the key
-            # left behind). Only the origin: a path or a query may hold
-            # what is not ours to repeat.
+            # or the other origin a followed GET ended at (its 401 is the
+            # key left behind, and that address is the server to name). Only
+            # the origin: a path or a query may hold what is not ours to
+            # repeat.
             location = e.headers.get("Location") if e.headers else None
             if 300 <= e.code < 400 and location:
                 parsed["_redirect"] = _origin(_urlparse.urljoin(e.filename or url, location))
-            elif e.filename and e.filename != req.full_url:
+            elif e.filename and _origin(e.filename) != _origin(req.full_url):
                 parsed["_redirect"] = _origin(e.filename)
             return e.code, parsed
         except _urlerror.URLError as e:
@@ -653,7 +654,7 @@ class Korely:
         existed."""
         status, body = self._send(method, path, params=params, json_body=json_body)
         if not 200 <= status < 300:
-            self._raise(status, body if isinstance(body, dict) else {})
+            self._raise(status, body if isinstance(body, dict) else {}, method=method)
         return body
 
     @staticmethod
@@ -710,7 +711,7 @@ class Korely:
         return code, message
 
     @staticmethod
-    def _raise(status: int, body: dict) -> None:
+    def _raise(status: int, body: dict, *, method: Optional[str] = None) -> None:
         # `_retry_after` is the transport's note of the Retry-After header, not
         # something the server said. The exception's `body` is documented as
         # the server's response verbatim, so it leaves here.
@@ -718,7 +719,9 @@ class Korely:
         code, msg = Korely._error_fields(status, server_body)
         redirect = body.get("_redirect")
         if status == 401 and redirect:
-            # Only a GET is redirected, and never with the key (`_send`).
+            # Only a GET is redirected, never with the key (`_send`), and
+            # `_redirect` names another origin only: on the same one, the
+            # address would be base_url itself.
             msg += (f" The call was redirected to {redirect}, and the key is never sent "
                     "after a redirect: if that is the server, use that address as base_url.")
         # Retry-After on every status (2026-10-06), not only on a 429: the
@@ -751,9 +754,16 @@ class Korely:
             raise cls(msg, status=status, code=code, retry_after=ra, body=server_body)
         if 300 <= status < 400:
             to = f" to {redirect}" if redirect else ""
-            msg = (f"The server answered {status}, a redirect{to} this client does not follow "
-                   "(a call that is not a GET is never redirected): that is not the answer "
-                   "to the call, and nothing says it was done.")
+            if method in ("GET", "HEAD"):
+                # urllib follows 301, 302, 303 and 307, and 308 from Python
+                # 3.11: a 308 before it, a 300 or a 304 reach here.
+                msg = (f"The server answered {status} to a {method}, a redirect{to} that "
+                       "urllib does not follow (it follows 301, 302, 303 and 307, and 308 "
+                       "from Python 3.11): that is not the answer to the call.")
+            else:
+                msg = (f"The server answered {status} to a {method or 'call'}, a redirect{to} "
+                       "this client does not follow: a call that is not a GET is never "
+                       "redirected, so that is not its answer, and nothing says it was done.")
         raise APIError(msg, status=status, code=code, body=server_body, retry_after=ra)
 
     # ── the key and its account ────────────────────────────────────────────

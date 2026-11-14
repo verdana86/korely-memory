@@ -170,7 +170,7 @@ class TheSameToolsAsTheHostedServer(unittest.TestCase):
 class TheServerNeedsNothing(unittest.TestCase):
     """Until 0.1.15 korely-mcp imported `mcp.server.fastmcp`: the `mcp` package
     needs Python 3.10, so it could not start on the Python 3.9 macOS ships
-    (blind installs of korely-agent 0.1.13, 2026-09-28), and mcp 2.0 removed
+    (blind installs of Korely Agent 0.1.13, 2026-09-28), and mcp 2.0 removed
     the module. Now the protocol is ours, standard library only."""
 
     def test_the_extra_is_empty(self):
@@ -275,9 +275,8 @@ if __name__ == "__main__":
 
 
 class TheSearchDefaultOfTheHostedServers(unittest.TestCase):
-    """`korely_search` defaults to 10 on both hosted MCP servers (GordonPro
-    app/mcp/agent_server.py, korely-agent korely_agent/mcp/server.py, checked
-    2026-10-06); this one said 15, the REST default."""
+    """`korely_search` defaults to 10 on the MCP tools of Korely's server
+    (checked 2026-10-06); this one said 15, the REST default."""
 
     def test_the_schema_says_10(self):
         from korely_memory import mcp_server as m

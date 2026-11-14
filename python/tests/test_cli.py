@@ -749,7 +749,7 @@ class _RunsCommands(unittest.TestCase):
 
 class TheMemoryCommands(_RunsCommands):
     """list, update, history and events: routes the SDK had and the CLI did
-    not (window A's comparison of every /v1 route, 2026-10-06)."""
+    not (the comparison of every /v1 route with the SDKs, 2026-10-06)."""
 
     def test_list(self):
         rec = _Recorder().queue(200, {"memories": [

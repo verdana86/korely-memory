@@ -48,8 +48,8 @@ TOOL_NAMES = {"claude-code": "Claude Code", "codex": "Codex", "cursor": "Cursor"
 # of a working session are one write: a day of forty exchanges is eight, which
 # the free plan (250 writes a month) holds for a month of weekdays.
 DEFAULT_EVERY = 5
-# The API refuses a memory longer than 16,000 characters
-# (korely-agent `limits.MAX_CONTENT_CHARS`); the extractor reads all of it, in
+# The API refuses a memory longer than 16,000 characters (the server's own
+# limit); the extractor reads all of it, in
 # windows. One message keeps at most this much, its start and its end, where a
 # reply says what it did and what it decided.
 MESSAGE_CHARS = 3000
@@ -140,7 +140,7 @@ def scope_for(cwd: str, fixed: Optional[str] = None) -> str:
     """The user_id of the memory: `fixed` when given, else `repo:<name>`.
 
     A user_id is one URL path segment (DELETE /v1/users/<user_id>/memories):
-    no '/', at most 255 characters (korely-agent `services.ids`).
+    no '/', at most 255 characters (the server's rule for an id).
     """
     if fixed:
         return fixed

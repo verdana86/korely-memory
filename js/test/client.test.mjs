@@ -466,8 +466,8 @@ test("a monthly quota 429 has no retryAfter", async () => {
   });
 });
 
-// ── the contract as deployed on 2026-09-28 evening (GordonPro d46ab5e, c7cf69c,
-//    7d7f0eb; korely-agent 6699c14, ac3a2da, ef44feb) ──────────────────────────
+// ── the contract as deployed on 2026-09-28 evening, on the Cloud and the
+//    Self-hosted ───────────────────────────────────────────────────────────────
 
 test("errors read the hosted envelope and a self-hosted detail alike", async () => {
   // Hosted: {code, message}. Self-hosted since 2026-09-28: the same two keys
@@ -590,7 +590,7 @@ test("no shipped text says batch refuses timestamp or that processing counts 200
 
 test("base_url (the Python spelling) is refused, not ignored", () => {
   // Ignored, the requests would go to the hosted service instead of the
-  // caller's own server (found by the blind installs of korely-agent 0.1.13).
+  // caller's own server (found by the blind installs of Korely Agent 0.1.13).
   assert.throws(
     () => new Korely({ apiKey: "kor_self_x", base_url: "https://memory.example.com" }),
     (e) => e instanceof KorelyError && /baseUrl/.test(e.message),
@@ -627,8 +627,8 @@ test("an id that is not a string never reaches the server", async () => {
   assert.equal(f.calls[0].url, "https://api.test/v1/memories/42");
 });
 
-// ── 2026-10-06: the gaps window A found comparing every /v1 route with the
-//    SDKs (GordonPro app/api/v1_*.py, korely-agent korely_agent/api/*.py) ──────
+// ── 2026-10-06: the gaps found comparing every /v1 route of the Cloud and the
+//    Self-hosted with the SDKs ─────────────────────────────────────────────────
 
 test("only a stale_write 409 is a StaleWriteError; any other 409 is a ConflictError with its code", async () => {
   // Every 409 was a StaleWriteError. DELETE /v1/account answers 409
@@ -1077,6 +1077,34 @@ test("a call that is not a GET is never redirected", async () => {
   }
 });
 
+test("a browser's opaque redirect (status 0) of a call that is not a GET rejects", async () => {
+  // A browser's fetch with redirect: "manual" hides the redirect: status 0,
+  // no Location. Every call but a GET asks for that, a GET follows.
+  const { k, f } = client([{ status: 0, body: null }, { status: 0, body: null }, { status: 200, body: { ok: true } }]);
+  for (const call of [() => k.add("hello", { user_id: "dana" }), () => k.delete("mem_1")]) {
+    await assert.rejects(call, (e) => {
+      assert.ok(e instanceof APIError);
+      assert.equal(e.status, 0);
+      assert.match(e.message, /^The server answered a (POST|DELETE) with a redirect this client does not follow: /);
+      return true;
+    });
+  }
+  await k.ping();
+  assert.deepEqual(f.calls.map((c) => [c.init.method, c.init.redirect]),
+    [["POST", "manual"], ["DELETE", "manual"], ["GET", "follow"]]);
+});
+
+test("a GET's redirect that fetch did not follow says it was a GET", async () => {
+  const { k } = client([{ status: 300, body: {}, headers: { location: "https://elsewhere.test/v1/ping?t=1" } }]);
+  await assert.rejects(() => k.ping(), (e) => {
+    assert.ok(e instanceof APIError);
+    assert.equal(e.status, 300);
+    assert.equal(e.message, "The server answered 300 to a GET, a redirect to https://elsewhere.test " +
+      "that fetch did not follow: that is not the answer to the call.");
+    return true;
+  });
+});
+
 test("a 401 after a GET redirected to another server says so", async () => {
   const s = await twoServers([401, { code: "invalid_key", message: "Missing key." }]);
   try {
@@ -1140,7 +1168,7 @@ test("Korely.initAgent(): the refusals keep their code; a label that is not text
 // ── options the method does not read are refused (2026-10-07) ──────────────
 // In plain JavaScript `{ userId }` was dropped: a search ran over every end
 // user of the project, a write landed with no end user, `asOf` answered with
-// today's facts (window A's new-customer test). Nothing may be sent.
+// today's facts (a new customer's first test). Nothing may be sent.
 
 test("an option in camelCase is refused before anything is sent, naming the spelling", async () => {
   const { k, f } = client([]);

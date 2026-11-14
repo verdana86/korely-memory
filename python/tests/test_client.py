@@ -1039,8 +1039,8 @@ class WhatTheServerSendsToday(unittest.TestCase):
         self.assertNotIn("tense", rec.last["json"])
 
 
-# ── the contract as deployed on 2026-09-28 evening (GordonPro d46ab5e, c7cf69c,
-#    7d7f0eb; korely-agent 6699c14, ac3a2da, ef44feb) ──────────────────────────
+# ── the contract as deployed on 2026-09-28 evening, on the Cloud and the
+#    Self-hosted ───────────────────────────────────────────────────────────────
 
 class ErrorsFromEitherServer(unittest.TestCase):
     """The hosted /v1 answers `{code, message}` on every 4xx and 5xx. A
@@ -1349,7 +1349,7 @@ class TestTheCertificateAuthority(unittest.TestCase):
     """A server whose certificate a private CA signed (Caddy's local CA on a
     laptop install): the Python 3.9 of macOS does not read SSL_CERT_FILE, so
     the client takes the CA file itself (found by the blind installs of
-    korely-agent 0.1.13, 2026-09-28)."""
+    Korely Agent 0.1.13, 2026-09-28)."""
 
     def setUp(self):
         self._env = dict(os.environ)
@@ -1424,8 +1424,8 @@ class TestTheCertificateAuthority(unittest.TestCase):
         self.assertTrue(any("not checked" in str(x.message) for x in w))
 
 
-# ── 2026-10-06: the gaps window A found comparing every /v1 route with the
-#    SDKs (GordonPro app/api/v1_*.py, korely-agent korely_agent/api/*.py) ──────
+# ── 2026-10-06: the gaps found comparing every /v1 route of the Cloud and the
+#    Self-hosted with the SDKs ─────────────────────────────────────────────────
 
 class OnlyAStaleWriteIsAStaleWrite(unittest.TestCase):
     """Every 409 was a StaleWriteError. `DELETE /v1/account` answers 409
@@ -1474,7 +1474,7 @@ class OnlyAStaleWriteIsAStaleWrite(unittest.TestCase):
 
 class TheRetryAfterOfAPausedWrite(unittest.TestCase):
     """The Cloud answers 503 `writes_paused`, with Retry-After, when its daily
-    model budget is spent (GordonPro services/agent_spesa.py). The transport
+    model budget is spent (the Cloud's spending brake). The transport
     read the header on every error and only a 429 kept it, so the one number
     that says when writes resume was thrown away."""
 
@@ -1526,7 +1526,7 @@ class TheRetryAfterOfAPausedWrite(unittest.TestCase):
 
 class TooManyBatchesIsNotTheMonthlyQuota(unittest.TestCase):
     """The Cloud refuses a fourth batch while three are still being imported:
-    429 `too_many_batches`, no Retry-After (GordonPro services/agent_batch.py).
+    429 `too_many_batches`, no Retry-After (the Cloud's import limit).
     As a plain QuotaExceededError with `retry_after` None it looked exactly
     like the monthly quota used up, which the docs say to stop on."""
 
@@ -1592,8 +1592,8 @@ def _audit_event(ts, action="read", **kw):
 
 
 class TheAuditTrail(unittest.TestCase):
-    """GET /v1/audit, on both products (GordonPro app/api/v1_audit.py,
-    korely-agent api/audit.py): the events of the key's project, newest first,
+    """GET /v1/audit, on both products (the Cloud and the Self-hosted): the
+    events of the key's project, newest first,
     `{events, total}`. The SDKs had no way to read it."""
 
     # Rows as Korely 1.0.23 answers them (api/audit.py AuditRow): the key of
@@ -2147,7 +2147,22 @@ class TheKeyGoesOnlyToItsServer(unittest.TestCase):
             k.ping()
         self.assertEqual([p for _, p, _ in ours.seen], ["/v1/ping", "/v1/elsewhere"])
         self.assertEqual(self._the_key_in(ours.seen), [("GET", "/v1/ping")])
-        self.assertIn(f"Missing key. The call was redirected to {ours.url}", str(caught.exception))
+        # Same origin: no hint to change base_url, which is that address.
+        self.assertEqual(str(caught.exception), "Missing key.")
+
+    def test_a_get_redirect_urllib_does_not_follow_says_so(self):
+        """A 300 (and a 308 before Python 3.11) of a GET is not followed: the
+        error says it was a GET and which redirects urllib follows, not that
+        a call other than a GET is never redirected."""
+        _, k = self._ours(lambda m, p: (300, {"Location": self.other.url + "/v1/ping"}, {}))
+        with self.assertRaises(APIError) as caught:
+            k.ping()
+        e = caught.exception
+        self.assertEqual(e.status, 300)
+        self.assertEqual(str(e), f"The server answered 300 to a GET, a redirect to {self.other.url} "
+                                 "that urllib does not follow (it follows 301, 302, 303 and 307, "
+                                 "and 308 from Python 3.11): that is not the answer to the call.")
+        self.assertEqual(self.other.seen, [])
 
     def test_a_401_after_a_redirect_says_so(self):
         """The key stayed behind: the 401 says where the call went and what
@@ -2183,7 +2198,7 @@ class TheKeyGoesOnlyToItsServer(unittest.TestCase):
 
 
 class SigningUpWithoutAKey(unittest.TestCase):
-    """POST /v1/agents/init (Cloud only, GordonPro app/api/v1_agents_init.py):
+    """POST /v1/agents/init (Cloud only, the signup of Korely's server):
     the one call with no key, since it is how one is obtained. The SDKs had no
     way to make it; only `korely init` did, with its own copy of the HTTP."""
 

@@ -208,7 +208,7 @@ In Node, `new Korely()` with no key and no `KORELY_API_KEY` reads what
 and with `require`, from Node 18. An argument comes first, then the
 environment, then that file. A browser or an edge runtime has no such file.
 
-### Your own server (korely-agent)
+### Your own server (Self-hosted)
 
 Point the client at your install with `baseUrl`, or with the `KORELY_BASE_URL`
 env var, and use the key your install issued (`kor_self_...`):

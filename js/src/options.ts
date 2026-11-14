@@ -17,7 +17,7 @@ export function keysOf<T>() {
  * of the project, `add("x", { userId: "u1" })` wrote a memory with no end user
  * (so `deleteAll({ user_id: "u1" })` never found it), and
  * `getFacts({ asOf: "2020-01-01" })` answered with today's facts: found by
- * window A's new-customer test. The REST API answers 422 to an unknown field
+ * a new customer's first test. The REST API answers 422 to an unknown field
  * and the Python client raises TypeError; this client now refuses it too,
  * naming the spelling it takes.
  *
