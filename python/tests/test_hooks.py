@@ -538,6 +538,24 @@ class AlsoRead(Base):
         text = out["hookSpecificOutput"]["additionalContext"]
         self.assertIn("shared fact", text)
 
+    def test_a_repository_read_that_fails_leaves_the_rest(self):
+        """The repository's read failed and the others were never begun, while
+        the docstring said a failed block never takes the rest: the session
+        started with no memory although the private project could be read."""
+        class Down(FakeClient):
+            def get_context(self, query, user_id=None, token_budget=800):
+                raise RuntimeError("503 from the shared project")
+
+        shared, private = Down(), FakeClient("- private fact")
+        (self.tmp / "cfg").mkdir(exist_ok=True)  # where hook.log goes
+        out = json.loads(hooks.run_hook(
+            "session-start", "claude-code", {"session_id": "p3", "cwd": str(self.repo)},
+            client_factory=lambda profile=None: private if profile else shared,
+            background=self.background.append, also_read=["private"]))
+        self.assertIn("private fact", out["hookSpecificOutput"]["additionalContext"])
+        log = (Path(os.environ["KORELY_CONFIG_HOME"]) / "hook.log").read_text()
+        self.assertIn("RuntimeError: 503 from the shared project", log)
+
     def test_a_profile_that_fails_leaves_the_rest(self):
         def factory(profile=None):
             if profile:

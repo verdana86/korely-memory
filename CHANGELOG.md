@@ -55,8 +55,12 @@ exit 2 (below).
   answering each read in 5 s, three reads: the whole hook 15.6 s before,
   8.5 s after, with the repository's block kept). A read with less than a
   second left is not begun, and is a line in `~/.korely/hook.log`. A single
-  read (the default install) is unchanged: it still gives up at 8 s. The timeout
-  bounds each wait for the server, not a reply that keeps arriving slowly.
+  read (the default install) is unchanged: it still gives up at 8 s. The
+  timeout bounds each wait for the server, not the whole reply: a server
+  that keeps sending a few bytes at a time held a read 12.2 s. A read that
+  fails, the repository's included, is a line in `hook.log` and the other
+  blocks still go: a failed repository read used to end the hook with no
+  context, the other projects never read.
 - `korely hook` masks keys made of hex digits alone before a session
   leaves the machine, as it masks the mixed-case ones: a run of 24 or more
   hex digits of one case, letters and digits mixed and spread like a random

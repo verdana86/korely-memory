@@ -524,8 +524,10 @@ def _quiet_output(tool: str, event: str) -> str:
 def _block(client: Any, query: str, budget: int, user_id: Optional[str], heading: str,
            deadline: Optional[float] = None) -> str:
     """One context block under its heading, or "" when Korely holds nothing.
-    With a `deadline` (time.monotonic), the read may take what is left of it
-    and no more."""
+    With a `deadline` (time.monotonic), the read is given what is left of it
+    as the client's timeout. That timeout bounds each wait for the server,
+    not the whole reply: a server that keeps sending a few bytes at a time
+    holds the read longer (12.2 s measured against a deadline of 8 s)."""
     if deadline is not None:
         left = deadline - _monotonic()
         if left < MIN_READ:
@@ -545,29 +547,35 @@ def _context_text(client_factory: Callable[..., Any], scope: str, repo: str, que
     same project (a memory that spans repositories, e.g. `founder`), then the
     whole project of each profile in `also_read` (a private project next to
     the shared one), each block under its own heading. A block that cannot be
-    read is left out, never the rest. All the reads together take at most
-    NETWORK_TIMEOUT seconds (`MIN_READ`)."""
+    read, the repository's included, is a line in hook.log and is left out,
+    never the rest: the session starts with every block that could be read.
+    The reads share NETWORK_TIMEOUT seconds; one with less than MIN_READ left
+    is not begun (see `_block` for a reply that keeps arriving slowly)."""
     deadline = _monotonic() + NETWORK_TIMEOUT
-    main = client_factory()
-    blocks = [_block(main, query, budget, scope,
-                     f"Korely memory of the repository {repo} (user_id {scope}), what earlier "
-                     f"sessions stored, whichever assistant they ran in:", deadline)]
-    for user in also_read_user:
-        if user == scope:
-            continue
+    made: Dict[str, Any] = {}
+
+    def main() -> Any:
+        # Made once, for the repository and the user_ids: a factory that
+        # fails fails each of them, and the profiles still go.
+        if "client" not in made:
+            made["client"] = client_factory()
+        return made["client"]
+
+    reads = [(f"user_id {scope}", main, budget, scope,
+              f"Korely memory of the repository {repo} (user_id {scope}), what earlier "
+              f"sessions stored, whichever assistant they ran in:")]
+    reads += [(f"user_id {user}", main, EXTRA_BUDGET, user,
+               f"Korely memory of user_id {user} (across repositories):")
+              for user in also_read_user if user != scope]
+    reads += [(f"profile {name}", lambda name=name: client_factory(name), EXTRA_BUDGET, None,
+               f"Korely memory of the profile {name} (its whole project):")
+              for name in also_read]
+    blocks = []
+    for what, client, size, user_id, heading in reads:
         try:
-            blocks.append(_block(main, query, EXTRA_BUDGET, user,
-                                 f"Korely memory of user_id {user} (across repositories):",
-                                 deadline))
+            blocks.append(_block(client(), query, size, user_id, heading, deadline))
         except Exception as e:  # noqa: BLE001 - the other blocks still go
-            _log(f"user_id {user}: {type(e).__name__}: {e}")
-    for name in also_read:
-        try:
-            blocks.append(_block(client_factory(name), query, EXTRA_BUDGET, None,
-                                 f"Korely memory of the profile {name} (its whole project):",
-                                 deadline))
-        except Exception as e:  # noqa: BLE001 - the other blocks still go
-            _log(f"profile {name}: {type(e).__name__}: {e}")
+            _log(f"{what}: {type(e).__name__}: {e}")
     return "\n\n".join(b for b in blocks if b)
 
 
