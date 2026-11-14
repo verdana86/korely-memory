@@ -53,6 +53,18 @@ Not published to PyPI or npm yet; the version numbers are unchanged.
   default install) is unchanged: it still gives up at 8 s. The timeout
   bounds each wait for the server, not a reply that keeps arriving slowly.
 
+- `korely hook` masks keys made of hex digits alone before a session
+  leaves the machine, as it masks the mixed-case ones: a run of 24 or more
+  hex digits of one case, letters and digits mixed and spread like a random
+  string, alone or as a piece of a run (`TOKEN=<hex>`, `dd_<hex>`,
+  `0x<hex>`). None of 2,000 random hex keys was masked; now, of 2,000 each
+  (seeded, in the tests), at least 1,800 of 24 digits, 1,980 of 32 and all
+  of 40 and 64. By its shape such a key is a full git commit hash or a
+  sha256 digest too, which are now masked as well; the short hash git
+  prints (7 to 12 characters) and UUIDs are not. The limit of five failed
+  sends stays: after the fifth the turns are dropped with a line in
+  `~/.korely/hook.log`; the README now says so.
+
 ### npm
 
 - `DeleteReceipt` and `AgentDeleteReceipt` type `facts_reopened`. The field

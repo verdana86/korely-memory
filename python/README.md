@@ -461,9 +461,14 @@ Tuesday. It installs hooks, the assistant's own lifecycle commands, that run
 | Every 5 answers, before a compaction, at the end | The prompts and the final answers are sent as one memory, from a process of their own, so the assistant never waits |
 
 Before anything leaves the machine, what looks like a generated key, a
-private key or a password in a URL is replaced by `[redacted]`. A hook never
-breaks the assistant: a failure is a line in `~/.korely/hook.log`, without
-the text of the session.
+private key or a password in a URL is replaced by `[redacted]`. A generated
+key is told by its shape: 24 characters or more mixing upper case, lower case
+and digits, or hex digits alone (also after `NAME=`, a prefix or `0x`), so a
+full git commit hash or a sha256 digest is masked too; the short hash git
+prints is not. A hook never breaks the assistant: a failure is a line in
+`~/.korely/hook.log`, without the text of the session. Turns that could not
+be sent stay in the buffer and go with the next send; after the fifth failed
+send they are dropped, with a line in `hook.log` (`gave up on ...`).
 
 | Tool | Files (this repository) | With `--global` (every repository) | Notes |
 |---|---|---|---|

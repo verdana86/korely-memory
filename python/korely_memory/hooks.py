@@ -163,22 +163,48 @@ def _entropy(s: str) -> float:
     return -sum(c / n * math.log2(c / n) for c in counts.values())
 
 
+# A hex token: digits and the letters a-f of one case, `0x` allowed in front.
+_HEX = re.compile(r"(?:0[xX])?([0-9a-f]+|[0-9A-F]+)")
+# What joins the pieces of a run: `name=value`, `prefix_value`, `a-b`.
+_JOINS = re.compile(r"[_\-+=]")
+
+
+def _spread(text: str, symbols: int) -> bool:
+    """Many different characters, for an alphabet of `symbols`: a random
+    string of n characters scores close to log2(min(n, symbols)) bits per
+    character (Shannon's entropy), words and identifiers well under it."""
+    return _entropy(text) >= 0.8 * math.log2(min(len(text), symbols))
+
+
+def _random_hex(piece: str) -> bool:
+    """A hex token of at least 24 digits (96 bits), digits and letters
+    mixed and spread over the 16 symbols."""
+    m = _HEX.fullmatch(piece)
+    digits = m.group(1) if m else ""
+    return (len(digits) >= 24 and bool(re.search(r"[0-9]", digits))
+            and bool(re.search(r"[a-fA-F]", digits)) and _spread(digits, 16))
+
+
 def _looks_random(run: str) -> bool:
     """A run that reads like a generated key, by its shape alone.
 
     No list of vendors' prefixes: a key from a vendor nobody listed is masked
     the same way. Random keys mix upper case, lower case and digits and use
-    many different characters; identifiers, file names, hashes and UUIDs do
-    not do all of it (a git hash and a UUID have no upper case). Shannon's
-    entropy, in bits per character, measures "many different characters".
+    many different characters; identifiers and file names do not do all of
+    it. A hex token has one case and 16 symbols: it is masked when the run,
+    or a piece of it (`TOKEN=<hex>`, `prefix_<hex>`), is one. By its shape a
+    hex key cannot be told from a full git commit hash or a sha256 digest,
+    so those are masked too; a UUID's pieces are too short, and the 7 to 12
+    characters git shows of a hash are under the 24 of a run.
     """
     core = run.strip("=")
+    if any(_random_hex(piece) for piece in [core, *_JOINS.split(core)]):
+        return True
     if not (re.search(r"[a-z]", core) and re.search(r"[A-Z]", core)
             and re.search(r"[0-9]", core)):
         return False
-    # A random string of n characters over ~64 symbols scores close to
-    # log2(min(n, 64)); words and identifiers score well under it.
-    return _entropy(core) >= 0.8 * math.log2(min(len(core), 64))
+    # Over ~64 symbols: upper case, lower case, digits and a few signs.
+    return _spread(core, 64)
 
 
 def redact(text: str) -> str:

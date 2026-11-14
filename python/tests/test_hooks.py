@@ -81,11 +81,39 @@ class Redaction(unittest.TestCase):
                     "xoxb-" + _random_key(12) + "-" + _random_key(24), _random_key(24)):
             self.assertNotIn(key, hooks.redact(f"the key is {key} ok"), key)
 
-    def test_names_hashes_and_ids_stay(self):
+    def test_hex_keys_are_masked_too(self):
+        """A key of hex digits alone has no upper case, and went to the
+        server whole: 0 of 2,000 were masked. Masked by its shape, wherever
+        it sits in a run (`TOKEN=`, a prefix, `0x`)."""
+        rng = random.Random(14)
+
+        def hex_key(n, upper=False):
+            k = "".join(rng.choice("0123456789abcdef") for _ in range(n))
+            return k.upper() if upper else k
+
+        for key in (hex_key(32), hex_key(40, upper=True), "TOKEN=" + hex_key(32),
+                    "token=" + hex_key(40), "dd_" + hex_key(32), "0x" + hex_key(64)):
+            self.assertNotIn(key, hooks.redact(f"export {key} ok"), key)
+        for n, at_least in ((24, 1800), (32, 1980), (40, 2000), (64, 2000)):
+            masked = sum(1 for _ in range(2000)
+                         if "[redacted]" in hooks.redact(hex_key(n, upper=rng.random() < 0.5)))
+            self.assertGreaterEqual(masked, at_least, n)
+
+    def test_a_full_commit_hash_is_masked_like_a_hex_key(self):
+        # By its shape a 40-digit hex key is a commit hash: masked, as decided.
+        # The short hash git prints, under 24 digits, stays.
+        self.assertEqual(hooks.redact("fixed in 11f6ad8ec52a2984abaafd7c3b516503785c2072"),
+                         "fixed in [redacted]")
+        self.assertEqual(hooks.redact("fixed in 11f6ad8, see 11f6ad8ec52a"),
+                         "fixed in 11f6ad8, see 11f6ad8ec52a")
+
+    def test_names_short_hashes_and_ids_stay(self):
         kept = ["getContextForUser2024Request", "MAX_CONTENT_CHARS_2026_LIMIT",
-                "11f6ad8ec52a2984abaafd7c3b516503785c2072",
                 "0b55c4d1-5bbb-4fbd-b844-6f2bbb2bf5d1", "claude-opus-5-5-20261015",
-                "github-actions-runner-ubuntu-22-04", "/Users/me/Code/shop-api/src/App2.tsx"]
+                "github-actions-runner-ubuntu-22-04", "/Users/me/Code/shop-api/src/App2.tsx",
+                # hex digits, but not spread like a key, or not mixed
+                "deadbeefdeadbeefdeadbeef", "2026111420261114202611142026",
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaa1", "feedfacecafebeef00000000"]
         for text in kept:
             self.assertEqual(hooks.redact(text), text)
 
