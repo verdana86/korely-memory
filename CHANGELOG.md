@@ -26,7 +26,6 @@ Not published to PyPI or npm yet; the version numbers are unchanged.
   docstrings promised it. It stays, so code that reads it keeps working.
   Whether a cap slot is free is `cap` and `used` of `list_agents()`.
   `korely delete-agent` no longer has a line for it (it could never print).
-
 - The CLI's commands take `--user-id` and `--agent-id` only when they send
   them, and refuse them otherwise (exit 2, `unrecognized arguments`, nothing
   done). Every command took both, from the flags they share, and some sent
@@ -39,7 +38,6 @@ Not published to PyPI or npm yet; the version numbers are unchanged.
   `forget-fact`, `agents`, `batch-status`, `projects`, `keys` and
   `delete-account` neither. **A script that passed an id one of these
   commands never sent stops with exit 2: remove the flag.**
-
 - `korely hook session-start` and the first `prompt` (the coding
   assistants' hooks): the reads of one hook (the repository's memory, each
   `--also-read-user`, each `--also-read`) share the 8 seconds of
@@ -48,11 +46,10 @@ Not published to PyPI or npm yet; the version numbers are unchanged.
   it, and the whole context was lost; now the reads end within about 8 s
   and the hook keeps what it read in time (measured on a Mac with a server
   answering each read in 5 s, three reads: the whole hook 15.6 s before,
-  8.5 s after, with the repository's block kept). A read with less than a second left
-  is not begun, and is a line in `~/.korely/hook.log`. A single read (the
+  8.5 s after, with the repository's block kept). A read with less than a
+  second left is not begun, and is a line in `~/.korely/hook.log`. A single read (the
   default install) is unchanged: it still gives up at 8 s. The timeout
   bounds each wait for the server, not a reply that keeps arriving slowly.
-
 - `korely hook` masks keys made of hex digits alone before a session
   leaves the machine, as it masks the mixed-case ones: a run of 24 or more
   hex digits of one case, letters and digits mixed and spread like a random
@@ -64,7 +61,6 @@ Not published to PyPI or npm yet; the version numbers are unchanged.
   prints (7 to 12 characters) and UUIDs are not. The limit of five failed
   sends stays: after the fifth the turns are dropped with a line in
   `~/.korely/hook.log`; the README now says so.
-
 - The examples in the package's docstrings (`import korely_memory`,
   `Korely`) name the end user in their write:
   `korely.add("User prefers TypeScript", user_id="dana",
