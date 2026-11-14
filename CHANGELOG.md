@@ -45,6 +45,17 @@ Not published to PyPI or npm yet; the version numbers are unchanged.
 - `DeleteReceipt` and `AgentDeleteReceipt` type `facts_reopened`. The field
   already reached the program at run time; a program reading it under
   `strict` did not compile.
+- On Node 18, and on Node 20 before 20.16, `new Korely()` loaded with
+  `import` reads the key and the server that `korely init` saved
+  (`~/.korely/config.json`). It threw `No API key`: an ES module there has
+  neither `process.getBuiltinModule` nor `require` to read the file with.
+  The package's exports now have a `node` condition, an entry that imports
+  the Node built-ins it needs (`dist/index.node.js` and `.cjs`); browsers,
+  edge runtimes and bundlers for them keep the entry that imports none. The
+  ES module entries share one copy of the client, so `korely-memory` and
+  `korely-memory/ai-sdk` still use the same classes. `sideEffects` names
+  the Node entry, which a bundler must not drop. `require()` worked before
+  and works the same. Checked in Docker on Node 18.20.8.
 - `AgentDeleteReceipt.slot_freed` is marked `@deprecated` and documented as
   always undefined: no Korely server sends it, and none ever has. It stays
   in the type, so a program reading it still compiles; read `cap` and

@@ -9,7 +9,7 @@
 // the peer range accepts: install one over the dev dependency and run it.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { generateText, jsonSchema, stepCountIs, streamText, tool, wrapLanguageModel } from "ai";
 import { Korely, KorelyError } from "../dist/index.js";
@@ -903,8 +903,13 @@ test("the core entry never loads ai; the integration is a subpath with an option
     import: "./dist/ai-sdk.js",
     require: "./dist/ai-sdk.cjs",
   });
-  for (const file of ["../dist/index.js", "../dist/index.cjs"]) {
-    const code = readFileSync(new URL(file, import.meta.url), "utf8");
+  // Every file of the build but the integration's: the ESM entries share
+  // chunks, so reading only index.js would read a list of re-exports.
+  const dist = new URL("../dist/", import.meta.url);
+  const core = readdirSync(dist).filter((f) => /\.(c?js)$/.test(f) && !f.startsWith("ai-sdk"));
+  assert.ok(core.includes("index.js") && core.includes("index.node.js"), core.join(" "));
+  for (const file of core) {
+    const code = readFileSync(new URL(file, dist), "utf8");
     assert.doesNotMatch(code, /from\s*["']ai["']|require\(\s*["']ai["']\s*\)/, file);
   }
 });
@@ -915,7 +920,8 @@ test(
   { skip: AI_MAJOR >= 7 && !process.features?.require_module },
   () => {
     const cjs = require("../dist/ai-sdk.cjs");
-    const core = require("../dist/index.cjs");
+    // What `require("korely-memory")` loads, as the integration does.
+    const core = require("korely-memory");
     assert.equal(typeof cjs.withKorelyMemory, "function");
     assert.throws(() => cjs.korelyTools({ client: korely().client }), core.KorelyError);
   },

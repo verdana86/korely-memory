@@ -504,6 +504,27 @@ function raiseFor(status: number, body: any, retryAfter: string | null): never {
 }
 
 
+/** The three Node functions that read the saved config. */
+export interface NodeFiles {
+  readFileSync(path: string, encoding: "utf8"): string;
+  homedir(): string;
+  join(...parts: string[]): string;
+}
+
+let nodeFiles: NodeFiles | undefined;
+
+/**
+ * @internal The Node entry (src/node.ts, the package's `node` export
+ * condition) hands over the functions it imported. An ES module has no
+ * synchronous way to load a built-in module but its own `import` statements
+ * before Node 20.16 and 22.3 (process.getBuiltinModule), and the entry that
+ * a browser or an edge runtime loads cannot import `node:fs`: so the Node
+ * entry imports them, and the universal one looks them up.
+ */
+export function useNodeFiles(files: NodeFiles): void {
+  nodeFiles = files;
+}
+
 /**
  * What `korely init` saved: the key and the server, in ~/.korely/config.json
  * (or $KORELY_CONFIG_HOME/config.json). The Python client reads them; this one
@@ -517,24 +538,35 @@ function savedConfig(): { api_key?: unknown; base_url?: unknown } {
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const proc = typeof process !== "undefined" ? (process as any) : undefined;
     if (!proc?.versions?.node) return {};
-    // process.getBuiltinModule from Node 20.16 and 22.3, in ESM and CJS alike;
-    // `require` in the CJS build of an older Node.
-    const builtin = (id: string) =>
-      typeof proc.getBuiltinModule === "function"
-        ? proc.getBuiltinModule(id)
-        : typeof require === "function"
-          ? require(id)
-          : undefined;
-    const fs = builtin("node:fs");
-    const os = builtin("node:os");
-    const path = builtin("node:path");
-    if (!fs || !os || !path) return {};
-    const home = proc.env?.KORELY_CONFIG_HOME || path.join(os.homedir(), ".korely");
-    const data = JSON.parse(fs.readFileSync(path.join(home, "config.json"), "utf8"));
+    const files = nodeFiles ?? lookedUp(proc);
+    if (!files) return {};
+    const home = proc.env?.KORELY_CONFIG_HOME || files.join(files.homedir(), ".korely");
+    const data = JSON.parse(files.readFileSync(files.join(home, "config.json"), "utf8"));
     return data && typeof data === "object" ? data : {};
   } catch {
     return {};
   }
+}
+
+/**
+ * The functions of `NodeFiles` without the Node entry (a bundler that chose
+ * the universal one for Node): process.getBuiltinModule from Node 20.16 and
+ * 22.3, `require` in the CommonJS build. Undefined in an ES module of an
+ * older Node, which the Node entry serves.
+ */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function lookedUp(proc: any): NodeFiles | undefined {
+  const builtin = (id: string) =>
+    typeof proc.getBuiltinModule === "function"
+      ? proc.getBuiltinModule(id)
+      : typeof require === "function"
+        ? require(id)
+        : undefined;
+  const fs = builtin("node:fs");
+  const os = builtin("node:os");
+  const path = builtin("node:path");
+  if (!fs || !os || !path) return undefined;
+  return { readFileSync: fs.readFileSync, homedir: os.homedir, join: path.join };
 }
 
 function text(v: unknown): string | undefined {

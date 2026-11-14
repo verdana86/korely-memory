@@ -9,10 +9,14 @@ import { defineConfig } from "tsup";
 // integration uses the same Korely and KorelyError classes as the core entry
 // instead of a bundled copy. tsconfig `paths` points "korely-memory" at the
 // sources for the type check.
+//
+// `index.node` is the entry the package's `node` export condition names: the
+// universal entry plus the `node:` imports that read the saved config (see
+// src/node.ts). It has the universal entry's types.
 export default defineConfig({
-  entry: { index: "src/index.ts", "ai-sdk": "src/ai-sdk.ts" },
+  entry: { index: "src/index.ts", "index.node": "src/node.ts", "ai-sdk": "src/ai-sdk.ts" },
   format: ["esm", "cjs"],
-  dts: true,
+  dts: { entry: { index: "src/index.ts", "ai-sdk": "src/ai-sdk.ts" } },
   clean: true,
   sourcemap: false,
   minify: false,

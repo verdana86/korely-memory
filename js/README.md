@@ -198,8 +198,9 @@ default. A memory written to a Global project is read by Google's model.
 
 In Node, `new Korely()` with no key and no `KORELY_API_KEY` reads what
 `korely init` saved (the key and the server, in `~/.korely/config.json`, or
-`$KORELY_CONFIG_HOME/config.json`), as the Python client does. An argument
-comes first, then the environment, then that file.
+`$KORELY_CONFIG_HOME/config.json`), as the Python client does, with `import`
+and with `require`, from Node 18. An argument comes first, then the
+environment, then that file. A browser or an edge runtime has no such file.
 
 ### Your own server (korely-agent)
 

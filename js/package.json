@@ -31,6 +31,10 @@
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
+      "node": {
+        "import": "./dist/index.node.js",
+        "require": "./dist/index.node.cjs"
+      },
       "import": "./dist/index.js",
       "require": "./dist/index.cjs"
     },
@@ -52,7 +56,10 @@
     "README.md",
     "LICENSE"
   ],
-  "sideEffects": false,
+  "sideEffects": [
+    "./dist/index.node.js",
+    "./dist/index.node.cjs"
+  ],
   "engines": {
     "node": ">=18"
   },
