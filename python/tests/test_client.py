@@ -1894,7 +1894,7 @@ class DeletingTheAccountOfAKey(unittest.TestCase):
                        (200, {"tenant_id": "  "}), (200, {"tenant_id": 123}),
                        (200, {"tenant_id": [FakeCloud.ACCOUNT]}), (200, {"kind": "api_key"}),
                        (200, [FakeCloud.ACCOUNT]), (200, {})):
-            for typed in ("true", FakeCloud.ACCOUNT, None):
+            for typed in (True, "true", FakeCloud.ACCOUNT, None):
                 with self.subTest(whoami=whoami, typed=typed):
                     cloud = FakeCloud("flag", whoami=whoami)
                     with self.assertRaises(KorelyError) as caught:

@@ -138,6 +138,23 @@ function checkOptions(method: string, opts: unknown, known: readonly string[]): 
   if (problem) throw new KorelyError(problem);
 }
 
+/** The id of an account in its usual text form, 8-4-4-4-12 hex digits: the
+ *  form GET /admin/whoami gives `tenant_id` in. */
+const ACCOUNT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * `value` as the id of an account, spaces trimmed, or undefined. The server
+ * reads `?confirm=` as a UUID (Python's `uuid.UUID`), and every text this
+ * pattern takes is one, so nothing that passes is a boolean to any server: a
+ * `tenant_id` of "true" must never become `?confirm=true`, which deletes the
+ * account on a server older than Korely 1.0.23.
+ */
+function accountId(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const text = value.trim();
+  return ACCOUNT_ID.test(text) ? text : undefined;
+}
+
 /** add() accepts a string or a list of chat messages, joined to one block. */
 function coerceContent(content: string | Message[]): string {
   if (typeof content === "string") return content;
@@ -636,7 +653,7 @@ export class Korely {
    * label of who signed up, kept for your reference. The answer carries the
    * key, shown once (save it), its `tier`, `region`, `scopes` and `quotas`.
    * The account it creates has no login: the key is the account, and
-   * `deleteAccount({ confirm: true })` closes it.
+   * `deleteAccount({ confirm: "<the account's id>" })` closes it.
    *
    * Cloud only. The server is `baseUrl`, else KORELY_BASE_URL, else the
    * region's. Refusals: 403 `signup_disabled` (NamespaceForbiddenError) when
@@ -713,16 +730,26 @@ export class Korely {
    * or `korely init --agent`, which nobody signs in to: the key is the
    * account, and this is how it is closed (GDPR Art. 17).
    *
-   * `{ confirm: true }` is required, and checked here, before anything is
-   * sent: without it, a KorelyError whose `code` is `confirmation_required`,
-   * the code the server gives the same refusal. With it, the client reads the
-   * account's id (`tenant_id` of GET /admin/whoami, with the same key) and
-   * sends it as the confirmation, which Korely 1.0.23 and later require: a
-   * flag alone no longer deletes an account. A server older than 1.0.23 takes
-   * only `?confirm=true` and refuses the id (422): that rejects with an
-   * APIError whose `code` is `server_too_old`, nothing is deleted, and the
-   * client does not fall back to the flag. Upgrade the server, or use
-   * korely-memory 0.1.18.
+   * `confirm` is the account's id, typed by whoever means it, as the
+   * dashboard has the email typed: `tenant_id` of GET /admin/whoami, which the
+   * error below gives. So a key that leaked, or a script pointed at the wrong
+   * key, is not enough with a flag (Korely 1.0.23 asks the same of the
+   * server's route). Nothing is deleted, and the DELETE is not sent, unless
+   * `confirm` is a UUID equal, spaces trimmed, to the `tenant_id` that GET
+   * /admin/whoami gives this key: a missing, `true`, `"true"` or wrong
+   * `confirm` rejects with a KorelyError whose `code` is
+   * `confirmation_required` (the server's code for the same refusal) and
+   * whose message names the id to type when the key may read it. A key that
+   * may not read GET /admin/whoami (403, a key without the `admin` scope)
+   * rejects with that error, nothing deleted.
+   *
+   * The account is deleted only on the server's answer that says so
+   * (`deleted: true`); any other answer, a redirect not followed or a 2xx
+   * without it, rejects, and the account may still be there. A server older
+   * than 1.0.23 takes only `?confirm=true` and refuses the id (422): that
+   * rejects with an APIError whose `code` is `server_too_old`, nothing is
+   * deleted, and the client does not fall back to the flag. Upgrade the
+   * server, or use korely-memory 0.1.18.
    *
    * An account with a Korely login rejects with 409 `account_has_login`
    * (ConflictError): a key that ended up in a log must not be able to delete
@@ -730,27 +757,26 @@ export class Korely {
    * no such route and answers 404 (NotFoundError), or 405 where it serves its
    * dashboard. No audit event survives: the trail is part of what goes.
    */
-  async deleteAccount(opts: { confirm?: boolean } = {}): Promise<AccountDeleteReceipt> {
+  async deleteAccount(opts: { confirm?: string } = {}): Promise<AccountDeleteReceipt> {
     checkOptions("deleteAccount", opts, ["confirm"]);
-    if (opts?.confirm !== true) {
+    const typed = accountId(opts?.confirm);
+    if (typed === undefined) {
+      throw await this.notConfirmed(
+        "This deletes the account of this key for good, every key, project, memory and " +
+          "fact of it, and its id, typed, is the confirmation: a flag is not enough.",
+      );
+    }
+    const account = await this.accountOfThisKey();
+    if (typed !== account) {
       throw new KorelyError(
-        "deleteAccount() deletes this key's account, every key, memory and fact " +
-          "of it, for good. Pass { confirm: true } to mean it.",
+        `The account of this key is ${account}, and the confirmation names ${typed}: ` +
+          `nothing was deleted. To delete account ${account}, pass { confirm: "${account}" }.`,
         { code: "confirmation_required" },
       );
     }
-    // Korely 1.0.23: the deletion names the account it deletes, so a key that
-    // leaked, or a script pointed at the wrong key, is not enough with a flag.
-    // The person says yes ({ confirm: true }); the client adds the id the
-    // server gives the same key.
-    const who: { tenant_id?: unknown } | undefined = await this.request("GET", "/admin/whoami");
-    const account = typeof who?.tenant_id === "string" ? who.tenant_id.trim() : "";
-    if (!account) {
-      throw new KorelyError("GET /admin/whoami named no account for this key: nothing was deleted.",
-        { code: "confirmation_required" });
-    }
+    let body: { deleted?: unknown } | undefined;
     try {
-      return await this.request("DELETE", "/v1/account", { params: { confirm: account } });
+      body = await this.request("DELETE", "/v1/account", { params: { confirm: account } });
     } catch (e) {
       // Only a server before 1.0.23 refuses the id itself: it reads `confirm`
       // as a boolean (422 of validation). Sending the flag instead would undo
@@ -767,6 +793,52 @@ export class Korely {
       }
       throw e;
     }
+    // The server's answer to a deletion is `deleted: true` and the rows
+    // removed (AccountDeleted), as Supermemory's reset answers `success:
+    // true`. A 2xx without it (an empty 202 of a proxy, a page, the GET a
+    // 303 turns the DELETE into) was read as a deletion.
+    if (body?.deleted !== true) {
+      throw new KorelyError(
+        "DELETE /v1/account answered without `deleted: true`, the answer that says the " +
+          "account is gone: it is not counted as deleted, and it may still be there " +
+          "(GET /admin/whoami answers with this key while it is).",
+      );
+    }
+    return body as AccountDeleteReceipt;
+  }
+
+  /** The id of this key's account: `tenant_id` of GET /admin/whoami, checked
+   *  as an account id (`accountId`). The errors of the call reject as they
+   *  come. */
+  private async accountOfThisKey(): Promise<string> {
+    const who: { tenant_id?: unknown } | undefined = await this.request("GET", "/admin/whoami");
+    const account = accountId(who?.tenant_id);
+    if (account === undefined) {
+      throw new KorelyError(
+        "GET /admin/whoami gave no account id (a UUID) for this key: nothing was deleted.",
+        { code: "confirmation_required" },
+      );
+    }
+    return account;
+  }
+
+  /** The refusal of a deletion not confirmed, naming the id to type when this
+   *  key may read it. */
+  private async notConfirmed(why: string): Promise<KorelyError> {
+    let account: string;
+    try {
+      account = await this.accountOfThisKey();
+    } catch (e: any) {
+      return new KorelyError(
+        `${why} Nothing was deleted. The id is tenant_id in GET /admin/whoami, which this ` +
+          `key could not read: ${e?.message ?? String(e)}`,
+        { code: "confirmation_required" },
+      );
+    }
+    return new KorelyError(
+      `${why} Nothing was deleted. To delete account ${account}, pass { confirm: "${account}" }.`,
+      { code: "confirmation_required" },
+    );
   }
 
   // ── audit ─────────────────────────────────────────────────────────────────
