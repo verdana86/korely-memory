@@ -8,6 +8,26 @@ The server side of the entries marked "API" shipped on 2026-09-28. Against an
 older server these clients keep working: the old field names are still read,
 and a batch `timestamp` is refused there with a 422.
 
+## Unreleased
+
+Not published to PyPI or npm yet; the version numbers are unchanged.
+
+### Python
+
+- `delete()` and `delete_agent()` (and `AsyncKorely`'s) keep
+  `facts_reopened`, which Korely 1.0.2 and later send: the facts that are
+  true again because the deleted memory (or namespace) had closed them, given
+  back as new rows. `DeleteReceipt` and `AgentDeleteReceipt` dropped it, so a
+  program could not see them. None from an older server. `korely delete` and
+  `korely delete-agent` print it (`2 fact(s) true again`) when it is above
+  zero, and `--json` carries it.
+
+### npm
+
+- `DeleteReceipt` and `AgentDeleteReceipt` type `facts_reopened`. The field
+  already reached the program at run time; a program reading it under
+  `strict` did not compile.
+
 ## Python 0.1.29, npm 0.1.18, n8n-nodes-korely 0.1.1 (2026-11-13)
 
 For Korely 1.0.19, which refuses a write that names neither `user_id` (the

@@ -97,11 +97,18 @@ export interface MemoryPage extends Iterable<Memory> {
   total: number;
 }
 
+/**
+ * What `delete()` did to one memory. `facts_invalidated` counts the facts it
+ * ended; `facts_reopened` the facts that are true again: facts of other
+ * memories that this one's facts had closed, given back as new rows
+ * (undefined from a server older than Korely 1.0.2, which does not send it).
+ */
 export interface DeleteReceipt {
   id?: string;
   status?: string;
   facts_invalidated?: number;
   audit_id?: string;
+  facts_reopened?: number;
 }
 
 /**
@@ -305,6 +312,11 @@ export interface AgentDeleteReceipt {
    * it.
    */
   slot_freed?: boolean;
+  /**
+   * The facts of other agents that the namespace's facts had closed, true
+   * again as new rows (undefined from a server older than Korely 1.0.2).
+   */
+  facts_reopened?: number;
 }
 
 /** What `ping()` answers: the key works. */

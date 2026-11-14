@@ -879,7 +879,9 @@ class Korely:
     def delete(self, memory_id: str) -> DeleteReceipt:
         """DELETE /v1/memories/:id: forget one memory. It drops out of every
         default read, and the facts only it asserted are invalidated (kept as
-        history, audited). For erasure use ``delete_all``."""
+        history, audited). The facts its facts had closed are true again:
+        the receipt counts them in ``facts_reopened``. For erasure use
+        ``delete_all``."""
         return DeleteReceipt.from_dict(
             self._call("DELETE", "/v1/memories/" + _seg(memory_id, "memory_id")))
 

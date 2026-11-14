@@ -135,6 +135,29 @@ class TestMemories(unittest.TestCase):
         self.assertEqual(r.status, "forgotten")
         self.assertEqual(r.audit_id, "aud_3d0f")
 
+    def test_the_facts_true_again_reach_the_receipt(self):
+        """The server's answers as Korely 1.0.2 and later give them
+        (services/facts/erasure.py): `facts_reopened` was dropped by the
+        receipts, and a program could not see a deletion give facts back."""
+        import asyncio
+
+        from korely_memory import AsyncKorely
+
+        forgotten = {"id": "mem_1", "status": "forgotten", "facts_invalidated": 1,
+                     "facts_reopened": 2, "audit_id": "aud_3d0f"}
+        purged = {"agent_id": "bot", "memories_deleted": 3, "facts_deleted": 4,
+                  "facts_reopened": 1, "read_marks_deleted": 0, "audit_id": "aud_4"}
+        k = _client(_Recorder().queue(200, forgotten).queue(200, purged))
+        self.assertEqual(k.delete("mem_1").facts_reopened, 2)
+        self.assertEqual(k.delete_agent("bot").facts_reopened, 1)
+        ak = AsyncKorely(api_key="kor_live_test")
+        ak._sync._send = _Recorder().queue(200, forgotten)
+        self.assertEqual(asyncio.run(ak.delete("mem_1")).facts_reopened, 2)
+        # An older server does not send it: None, not 0.
+        k = _client(_Recorder().queue(200, {"id": "mem_1", "status": "forgotten",
+                                           "facts_invalidated": 1, "audit_id": "aud_1"}))
+        self.assertIsNone(k.delete("mem_1").facts_reopened)
+
     def test_kind_and_exclude_sessions_are_sent_only_when_asked(self):
         rec = _Recorder().queue(201, {"id": "mem_1", "content": "c"}).queue(201, {"id": "mem_2", "content": "c"})
         k = _client(rec)

@@ -558,12 +558,19 @@ def cmd_get(k: Korely, a) -> int:
     return 0
 
 
+def _reopened(receipt) -> str:
+    """The facts a deletion made true again, when it says it made some."""
+    n = getattr(receipt, "facts_reopened", None)
+    return f", {n} fact(s) true again" if n else ""
+
+
 def cmd_delete(k: Korely, a) -> int:
     r = k.delete(a.memory_id)
     if a.json:
         _emit_json(r)
     else:
-        print(f"deleted  {r.id}  (status {r.status}, {r.facts_invalidated or 0} fact(s) invalidated)")
+        print(f"deleted  {r.id}  (status {r.status}, {r.facts_invalidated or 0} fact(s) "
+              f"invalidated{_reopened(r)})")
     return 0
 
 
@@ -621,7 +628,7 @@ def cmd_delete_agent(k: Korely, a) -> int:
             False: ", slot still taken: another project of the account uses the name"}.get(
                 r.slot_freed, "")
     print(f"deleted agent {r.agent_id}  ({r.memories_deleted or 0} memory(ies), "
-          f"{r.facts_deleted or 0} fact(s) erased, audit {r.audit_id}{slot})")
+          f"{r.facts_deleted or 0} fact(s) erased{_reopened(r)}, audit {r.audit_id}{slot})")
     return 0
 
 

@@ -888,7 +888,8 @@ export class Korely {
   /**
    * DELETE /v1/memories/:id: forget one memory. It drops out of every default
    * read, and the facts only it asserted are invalidated (kept as history,
-   * audited). For erasure use `deleteAll`.
+   * audited). The facts its facts had closed are true again: the receipt
+   * counts them in `facts_reopened`. For erasure use `deleteAll`.
    */
   async delete(memoryId: string): Promise<DeleteReceipt> {
     return this.request("DELETE", `/v1/memories/${seg(memoryId, "memoryId")}`);

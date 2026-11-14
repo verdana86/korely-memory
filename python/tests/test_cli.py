@@ -876,6 +876,23 @@ class TheAgentFactAndBatchCommands(_RunsCommands):
         self.assertIn("deleted agent bot#1  (3 memory(ies), 1 fact(s) erased, audit aud_1", out)
         self.assertIn("slot still taken", out)
 
+    def test_a_deletion_says_the_facts_it_made_true_again(self):
+        rec = (_Recorder()
+               .queue(200, {"id": "mem_1", "status": "forgotten", "facts_invalidated": 1,
+                            "facts_reopened": 2, "audit_id": "aud_1"})
+               .queue(200, {"agent_id": "bot", "memories_deleted": 3, "facts_deleted": 1,
+                            "facts_reopened": 1, "audit_id": "aud_2"})
+               .queue(200, {"id": "mem_2", "status": "forgotten", "facts_invalidated": 0,
+                            "facts_reopened": 0, "audit_id": "aud_3"})
+               .queue(200, {"id": "mem_3", "status": "forgotten", "facts_invalidated": 0,
+                            "facts_reopened": 4, "audit_id": "aud_4"}))
+        self.assertIn("1 fact(s) invalidated, 2 fact(s) true again)",
+                      self._run(rec, ["delete", "mem_1"])[1])
+        self.assertIn("1 fact(s) erased, 1 fact(s) true again, audit aud_2",
+                      self._run(rec, ["delete-agent", "--agent-id", "bot", "--yes"])[1])
+        self.assertNotIn("true again", self._run(rec, ["delete", "mem_2"])[1])
+        self.assertEqual(self._run(rec, ["delete", "mem_3", "--json"])[1]["facts_reopened"], 4)
+
     def test_add_fact(self):
         rec = _Recorder().queue(201, {"id": "fct_2", "subject": "maria", "predicate": "lives_in",
                                       "object": "Milan", "valid_from": "2026-03-01T00:00:00+00:00",

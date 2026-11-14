@@ -143,10 +143,17 @@ class MemoryPage:
 
 @dataclass
 class DeleteReceipt:
+    """What ``delete`` did to one memory.
+
+    ``facts_invalidated`` counts the facts it ended. ``facts_reopened`` counts
+    the facts that are true again: facts of other memories that this one's
+    facts had closed, given back as new rows. None from a server older than
+    Korely 1.0.2, which does not send it."""
     id: Optional[str] = None
     status: Optional[str] = None
     facts_invalidated: Optional[int] = None
     audit_id: Optional[str] = None
+    facts_reopened: Optional[int] = None
 
     @classmethod
     def from_dict(cls, d: dict) -> "DeleteReceipt":
@@ -519,6 +526,9 @@ class AgentDeleteReceipt:
     facts_deleted: Optional[int] = None
     audit_id: Optional[str] = None
     slot_freed: Optional[bool] = None
+    #: The facts of other agents that the namespace's facts had closed, true
+    #: again as new rows. None from a server older than Korely 1.0.2.
+    facts_reopened: Optional[int] = None
 
     @classmethod
     def from_dict(cls, d: dict) -> "AgentDeleteReceipt":
