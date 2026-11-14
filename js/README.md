@@ -104,7 +104,7 @@ Every method maps to one REST endpoint.
 | `history(id)` | `GET /v1/memories/:id/history` | A memory's timeline + the facts it produced. |
 | `users(opts?)` | `GET /v1/users` | Your end users, with counts. |
 | `listAgents(opts?)` | `GET /v1/agents` | This project's agent namespaces, with counts. `total` counts this project's names, `used` the cap slots taken across the account. Call after `agent_cap_exceeded` to reuse an id. |
-| `deleteAgent(agentId)` | `DELETE /v1/agents/:agent_id` | Purge an agent namespace of this project. `NotFoundError` for a name the project does not use; `slot_freed` says whether the cap slot is free now. |
+| `deleteAgent(agentId)` | `DELETE /v1/agents/:agent_id` | Purge an agent namespace of this project. `NotFoundError` for a name the project does not use; the receipt's `slot_freed` is always undefined, because no Korely server sends it: read `cap` and `used` from `listAgents()` to see whether a slot is free. |
 | `getFacts(opts?)` | `GET /v1/facts` | Typed facts; `as_of` for what was true on a date, `known_as_of` for what the store knew on it. The array also carries `total`. |
 | `addFactTriple(s, p, o, opts?)` | `POST /v1/facts` | Write a fact directly (bi-temporal; `tense: "past"` for one that is over). |
 | `correctFact(id, changes)` | `PATCH /v1/facts/:id` | Supersede a fact with a corrected one; `invalidated` lists what it closed. Restating the fact as it stands reconfirms it (`invalidated: []`). |

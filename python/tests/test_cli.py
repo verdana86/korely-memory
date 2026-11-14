@@ -868,13 +868,16 @@ class TheAgentFactAndBatchCommands(_RunsCommands):
         self.assertIn("--yes", err)
 
     def test_delete_agent(self):
+        # The server's answer has no `slot_freed`: the line says nothing of
+        # a slot it does not know (`korely agents` shows the cap).
         rec = _Recorder().queue(200, {"agent_id": "bot#1", "memories_deleted": 3,
-                                      "facts_deleted": 1, "audit_id": "aud_1", "slot_freed": False})
+                                      "facts_deleted": 1, "facts_reopened": 0,
+                                      "audit_id": "aud_1"})
         rc, out = self._run(rec, ["delete-agent", "--agent-id", "bot#1", "--yes"])
         self.assertEqual(rc, 0)
         self.assertEqual((rec.last["method"], rec.last["path"]), ("DELETE", "/v1/agents/bot%231"))
-        self.assertIn("deleted agent bot#1  (3 memory(ies), 1 fact(s) erased, audit aud_1", out)
-        self.assertIn("slot still taken", out)
+        self.assertEqual("deleted agent bot#1  (3 memory(ies), 1 fact(s) erased, audit aud_1)\n",
+                         out)
 
     def test_a_deletion_says_the_facts_it_made_true_again(self):
         rec = (_Recorder()

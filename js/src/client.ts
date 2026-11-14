@@ -971,14 +971,16 @@ export class Korely {
    * DELETE /v1/agents/:agent_id: hard-delete an agent namespace, purging every
    * memory + fact written under this agent_id in this key's project
    * (soft-forgetting its data does NOT free its cap slot; this does). Resolves
-   * to the purge counts, an audit id and `slot_freed`.
+   * to the purge counts and an audit id. Its `slot_freed` is always
+   * undefined: no Korely server sends it, and none ever has. To see whether a
+   * cap slot is free, read `cap` and `used` from `listAgents()`.
    *
    * The namespace must be one `listAgents()` shows for this key: anything else
    * rejects with NotFoundError, including a name only another project of the
    * account uses (the server answered 200 with zero counts for it before
    * 2026-09-28, and freed nothing). The cap counts a name across the account,
    * so while another project still uses the same agent_id its rows stay and
-   * `slot_freed` is false.
+   * the slot stays taken.
    */
   async deleteAgent(agentId: string): Promise<AgentDeleteReceipt> {
     return this.request("DELETE", `/v1/agents/${seg(agentId, "agentId")}`);

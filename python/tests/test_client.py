@@ -1149,7 +1149,7 @@ class TheErasureReceiptSaysDeleted(unittest.TestCase):
 
 class AgentsBelongToAProject(unittest.TestCase):
     """GET /v1/agents: `total` counts this key's project, `used` the account.
-    DELETE /v1/agents/{id}: 404 outside the project, and `slot_freed`."""
+    DELETE /v1/agents/{id}: 404 outside the project; no `slot_freed`."""
 
     def test_used_can_be_above_total(self):
         rec = _Recorder().queue(200, {
@@ -1160,19 +1160,19 @@ class AgentsBelongToAProject(unittest.TestCase):
         self.assertEqual((page.total, page.used, page.cap), (1, 2, 2))
         self.assertEqual([a.agent_id for a in page], ["bot"])
 
-    def test_delete_agent_says_whether_the_slot_is_free(self):
+    def test_delete_agent_reads_what_the_server_sends(self):
+        """The server's answer (services/facts/erasure.py delete_agent): the
+        counts and the audit id. No Korely server sends `slot_freed`, and
+        none ever has: the field stays, deprecated, and is None; whether a
+        slot is free is `cap` and `used` of `list_agents()`."""
         rec = _Recorder().queue(200, {"agent_id": "bot", "memories_deleted": 3,
-                                      "facts_deleted": 1, "audit_id": "aud_1",
-                                      "slot_freed": False})
+                                      "facts_deleted": 1, "facts_reopened": 0,
+                                      "read_marks_deleted": 0, "audit_id": "aud_1"})
         r = _client(rec).delete_agent("bot")
-        self.assertIs(r.slot_freed, False)
-        self.assertEqual((r.memories_deleted, r.facts_deleted), (3, 1))
-
-    def test_a_server_that_does_not_say_leaves_it_none(self):
-        """A self-hosted install has no cap and sends no slot_freed."""
-        rec = _Recorder().queue(200, {"agent_id": "bot", "memories_deleted": 0,
-                                      "facts_deleted": 0, "audit_id": "aud_1"})
-        self.assertIsNone(_client(rec).delete_agent("bot").slot_freed)
+        self.assertEqual((r.agent_id, r.memories_deleted, r.facts_deleted, r.audit_id),
+                         ("bot", 3, 1, "aud_1"))
+        self.assertIsNone(r.slot_freed)
+        self.assertIn("deprecated", type(r).__doc__)
 
     def test_a_name_outside_the_project_is_not_found(self):
         rec = _Recorder().queue(404, {"code": "not_found",

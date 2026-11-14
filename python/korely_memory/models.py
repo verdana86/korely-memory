@@ -515,16 +515,18 @@ class AgentsPage:
 class AgentDeleteReceipt:
     """The purge counts from hard-deleting an agent namespace.
 
-    ``slot_freed`` says whether the agent cap slot is free now. The cap counts
-    a name across the account, so it stays taken (False) while another
-    project of the account still uses the same ``agent_id``; this key can
-    neither see nor delete that project's rows. None when the server does not
-    say: a self-hosted install has no cap, and servers before 2026-09-28 did
-    not send it."""
+    ``slot_freed`` is deprecated and always None: no Korely server sends
+    it, and none ever has. It stays so that code reading it keeps working. To see whether
+    the agent cap slot is free, read ``cap`` and ``used`` from
+    ``list_agents()``. The cap counts a name across the account, so the slot
+    stays taken while another project of the account still uses the same
+    ``agent_id``; this key can neither see nor delete that project's rows."""
     agent_id: Optional[str] = None
     memories_deleted: Optional[int] = None
     facts_deleted: Optional[int] = None
     audit_id: Optional[str] = None
+    #: Deprecated: always None, no Korely server sends it (read ``cap`` and
+    #: ``used`` from ``list_agents()``).
     slot_freed: Optional[bool] = None
     #: The facts of other agents that the namespace's facts had closed, true
     #: again as new rows. None from a server older than Korely 1.0.2.

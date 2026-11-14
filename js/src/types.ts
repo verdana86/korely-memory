@@ -305,11 +305,11 @@ export interface AgentDeleteReceipt {
   facts_deleted?: number;
   audit_id?: string;
   /**
-   * Whether the agent cap slot is free now. The cap counts a name across the
-   * account, so it stays taken (false) while another project of the account
-   * still uses the same agent_id. Undefined when the server does not say: a
-   * self-hosted install has no cap, and servers before 2026-09-28 did not send
-   * it.
+   * @deprecated Always undefined: no Korely server sends this field, and none
+   * ever has. It stays in the type so that code reading it keeps compiling. To see
+   * whether a cap slot is free, read `cap` and `used` from `listAgents()`; the
+   * cap counts a name across the account, so the slot stays taken while
+   * another project of the account still uses the same agent_id.
    */
   slot_freed?: boolean;
   /**

@@ -956,14 +956,17 @@ class Korely:
         """DELETE /v1/agents/:agent_id: hard-delete an agent namespace, purging
         every memory + fact written under this ``agent_id`` in this key's
         project (soft-forgetting its data does NOT free its cap slot; this
-        does). Returns the purge counts, an audit id and ``slot_freed``.
+        does). Returns the purge counts and an audit id; ``slot_freed`` is always
+        None, because no Korely server sends it, and none ever has. To see
+        whether a cap slot is free, read ``cap`` and ``used`` from
+        ``list_agents()``.
 
         The namespace must be one ``list_agents()`` shows for this key:
         anything else raises NotFoundError, including a name that only another
         project of the account uses (the server answered 200 with zero counts
         for it before 2026-09-28, and freed nothing). The cap counts a name
         across the account, so while another project still uses the same
-        ``agent_id`` its rows stay and ``slot_freed`` is False."""
+        ``agent_id`` its rows stay and the slot stays taken."""
         return AgentDeleteReceipt.from_dict(
             self._call("DELETE", "/v1/agents/" + _seg(agent_id, "agent_id"))
         )

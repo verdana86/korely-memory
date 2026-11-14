@@ -21,12 +21,21 @@ Not published to PyPI or npm yet; the version numbers are unchanged.
   program could not see them. None from an older server. `korely delete` and
   `korely delete-agent` print it (`2 fact(s) true again`) when it is above
   zero, and `--json` carries it.
+- `AgentDeleteReceipt.slot_freed` is deprecated and documented as what it
+  is: always None. No Korely server sends it, and none ever has; the
+  docstrings promised it. It stays, so code that reads it keeps working.
+  Whether a cap slot is free is `cap` and `used` of `list_agents()`.
+  `korely delete-agent` no longer has a line for it (it could never print).
 
 ### npm
 
 - `DeleteReceipt` and `AgentDeleteReceipt` type `facts_reopened`. The field
   already reached the program at run time; a program reading it under
   `strict` did not compile.
+- `AgentDeleteReceipt.slot_freed` is marked `@deprecated` and documented as
+  always undefined: no Korely server sends it, and none ever has. It stays
+  in the type, so a program reading it still compiles; read `cap` and
+  `used` from `listAgents()` instead.
 
 ## Python 0.1.29, npm 0.1.18, n8n-nodes-korely 0.1.1 (2026-11-13)
 

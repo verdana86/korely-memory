@@ -138,9 +138,10 @@ with a 422 naming the item (`memories[1].timestamp`), before anything is queued.
 `agent_id`, or `delete_agent()` to purge a throwaway one. The page's `total`
 counts the namespaces of this key's project; `used` counts the cap slots taken
 across the account, which is what the 403 compares with `cap`. `delete_agent()`
-raises `NotFoundError` for a name this project does not use, and its receipt's
-`slot_freed` says whether the slot is free now (it is not while another project
-of the account still uses the name).
+raises `NotFoundError` for a name this project does not use. Its receipt's
+`slot_freed` is always `None`, because no Korely server sends it: to see
+whether a slot is free, read `cap` and `used` from `list_agents()` (a slot stays
+taken while another project of the account still uses the name).
 
 `delete_all(user_id=)` answers with `memories_deleted` and `facts_deleted`, the
 rows physically erased.

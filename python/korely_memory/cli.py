@@ -624,11 +624,8 @@ def cmd_delete_agent(k: Korely, a) -> int:
     if a.json:
         _emit_json(r)
         return 0
-    slot = {True: ", slot freed",
-            False: ", slot still taken: another project of the account uses the name"}.get(
-                r.slot_freed, "")
     print(f"deleted agent {r.agent_id}  ({r.memories_deleted or 0} memory(ies), "
-          f"{r.facts_deleted or 0} fact(s) erased{_reopened(r)}, audit {r.audit_id}{slot})")
+          f"{r.facts_deleted or 0} fact(s) erased{_reopened(r)}, audit {r.audit_id})")
     return 0
 
 
