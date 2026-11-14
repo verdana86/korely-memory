@@ -16,6 +16,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from korely_memory import Korely  # noqa: E402
 from korely_memory import cli  # noqa: E402
+from korely_memory import client as _transport  # noqa: E402  (its _open is the network)
 
 
 class _Recorder:
@@ -273,7 +274,6 @@ class InitReadsEitherErrorShape(unittest.TestCase):
 
     def _init_against(self, status, body):
         import tempfile
-        import urllib.request
         from email.message import Message
         from urllib.error import HTTPError
 
@@ -283,13 +283,13 @@ class InitReadsEitherErrorShape(unittest.TestCase):
 
         saved = os.environ.get("KORELY_CONFIG_HOME")
         os.environ["KORELY_CONFIG_HOME"] = tempfile.mkdtemp()
-        real, urllib.request.urlopen = urllib.request.urlopen, refuse
+        real, _transport._open = _transport._open, refuse
         err = io.StringIO()
         try:
             with redirect_stderr(err), redirect_stdout(io.StringIO()):
                 rc = cli.main(["init", "--agent", "--base-url", "https://install.example"])
         finally:
-            urllib.request.urlopen = real
+            _transport._open = real
             if saved is None:
                 os.environ.pop("KORELY_CONFIG_HOME", None)
             else:
@@ -367,18 +367,17 @@ class InitRefusesAPairThatCannotWork(_CleanEnv):
     it failed."""
 
     def _init(self, argv):
-        import urllib.request
 
         def explode(*a, **k):
             raise AssertionError("--api-key must not touch the network")
 
-        real, urllib.request.urlopen = urllib.request.urlopen, explode
+        real, _transport._open = _transport._open, explode
         err = io.StringIO()
         try:
             with redirect_stderr(err), redirect_stdout(io.StringIO()):
                 rc = cli.main(argv)
         finally:
-            urllib.request.urlopen = real
+            _transport._open = real
         return rc, err.getvalue()
 
     def test_a_self_hosted_key_with_no_address_is_not_saved(self):
@@ -468,7 +467,6 @@ class InitSignsUpThroughTheSdk(_CleanEnv):
 
     def _signup(self, answer, *extra):
         import json as _json
-        import urllib.request
 
         seen = []
 
@@ -491,13 +489,13 @@ class InitSignsUpThroughTheSdk(_CleanEnv):
             seen.append(req)
             return _Resp()
 
-        real, urllib.request.urlopen = urllib.request.urlopen, reply
+        real, _transport._open = _transport._open, reply
         out = io.StringIO()
         try:
             with redirect_stdout(out), redirect_stderr(io.StringIO()):
                 rc = cli.main(["init", "--agent", "--agent-caller", "claude-code", *extra])
         finally:
-            urllib.request.urlopen = real
+            _transport._open = real
         return rc, out.getvalue(), seen
 
     def test_the_key_is_saved_and_masked(self):
@@ -577,7 +575,6 @@ class InitDoesNotLoseASavedKey(_CleanEnv):
 
     def _init(self, argv, answer=None):
         import json as _json
-        import urllib.request
 
         calls = []
 
@@ -602,13 +599,13 @@ class InitDoesNotLoseASavedKey(_CleanEnv):
                 raise AssertionError("init must not reach the network here")
             return _Resp()
 
-        real, urllib.request.urlopen = urllib.request.urlopen, network
+        real, _transport._open = _transport._open, network
         err = io.StringIO()
         try:
             with redirect_stderr(err), redirect_stdout(io.StringIO()):
                 rc = cli.main(argv)
         finally:
-            urllib.request.urlopen = real
+            _transport._open = real
         return rc, err.getvalue(), calls
 
     def test_a_signup_over_a_saved_key_is_refused_before_any_account_is_made(self):

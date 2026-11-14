@@ -934,7 +934,7 @@ class TheTransportOnlyRaisesKorelyErrors(unittest.TestCase):
 
     def _with(self, fake):
         from unittest import mock
-        return mock.patch("korely_memory.client._urlrequest.urlopen", fake)
+        return mock.patch("korely_memory.client._open", fake)
 
     def test_a_read_timeout(self):
         with self._with(lambda req, timeout: _FakeResponse(read_error=TimeoutError("timed out"))):
@@ -1102,7 +1102,7 @@ class ErrorsFromEitherServer(unittest.TestCase):
                 b'"message": "No agent namespace \'bot\' in this project."}}'))
 
         os.environ.pop("KORELY_BASE_URL", None)
-        with mock.patch("korely_memory.client._urlrequest.urlopen", boom):
+        with mock.patch("korely_memory.client._open", boom):
             with self.assertRaises(NotFoundError) as caught:
                 Korely(api_key="kor_live_transport").delete_agent("bot")
         self.assertEqual(caught.exception.code, "not_found")
@@ -1388,7 +1388,7 @@ class TestTheCertificateAuthority(unittest.TestCase):
             return _Resp()
 
         with mock.patch("ssl.create_default_context") as cdc, \
-                mock.patch("korely_memory.client._urlrequest.urlopen", side_effect=fake_urlopen):
+                mock.patch("korely_memory.client._open", side_effect=fake_urlopen):
             cdc.return_value = "ctx-with-ca"
             k = Korely(api_key="kor_self_x", base_url="https://korely.localhost", **kw)
             k._send("GET", "/v1/memories")
@@ -1503,7 +1503,7 @@ class TheRetryAfterOfAPausedWrite(unittest.TestCase):
                             io.BytesIO(json.dumps(self._PAUSED).encode("utf-8")))
 
         os.environ.pop("KORELY_BASE_URL", None)
-        with mock.patch("korely_memory.client._urlrequest.urlopen", paused):
+        with mock.patch("korely_memory.client._open", paused):
             with self.assertRaises(APIError) as caught:
                 Korely(api_key="kor_live_transport").update("mem_1", content="x")
         self.assertEqual(caught.exception.code, "writes_paused")
@@ -2106,15 +2106,33 @@ class TheKeyGoesOnlyToItsServer(unittest.TestCase):
                 self.assertEqual(ours.seen[0][2].get("Authorization"), "Bearer " + self.KEY)
                 self.assertEqual(self._the_key_in(self.other.seen), [])
 
-    def test_a_write_redirected_elsewhere_goes_without_the_key_too(self):
-        # urllib follows a POST answered 301, 302 or 303 as a GET.
-        for status in (301, 302, 303):
-            with self.subTest(status=status):
-                self.other.seen.clear()
-                _, k = self._ours(lambda m, p: (status, {"Location": self.other.url + "/x"}, {}))
-                k.add("hello", user_id="dana")
-                self.assertEqual(len(self.other.seen), 1)
-                self.assertEqual(self._the_key_in(self.other.seen), [])
+    def test_a_call_that_is_not_a_get_is_never_redirected(self):
+        """urllib follows a POST answered 301, 302 or 303 as a GET with no
+        body, and that GET's answer came back as the POST's: add() said
+        stored from another address's reply. Every redirect of a POST, a
+        PATCH or a DELETE is now its answer: an APIError naming the status
+        and where it pointed, and nothing reaches the other server."""
+        calls = {
+            "POST": lambda k: k.add("hello", user_id="dana"),
+            "PATCH": lambda k: k.update("mem_1", content="hello"),
+            "DELETE": lambda k: k.delete("mem_1"),
+        }
+        for method, call in calls.items():
+            for status in (301, 302, 303, 307, 308):
+                with self.subTest(method=method, status=status):
+                    self.other.seen.clear()
+                    ours, k = self._ours(
+                        lambda m, p: (status, {"Location": self.other.url + "/x?token=t"}, {}))
+                    with self.assertRaises(APIError) as caught:
+                        call(k)
+                    e = caught.exception
+                    self.assertEqual(e.status, status)
+                    self.assertIn(f"redirect to {self.other.url} this client does not follow",
+                                  str(e))
+                    self.assertNotIn("token", str(e))
+                    self.assertEqual(e.body, {})
+                    self.assertEqual([m for m, _, _ in ours.seen], [method])
+                    self.assertEqual(self.other.seen, [])
 
     def test_a_redirect_on_the_same_server_goes_without_the_key_as_well(self):
         """The key goes to the address the client was given, never to a
@@ -2125,10 +2143,30 @@ class TheKeyGoesOnlyToItsServer(unittest.TestCase):
             return 401, {}, {"code": "invalid_key", "message": "Missing key."}
 
         ours, k = self._ours(answer)
-        with self.assertRaises(AuthenticationError):
+        with self.assertRaises(AuthenticationError) as caught:
             k.ping()
         self.assertEqual([p for _, p, _ in ours.seen], ["/v1/ping", "/v1/elsewhere"])
         self.assertEqual(self._the_key_in(ours.seen), [("GET", "/v1/ping")])
+        self.assertIn(f"Missing key. The call was redirected to {ours.url}", str(caught.exception))
+
+    def test_a_401_after_a_redirect_says_so(self):
+        """The key stayed behind: the 401 says where the call went and what
+        to set, and a 401 with no redirect says nothing of the kind."""
+        refusing = _Server(lambda m, p: (401, {}, {"code": "invalid_key",
+                                                    "message": "Missing key."}))
+        self.addCleanup(refusing.close)
+        _, k = self._ours(lambda m, p: (302, {"Location": refusing.url + p}, {}))
+        with self.assertRaises(AuthenticationError) as caught:
+            k.ping()
+        e = caught.exception
+        self.assertEqual((e.status, e.code), (401, "invalid_key"))
+        self.assertEqual(str(e), f"Missing key. The call was redirected to {refusing.url}, and "
+                                 "the key is never sent after a redirect: if that is the "
+                                 "server, use that address as base_url.")
+        self.assertEqual(e.body, {"code": "invalid_key", "message": "Missing key."})
+        with self.assertRaises(AuthenticationError) as caught:
+            Korely(api_key=self.KEY, base_url=refusing.url).ping()
+        self.assertEqual(str(caught.exception), "Missing key.")
 
     def test_a_delete_answered_with_a_redirect_is_no_deletion(self):
         def answer(m, p):
@@ -2174,7 +2212,7 @@ class SigningUpWithoutAKey(unittest.TestCase):
         def fake(req, timeout):
             self.seen.append(req)
             return _FakeResponse(status=status, body=json.dumps(body or self._MINTED).encode())
-        return mock.patch("korely_memory.client._urlrequest.urlopen", fake)
+        return mock.patch("korely_memory.client._open", fake)
 
     def test_no_key_is_needed_and_none_is_sent(self):
         from korely_memory import AgentInitResult

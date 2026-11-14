@@ -348,6 +348,43 @@ def _refuse_a_mismatched_pair(api_key: str, base_url: str) -> None:
         )
 
 
+class _RedirectsOnlyAGet(_urlrequest.HTTPRedirectHandler):
+    """urllib's redirects, for a GET or a HEAD only. urllib follows a POST
+    answered 301, 302 or 303 as a GET with no body, and the answer of that
+    GET came back as the POST's: ``add()`` reported a memory stored from
+    another address's reply. A call that is not a GET or a HEAD is never
+    redirected: the 3xx is its answer (an APIError with its status)."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if req.get_method() not in ("GET", "HEAD"):
+            raise _urlerror.HTTPError(req.full_url, code, msg, headers, fp)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _open(req, timeout, context=None):
+    """``urlopen`` with the client's redirect rule (`_RedirectsOnlyAGet`):
+    the one call to the network, and the seam the tests replace. The TLS
+    context only when one was asked for, as ``urlopen(context=...)``."""
+    handlers = [_RedirectsOnlyAGet()]
+    if context is not None:
+        handlers.append(_urlrequest.HTTPSHandler(context=context))
+    return _urlrequest.build_opener(*handlers).open(req, timeout=timeout)
+
+
+def _origin(url: str) -> str:
+    """``scheme://host[:port]`` of an address: where a redirect points, its
+    path and query left out."""
+    parts = _urlparse.urlsplit(url)
+    host = parts.hostname or ""
+    if ":" in host:
+        host = f"[{host}]"
+    try:
+        port = parts.port
+    except ValueError:
+        port = None
+    return f"{parts.scheme}://{host}" + (f":{port}" if port else "")
+
+
 def _account_id(value: Any) -> Optional[str]:
     """``value`` as the id of an account, spaces stripped, or None: a UUID in
     its usual text form (8-4-4-4-12 hex digits), the form GET /admin/whoami
@@ -540,16 +577,16 @@ class Korely:
         # request's headers onto the request a redirect makes, to whatever
         # host, scheme or port it names (a GET answered 302 by another host
         # sent the key there), but never its unredirected headers, which is
-        # how urllib's own HTTPBasicAuthHandler sends Authorization. A
-        # redirect is still followed (GET and HEAD, and the POST urllib turns
-        # into a GET), without the key, so a server that needs it answers 401.
+        # how urllib's own HTTPBasicAuthHandler sends Authorization. A GET's
+        # redirect is still followed, without the key, so a server that needs
+        # it answers 401; any other call is never redirected (`_open`).
         if self.api_key:
             req.add_unredirected_header("Authorization", "Bearer " + self.api_key)
         try:
             # The TLS context only when one was asked for: by default the call
             # is the one it always was, with Python's own trust store.
             extra = {"context": self._ssl_context} if self._ssl_context is not None else {}
-            with _urlrequest.urlopen(req, timeout=self.timeout, **extra) as resp:
+            with _open(req, timeout=self.timeout, **extra) as resp:
                 raw = resp.read()
                 status = getattr(resp, "status", resp.getcode())
         except _urlerror.HTTPError as e:
@@ -568,6 +605,15 @@ class Korely:
             retry_after = e.headers.get("Retry-After") if e.headers else None
             if retry_after is not None:
                 parsed["_retry_after"] = retry_after
+            # Where a redirect pointed: the Location of a 3xx not followed,
+            # or the address a followed GET ended at (its 401 is the key
+            # left behind). Only the origin: a path or a query may hold
+            # what is not ours to repeat.
+            location = e.headers.get("Location") if e.headers else None
+            if 300 <= e.code < 400 and location:
+                parsed["_redirect"] = _origin(_urlparse.urljoin(e.filename or url, location))
+            elif e.filename and e.filename != req.full_url:
+                parsed["_redirect"] = _origin(e.filename)
             return e.code, parsed
         except _urlerror.URLError as e:
             raise KorelyError(
@@ -668,8 +714,13 @@ class Korely:
         # `_retry_after` is the transport's note of the Retry-After header, not
         # something the server said. The exception's `body` is documented as
         # the server's response verbatim, so it leaves here.
-        server_body = {k: v for k, v in body.items() if k != "_retry_after"}
-        code, msg = Korely._error_fields(status, body)
+        server_body = {k: v for k, v in body.items() if k not in ("_retry_after", "_redirect")}
+        code, msg = Korely._error_fields(status, server_body)
+        redirect = body.get("_redirect")
+        if status == 401 and redirect:
+            # Only a GET is redirected, and never with the key (`_send`).
+            msg += (f" The call was redirected to {redirect}, and the key is never sent "
+                    "after a redirect: if that is the server, use that address as base_url.")
         # Retry-After on every status (2026-10-06), not only on a 429: the
         # Cloud's 503 `writes_paused` sends it too, and it is the one number
         # that says when writes resume.
@@ -699,8 +750,10 @@ class Korely:
             cls = TooManyBatchesError if code == "too_many_batches" else QuotaExceededError
             raise cls(msg, status=status, code=code, retry_after=ra, body=server_body)
         if 300 <= status < 400:
-            msg = (f"The server answered {status}, a redirect this client does not follow: "
-                   "that is not the answer to the call, and nothing says it was done.")
+            to = f" to {redirect}" if redirect else ""
+            msg = (f"The server answered {status}, a redirect{to} this client does not follow "
+                   "(a call that is not a GET is never redirected): that is not the answer "
+                   "to the call, and nothing says it was done.")
         raise APIError(msg, status=status, code=code, body=server_body, retry_after=ra)
 
     # ── the key and its account ────────────────────────────────────────────
@@ -733,7 +786,11 @@ class Korely:
         whose ``code`` is ``confirmation_required`` (the server's code for the
         same refusal) and whose message names the id to type when the key
         may read it. A key that may not read GET /admin/whoami (403, a key
-        without the ``admin`` scope) raises that error, nothing deleted.
+        without the ``admin`` scope) deletes nothing: with no id typed, that
+        same ``confirmation_required``, whose message says whoami could not
+        be read; with the id typed, the server's refusal of the whoami,
+        NamespaceForbiddenError (an APIError, ``status`` 403, ``code``
+        ``forbidden``).
 
         The account is deleted only on the server's answer that says so
         (``deleted: true``); any other answer, a redirect or a 2xx without
@@ -782,9 +839,9 @@ class Korely:
                     "(pip install 'korely-memory==0.1.29').",
                     status=422, code="server_too_old", body=e.body) from e
             raise
-        # The server's answer to a deletion is `deleted: true` and the rows
-        # removed (AccountDeleted, korely_agent/hosted/api_identity.py), as
-        # Supermemory's reset answers `success: true`. A 2xx without it (an
+        # The server's answer to a deletion is the API's AccountDeleted answer,
+        # `deleted: true` and the rows removed, as Supermemory's reset answers
+        # `success: true`. A 2xx without it (an
         # empty 202 of a proxy, a page) was read as a deletion.
         if body.get("deleted") is not True:
             raise KorelyError(

@@ -383,7 +383,7 @@ class ClientHeader(unittest.TestCase):
             seen.update({k.lower(): v for k, v in req.header_items()})
             raise OSError("stop here")
 
-        with mock.patch("urllib.request.urlopen", fake_urlopen):
+        with mock.patch("korely_memory.client._open", fake_urlopen):
             k = Korely(api_key="kor_live_x", client="codex")
             with self.assertRaises(Exception):
                 k.add("hello", user_id="repo:x")
@@ -401,7 +401,7 @@ class ClientHeader(unittest.TestCase):
 
         with mock.patch.dict(os.environ, {}, clear=False):
             os.environ.pop("KORELY_CLIENT", None)
-            with mock.patch("urllib.request.urlopen", fake_urlopen):
+            with mock.patch("korely_memory.client._open", fake_urlopen):
                 with self.assertRaises(Exception):
                     Korely(api_key="kor_live_x").add("hello")
         self.assertEqual(seen.get("x-korely-client"), "korely-python/" + __version__)

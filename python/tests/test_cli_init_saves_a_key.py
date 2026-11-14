@@ -1,5 +1,6 @@
 import json, os, pathlib, sys, tempfile, unittest
 from korely_memory import cli
+from korely_memory import client as _transport  # its _open is the network
 
 class SaveAnExistingKey(unittest.TestCase):
     """`korely init --api-key` writes the key and never calls the network.
@@ -27,16 +28,15 @@ class SaveAnExistingKey(unittest.TestCase):
         # A self-hosted key with its own address: the case the flag exists for.
         # (This test used a kor_live_ key with a foreign address in 0.1.14 and earlier,
         # a pair the client refuses on every call; init now refuses it too.)
-        import urllib.request
         def explode(*a, **k):
             raise AssertionError("signup was called; --api-key must not touch the network")
-        real, urllib.request.urlopen = urllib.request.urlopen, explode
+        real, _transport._open = _transport._open, explode
         try:
             args = type("A", (), {"api_key": "kor_self_mine", "base_url": "https://mine.example",
                                   "json": False, "agent_caller": None})()
             self.assertEqual(cli.cmd_init(args), 0)
         finally:
-            urllib.request.urlopen = real
+            _transport._open = real
         cfg = json.loads((pathlib.Path(self.home) / ".korely" / "config.json").read_text())
         self.assertEqual(cfg["api_key"], "kor_self_mine")
         self.assertEqual(cfg["base_url"], "https://mine.example")
