@@ -1276,9 +1276,11 @@ def build_parser() -> argparse.ArgumentParser:
     # On the shared parent every command took both, and `delete-all --user-id
     # u --agent-id a` erased u in every agent of the project, the agent id
     # unread (the server erases an end user whole: DELETE
-    # /v1/users/{id}/memories takes no agent). Mem0's delete_all, by
-    # contrast, scopes by every id it is given (docs.mem0.ai, "Delete
-    # memories", read 2026-11-14).
+    # /v1/users/{id}/memories takes no agent). Mem0's delete_all takes an
+    # agent_id as a scope of its own, and its SDKs refuse before sending a
+    # call that would erase more than asked (docs.mem0.ai, "Delete
+    # memories", read 2026-11-14); this server has no such scope, so the
+    # flag is refused.
     user_flag = argparse.ArgumentParser(add_help=False)
     user_flag.add_argument("--user-id",
                            help="end-user namespace (unlimited per tier); a write needs it or "

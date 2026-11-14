@@ -100,7 +100,7 @@ class Redaction(unittest.TestCase):
             self.assertGreaterEqual(masked, at_least, n)
 
     def test_a_full_commit_hash_is_masked_like_a_hex_key(self):
-        # By its shape a 40-digit hex key is a commit hash: masked, as decided.
+        # By its shape a 40-digit hex key is a commit hash: both are masked.
         # The short hash git prints, under 24 digits, stays.
         self.assertEqual(hooks.redact("fixed in 11f6ad8ec52a2984abaafd7c3b516503785c2072"),
                          "fixed in [redacted]")
