@@ -9,6 +9,7 @@ import json
 import math
 import os
 import re
+import uuid
 from datetime import date, datetime, timezone
 from typing import Any, Iterator, List, Optional
 from urllib import error as _urlerror
@@ -347,6 +348,22 @@ def _refuse_a_mismatched_pair(api_key: str, base_url: str) -> None:
         )
 
 
+def _account_id(value: Any) -> Optional[str]:
+    """``value`` as the id of an account, spaces stripped, or None: a UUID in
+    its usual text form (8-4-4-4-12 hex digits), the form GET /admin/whoami
+    gives ``tenant_id`` in. The server reads ``?confirm=`` with
+    ``uuid.UUID``, so nothing that passes here is a boolean to any server:
+    a ``tenant_id`` of ``"true"`` must never become ``?confirm=true``, which
+    deletes the account on a server older than Korely 1.0.23."""
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    try:
+        return text if str(uuid.UUID(text)) == text.lower() else None
+    except ValueError:
+        return None
+
+
 def _retry_after_seconds(raw: Any) -> Optional[int]:
     """Retry-After in whole seconds, rounded up, or None if absent/unreadable."""
     if raw is None:
@@ -442,7 +459,8 @@ class Korely:
         free-form label of who signed up, kept for your reference. The answer
         carries the key, shown once (save it), its ``tier``, ``region``,
         ``scopes`` and ``quotas``. The account it creates has no login: the
-        key is the account, and ``delete_account(confirm=True)`` closes it.
+        key is the account, and ``delete_account(confirm=<the account's id>)``
+        closes it.
 
         ``processing_region`` chooses where the new project's memories are
         read by a model: ``"eu"`` (gpt-oss-120b on Scaleway, Paris) or
@@ -509,10 +527,6 @@ class Korely:
             "Accept": "application/json",
             "User-Agent": "korely-memory-python/" + __version__,
         }
-        # No key only on the client init_agent() builds: that call is how a
-        # key is obtained, and an empty `Bearer ` is not "no key" to a server.
-        if self.api_key:
-            headers["Authorization"] = "Bearer " + self.api_key
         # Who is writing: the tool the developer named, else this library, as
         # the JavaScript client has always said (`korely-js/<version>`).
         headers["X-Korely-Client"] = (getattr(self, "client", None)
@@ -520,6 +534,17 @@ class Korely:
         if data is not None:
             headers["Content-Type"] = "application/json"
         req = _urlrequest.Request(url, data=data, method=method, headers=headers)
+        # No key only on the client init_agent() builds: that call is how a
+        # key is obtained, and an empty `Bearer ` is not "no key" to a server.
+        # The key goes to `base_url` and nowhere else: urllib copies a
+        # request's headers onto the request a redirect makes, to whatever
+        # host, scheme or port it names (a GET answered 302 by another host
+        # sent the key there), but never its unredirected headers, which is
+        # how urllib's own HTTPBasicAuthHandler sends Authorization. A
+        # redirect is still followed (GET and HEAD, and the POST urllib turns
+        # into a GET), without the key, so a server that needs it answers 401.
+        if self.api_key:
+            req.add_unredirected_header("Authorization", "Bearer " + self.api_key)
         try:
             # The TLS context only when one was asked for: by default the call
             # is the one it always was, with Python's own trust store.
@@ -567,16 +592,21 @@ class Korely:
 
     def _call(self, method: str, path: str, *, params: Optional[dict] = None,
               json_body: Optional[Any] = None) -> dict:
-        status, body = self._send(method, path, params=params, json_body=json_body)
-        if status >= 400:
-            self._raise(status, body if isinstance(body, dict) else {})
+        body = self._call_any(method, path, params=params, json_body=json_body)
         return body if isinstance(body, dict) else {}
 
     def _call_any(self, method: str, path: str, *, params: Optional[dict] = None,
                   json_body: Optional[Any] = None) -> Any:
-        """`_call` for an answer that may be a list (GET /admin/keys)."""
+        """`_call` for an answer that may be a list (GET /admin/keys).
+
+        Only a 2xx is an answer. A 3xx reaches here when urllib does not
+        follow it (any redirect of a DELETE, PATCH or PUT, a 307 or 308 of a
+        POST, a 300 or 304): it was read as a success, so a DELETE /v1/account
+        answered 307 by a proxy counted as a deleted account, and `korely
+        delete-account` threw away the key of an account that still
+        existed."""
         status, body = self._send(method, path, params=params, json_body=json_body)
-        if status >= 400:
+        if not 200 <= status < 300:
             self._raise(status, body if isinstance(body, dict) else {})
         return body
 
@@ -668,6 +698,9 @@ class Korely:
             # `quota_exceeded`, and it clears as soon as a batch finishes.
             cls = TooManyBatchesError if code == "too_many_batches" else QuotaExceededError
             raise cls(msg, status=status, code=code, retry_after=ra, body=server_body)
+        if 300 <= status < 400:
+            msg = (f"The server answered {status}, a redirect this client does not follow: "
+                   "that is not the answer to the call, and nothing says it was done.")
         raise APIError(msg, status=status, code=code, body=server_body, retry_after=ra)
 
     # ── the key and its account ────────────────────────────────────────────
@@ -681,7 +714,7 @@ class Korely:
         needs ``memories:read`` and counts as a query."""
         return PingResponse.from_dict(self._call("GET", "/v1/ping"))
 
-    def delete_account(self, *, confirm: bool = False) -> AccountDeleteReceipt:
+    def delete_account(self, *, confirm: Optional[str] = None) -> AccountDeleteReceipt:
         """DELETE /v1/account?confirm=<the account's id>: delete the account
         of this key for good, with every key, project, memory, fact and
         webhook of it; the key stops working. Cloud only, for an account made
@@ -689,16 +722,26 @@ class Korely:
         to: the key is the account, and this is how it is closed (GDPR Art.
         17).
 
-        ``confirm=True`` is required, and checked here, before anything is
-        sent: without it, a KorelyError whose ``code`` is
-        ``confirmation_required``, the code the server gives the same refusal.
-        With it, the client reads the account's id (``tenant_id`` of GET
-        /admin/whoami, with the same key) and sends it as the confirmation,
-        which Korely 1.0.23 and later require: a flag alone no longer deletes
-        an account. A server older than 1.0.23 takes only ``?confirm=true``
-        and refuses the id (422): that is an APIError whose ``code`` is
-        ``server_too_old``, nothing is deleted, and the client does not fall
-        back to the flag. Upgrade the server, or use korely-memory 0.1.29.
+        ``confirm`` is the account's id, typed by whoever means it, as the
+        dashboard has the email typed: ``tenant_id`` of GET /admin/whoami,
+        which the error below gives. So a key that leaked, or a script
+        pointed at the wrong key, is not enough with a flag (Korely 1.0.23
+        asks the same of the server's route). Nothing is deleted, and the
+        DELETE is not sent, unless ``confirm`` is a UUID equal, spaces
+        stripped, to the ``tenant_id`` that GET /admin/whoami gives this key:
+        a missing, ``True``, ``"true"`` or wrong ``confirm`` is a KorelyError
+        whose ``code`` is ``confirmation_required`` (the server's code for the
+        same refusal) and whose message names the id to type when the key
+        may read it. A key that may not read GET /admin/whoami (403, a key
+        without the ``admin`` scope) raises that error, nothing deleted.
+
+        The account is deleted only on the server's answer that says so
+        (``deleted: true``); any other answer, a redirect or a 2xx without
+        it, is an error, and the account may still be there. A server older
+        than 1.0.23 takes only ``?confirm=true`` and refuses the id (422):
+        that is an APIError whose ``code`` is ``server_too_old``, nothing is
+        deleted, and the client does not fall back to the flag. Upgrade the
+        server, or use korely-memory 0.1.29.
 
         An account with a Korely login answers 409 ``account_has_login``
         (ConflictError): a key that ended up in a log must not be able to
@@ -706,21 +749,26 @@ class Korely:
         Self-hosted has no such route and answers 404 (NotFoundError), or 405
         where it serves its dashboard. No audit event survives: the trail is
         part of what goes."""
-        if confirm is not True:
+        return self._delete_account(confirm, typed_as='pass confirm="{}"')
+
+    def _delete_account(self, confirm: Any, *, typed_as: str) -> AccountDeleteReceipt:
+        """`delete_account()`, with the way the caller types the id
+        (``typed_as``, with ``{}`` for the id): ``korely delete-account``
+        says ``--confirm <id>``."""
+        typed = _account_id(confirm)
+        if typed is None:
+            raise self._not_confirmed(
+                "This deletes the account of this key for good, every key, project, memory "
+                "and fact of it, and its id, typed, is the confirmation: a flag is not enough.",
+                typed_as)
+        account = self._account_of_this_key()
+        if typed != account:
             raise KorelyError(
-                "delete_account() deletes this key's account, every key, memory and "
-                "fact of it, for good. Pass confirm=True to mean it.",
-                code="confirmation_required")
-        # Korely 1.0.23: the deletion names the account it deletes, so a key
-        # that leaked, or a script pointed at the wrong key, is not enough
-        # with a flag. The person says yes (confirm=True); the client adds
-        # the id the server gives the same key.
-        account = (self._call("GET", "/admin/whoami") or {}).get("tenant_id")
-        if not isinstance(account, str) or not account.strip():
-            raise KorelyError("GET /admin/whoami named no account for this key: nothing "
-                              "was deleted.", code="confirmation_required")
+                f"The account of this key is {account}, and the confirmation names {typed}: "
+                f"nothing was deleted. To delete account {account}, "
+                + typed_as.format(account) + ".", code="confirmation_required")
         try:
-            body = self._call("DELETE", "/v1/account", params={"confirm": account.strip()})
+            body = self._call("DELETE", "/v1/account", params={"confirm": account})
         except APIError as e:
             # Only a server before 1.0.23 refuses the id itself: it reads
             # `confirm` as a boolean (422 of validation). Sending the flag
@@ -734,7 +782,38 @@ class Korely:
                     "(pip install 'korely-memory==0.1.29').",
                     status=422, code="server_too_old", body=e.body) from e
             raise
+        # The server's answer to a deletion is `deleted: true` and the rows
+        # removed (AccountDeleted, korely_agent/hosted/api_identity.py), as
+        # Supermemory's reset answers `success: true`. A 2xx without it (an
+        # empty 202 of a proxy, a page) was read as a deletion.
+        if body.get("deleted") is not True:
+            raise KorelyError(
+                "DELETE /v1/account answered without `deleted: true`, the answer that says "
+                "the account is gone: it is not counted as deleted, and it may still be "
+                "there (GET /admin/whoami answers with this key while it is).")
         return AccountDeleteReceipt.from_dict(body)
+
+    def _account_of_this_key(self) -> str:
+        """The id of this key's account: ``tenant_id`` of GET /admin/whoami,
+        checked as an account id (`_account_id`). The errors of the call are
+        raised as they come."""
+        account = _account_id(self._call("GET", "/admin/whoami").get("tenant_id"))
+        if account is None:
+            raise KorelyError("GET /admin/whoami gave no account id (a UUID) for this key: "
+                              "nothing was deleted.", code="confirmation_required")
+        return account
+
+    def _not_confirmed(self, why: str, typed_as: str) -> KorelyError:
+        """The refusal of a deletion not confirmed, naming the id to type
+        when this key may read it."""
+        try:
+            account = self._account_of_this_key()
+        except KorelyError as e:
+            return KorelyError(
+                f"{why} Nothing was deleted. The id is tenant_id in GET /admin/whoami, which "
+                f"this key could not read: {e}", code="confirmation_required")
+        return KorelyError(f"{why} Nothing was deleted. To delete account {account}, "
+                           + typed_as.format(account) + ".", code="confirmation_required")
 
     # ── audit ──────────────────────────────────────────────────────────────
     def audit(self, *, user_id: Optional[str] = None, action: Optional[str] = None,

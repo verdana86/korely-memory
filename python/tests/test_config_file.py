@@ -139,7 +139,7 @@ class AFileKorelyCannotRead(_Home):
         """A key made and then not saved would be shown nowhere; an account
         deleted and then not forgotten would leave a dead key behind."""
         for argv in (["keys", "create", "--name", "ci", "--save-as", "ci"],
-                     ["delete-account", "--yes"]):
+                     ["delete-account", "--confirm", "3f1c9a52-7b1e-4d4a-9c2e-0b6f5d8e1a77"]):
             with self.subTest(cmd=argv[0]):
                 rc, _, err = self.cli(argv + ["--api-key", "kor_live_admin"])
                 self.assertRefusedAndKept(rc, err)

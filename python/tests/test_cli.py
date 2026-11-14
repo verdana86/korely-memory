@@ -180,7 +180,8 @@ class TestParserWiring(unittest.TestCase):
             ["agents"], ["delete-agent", "--agent-id", "bot", "--yes"],
             ["add-fact", "maria", "lives_in", "Milan"], ["correct-fact", "fct_1", "--object", "x"],
             ["forget-fact", "fct_1"], ["batch", "memories.jsonl"], ["batch-status", "job_1"],
-            ["ping"], ["audit", "--all"], ["delete-account", "--yes"],
+            ["ping"], ["audit", "--all"],
+            ["delete-account", "--confirm", "3f1c9a52-7b1e-4d4a-9c2e-0b6f5d8e1a77"],
         ):
             with self.subTest(cmd=argv[0]):
                 a = _args(argv)
@@ -864,7 +865,7 @@ class AnIdACommandTakesIsAnIdItSends(_RunsCommands):
         ("projects", "unarchive"): ["p"], ("projects", "delete"): ["p", "--yes"],
         ("keys",): [], ("keys", "list"): [], ("keys", "create"): ["--name", "n"],
         ("keys", "move"): ["k1", "--project", "p"], ("keys", "revoke"): ["k1", "--yes"],
-        ("delete-account",): ["--yes"],
+        ("delete-account",): ["--confirm", "3f1c9a52-7b1e-4d4a-9c2e-0b6f5d8e1a77"],
     }
 
     @staticmethod
@@ -1204,8 +1205,13 @@ class PingAndTheAuditTrail(_RunsCommands):
 
 
 class DeleteAccountForgetsTheDeadKey(_CleanEnv, _RunsCommands):
-    """`korely delete-account --yes`: the Cloud's DELETE /v1/account, and the
-    key it killed leaves the config file, so `korely init` can save a new one."""
+    """`korely delete-account --confirm <account id>`: the Cloud's DELETE
+    /v1/account, and the key it killed leaves the config file, so `korely
+    init` can save a new one. The id is typed: with none, or another,
+    nothing is deleted and the error names it."""
+
+    _ACCOUNT = "3f1c9a52-7b1e-4d4a-9c2e-0b6f5d8e1a77"
+    _OTHER = "9d2b7c41-0a6e-4f3b-8e1d-5c4a3b2f1e09"
 
     def _save(self, key):
         import json as _json
@@ -1217,21 +1223,59 @@ class DeleteAccountForgetsTheDeadKey(_CleanEnv, _RunsCommands):
         with open(os.path.join(self.cfg_dir, "config.json"), encoding="utf-8") as fh:
             return _json.load(fh)
 
-    def test_nothing_leaves_without_yes(self):
-        rc, err = self._refused(_Recorder(), ["delete-account"])
-        self.assertEqual(rc, 2)
-        self.assertIn("--yes", err)
-
-    _ACCOUNT = "3f1c9a52-7b1e-4d4a-9c2e-0b6f5d8e1a77"
-
     def _whoami(self):
         return _Recorder().queue(200, {"kind": "api_key", "tenant_id": self._ACCOUNT})
+
+    def _main(self, rec, argv):
+        """`korely <argv>` through main(), against the recorder: (exit code,
+        stdout, stderr)."""
+        from unittest import mock
+
+        out, err = io.StringIO(), io.StringIO()
+        with mock.patch.object(cli, "Korely", side_effect=lambda **kw: _client(rec)), \
+                redirect_stderr(err), redirect_stdout(out):
+            rc = cli.main(argv)
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_nothing_is_deleted_without_the_account_s_id(self):
+        import json as _json
+
+        self._save("kor_live_test")
+        for typed in ([], ["--confirm", "true"], ["--confirm", ""], ["--confirm", "yes"],
+                      ["--confirm", self._ACCOUNT.replace("-", "")],
+                      ["--confirm", self._OTHER]):
+            for json_flag in ([], ["--json"]):
+                with self.subTest(typed=typed, json=json_flag):
+                    rec = self._whoami()
+                    rc, out, err = self._main(rec, ["delete-account", *typed, *json_flag])
+                    self.assertEqual(rc, 1)
+                    self.assertEqual([c["method"] for c in rec.calls], ["GET"])
+                    hint = f"To delete account {self._ACCOUNT}, re-run it with --confirm {self._ACCOUNT}."
+                    if json_flag:
+                        refusal = _json.loads(err)
+                        self.assertEqual(refusal["code"], "confirmation_required")
+                        self.assertIsNone(refusal["status"])
+                        self.assertIn(hint, refusal["message"])
+                    else:
+                        self.assertIn(hint, err)
+                        self.assertIn("[confirmation_required]", err)
+                    self.assertEqual(out, "")
+                    self.assertEqual(self._config()["api_key"], "kor_live_test")
+
+    def test_yes_alone_is_refused_before_anything_is_sent(self):
+        self._save("kor_live_test")
+        rec = self._whoami()
+        rc, _, err = self._main(rec, ["delete-account", "--yes"])
+        self.assertEqual(rc, 2)
+        self.assertIn("unrecognized arguments: --yes", err)
+        self.assertEqual(rec.calls, [])
+        self.assertEqual(self._config()["api_key"], "kor_live_test")
 
     def test_the_account_goes_and_so_does_the_saved_key(self):
         self._save("kor_live_test")
         rec = self._whoami().queue(200, {"deleted": True,
                                          "removed": {"memories": 12, "facts": 30, "keys": 1}})
-        rc, out = self._run(rec, ["delete-account", "--yes"])
+        rc, out = self._run(rec, ["delete-account", "--confirm", self._ACCOUNT])
         self.assertEqual(rc, 0)
         self.assertEqual(rec.calls[0]["path"], "/admin/whoami")
         self.assertEqual((rec.last["method"], rec.last["path"], rec.last["params"]),
@@ -1242,23 +1286,49 @@ class DeleteAccountForgetsTheDeadKey(_CleanEnv, _RunsCommands):
     def test_a_different_saved_key_is_left_alone(self):
         self._save("kor_live_another_key")
         rec = self._whoami().queue(200, {"deleted": True, "removed": {}})
-        rc, data = self._run(rec, ["delete-account", "--yes", "--json"])
+        rc, data = self._run(rec, ["delete-account", "--confirm", self._ACCOUNT, "--json"])
         self.assertEqual(data, {"deleted": True, "removed": {}})
         self.assertEqual(self._config()["api_key"], "kor_live_another_key")
 
-    def test_an_account_with_a_login_is_refused_with_its_code(self):
-        from unittest import mock
+    def test_an_answer_that_is_not_a_deletion_keeps_the_key(self):
+        """A 307 of a proxy, or a 2xx without `deleted: true`: the account
+        may still be there, and its key is the only way to it."""
+        import json as _json
 
+        self._save("kor_live_test")
+        for status, body in ((307, {}), (302, {}), (202, {}), (200, {"removed": {"keys": 1}})):
+            for json_flag in ([], ["--json"]):
+                with self.subTest(status=status, body=body, json=json_flag):
+                    rec = self._whoami().queue(status, body)
+                    rc, out, err = self._main(
+                        rec, ["delete-account", "--confirm", self._ACCOUNT, *json_flag])
+                    self.assertEqual(rc, 1)
+                    self.assertEqual(out, "")
+                    if json_flag:
+                        self.assertEqual(_json.loads(err)["status"],
+                                         status if status >= 300 else None)
+                    self.assertEqual(self._config()["api_key"], "kor_live_test")
+
+    def test_a_key_that_may_not_read_its_account_deletes_nothing(self):
+        self._save("kor_live_test")
+        for typed in (["--confirm", self._ACCOUNT], []):
+            with self.subTest(typed=typed):
+                rec = _Recorder().queue(403, {"code": "forbidden",
+                                              "message": "needs the admin scope"})
+                rc, _, err = self._main(rec, ["delete-account", *typed])
+                self.assertEqual(rc, 1)
+                self.assertIn("needs the admin scope", err)
+                self.assertEqual([c["method"] for c in rec.calls], ["GET"])
+                self.assertEqual(self._config()["api_key"], "kor_live_test")
+
+    def test_an_account_with_a_login_is_refused_with_its_code(self):
         self._save("kor_live_test")
         rec = self._whoami().queue(409, {
             "code": "account_has_login",
             "message": "This key belongs to an account with a Korely login."})
-        err = io.StringIO()
-        with mock.patch.object(cli, "Korely", side_effect=lambda **kw: _client(rec)), \
-                redirect_stderr(err), redirect_stdout(io.StringIO()):
-            rc = cli.main(["delete-account", "--yes"])
+        rc, _, err = self._main(rec, ["delete-account", "--confirm", self._ACCOUNT])
         self.assertEqual(rc, 1)
-        self.assertIn("[account_has_login]", err.getvalue())
+        self.assertIn("[account_has_login]", err)
         self.assertEqual(self._config()["api_key"], "kor_live_test")
 
     def test_a_server_before_1_0_23_is_told_to_upgrade_and_the_key_stays(self):
@@ -1268,15 +1338,13 @@ class DeleteAccountForgetsTheDeadKey(_CleanEnv, _RunsCommands):
             "detail": [{"type": "bool_parsing", "loc": ["query", "confirm"],
                         "msg": "Input should be a valid boolean"}],
             "code": "invalid_request", "message": "query.confirm: Input should be a valid boolean"})
-        for argv, shown in ((["delete-account", "--yes"], "[server_too_old]"),
-                            (["delete-account", "--yes", "--json"], '"code": "server_too_old"')):
-            err = io.StringIO()
-            with mock.patch.object(cli, "Korely", side_effect=lambda **kw: _client(rec)), \
-                    redirect_stderr(err), redirect_stdout(io.StringIO()):
-                rc = cli.main(argv)
+        for argv, shown in ((["delete-account", "--confirm", self._ACCOUNT], "[server_too_old]"),
+                            (["delete-account", "--confirm", self._ACCOUNT, "--json"],
+                             '"code": "server_too_old"')):
+            rc, _, err = self._main(rec, argv)
             self.assertEqual(rc, 1)
-            self.assertIn(shown, err.getvalue())
-            self.assertIn("1.0.23", err.getvalue())
+            self.assertIn(shown, err)
+            self.assertIn("1.0.23", err)
             rec.queue(200, {"kind": "api_key", "tenant_id": self._ACCOUNT}).queue(
                 422, {"code": "invalid_request", "message": "query.confirm"})
         self.assertEqual([c["params"] for c in rec.calls if c["method"] == "DELETE"],

@@ -333,17 +333,15 @@ def _audit_export(k: Korely, a, filters: dict) -> int:
 
 
 def cmd_delete_account(k: Korely, a) -> int:
-    if not a.yes:
-        print("error: this deletes the account of this key for good: every key, project, "
-              "memory and fact of it. It is for an account made by `korely init --agent` "
-              "(Cloud only). Re-run with --yes to confirm.", file=sys.stderr)
-        return 2
     # The key will be dead. Left in the config file, every later command would
     # fail with a 401 on it, and `korely init` would refuse to replace it. The
     # file is read first: one that cannot be read stops the command here,
     # before the account goes.
     cfg = _load_config()
-    r = k.delete_account(confirm=True)
+    # The account's id, typed, is the confirmation (`delete_account()`): with
+    # none, or another, nothing is sent but GET /admin/whoami, and the error
+    # names the id. The key leaves the file only on the server's `deleted`.
+    r = k._delete_account(a.confirm, typed_as="re-run it with --confirm {}")
     forgot = cfg.get("api_key") == k.api_key
     if forgot:
         cfg.pop("api_key", None)
@@ -796,7 +794,8 @@ def _init_key(args) -> int:
               "  If it came from `korely init --agent`, its account has no login: that "
               "key is the only way\n"
               "  to use the account, and the only way to delete it.\n"
-              "  To close that account first:  korely delete-account --yes\n"
+              "  To close that account first:  korely delete-account  (it names the id "
+              "to type)\n"
               "  To keep it, copy the key somewhere safe, then re-run with --force.",
               file=sys.stderr)
         return 2
@@ -1599,8 +1598,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     sp = sub.add_parser("delete-account", parents=[common],
                         help="delete this key's account for good (Cloud, `init --agent` accounts; "
-                             "needs --yes)")
-    sp.add_argument("--yes", action="store_true", help="confirm: the account and its keys go")
+                             "needs --confirm with the account's id)")
+    sp.add_argument("--confirm", metavar="ACCOUNT_ID",
+                    help="the id of this key's account, typed (run without it to see it): "
+                         "the account, its keys and its memories go")
     sp.set_defaults(func=cmd_delete_account)
 
     return p

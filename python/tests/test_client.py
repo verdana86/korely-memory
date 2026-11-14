@@ -1785,17 +1785,25 @@ class FakeCloud:
     the client's transport seam. `confirms_with` "id": Korely 1.0.23 and
     later, ``?confirm=`` must be the account's id. "flag": before 1.0.23,
     ``confirm`` is a boolean query parameter (FastAPI), so the id is a 422 of
-    validation and ``true`` deletes."""
+    validation and ``true`` deletes. ``whoami`` is the answer of GET
+    /admin/whoami, the account's own by default."""
 
     ACCOUNT = "3f1c9a52-7b1e-4d4a-9c2e-0b6f5d8e1a77"
+    OTHER = "9d2b7c41-0a6e-4f3b-8e1d-5c4a3b2f1e09"
 
-    def __init__(self, confirms_with: str):
+    def __init__(self, confirms_with: str, whoami=None):
         self.confirms_with, self.calls, self.deleted = confirms_with, [], False
+        self.whoami = whoami or (200, {"kind": "api_key", "name": "api key",
+                                       "tenant_id": self.ACCOUNT})
+
+    @property
+    def deletes(self):
+        return [c[2] for c in self.calls if c[0] == "DELETE"]
 
     def __call__(self, method, path, *, params=None, json_body=None):
         self.calls.append((method, path, dict(params or {})))
         if (method, path) == ("GET", "/admin/whoami"):
-            return 200, {"kind": "api_key", "name": "api key", "tenant_id": self.ACCOUNT}
+            return self.whoami
         if (method, path) != ("DELETE", "/v1/account"):
             return 404, {"code": "not_found", "message": "Not Found"}
         confirm = (params or {}).get("confirm")
@@ -1819,36 +1827,121 @@ class FakeCloud:
 class DeletingTheAccountOfAKey(unittest.TestCase):
     """DELETE /v1/account (Cloud only): an account made by `korely init
     --agent` has no login, its key is the account, and this is how it is
-    closed. Since Korely 1.0.23 the deletion names the account: ``?confirm=``
-    is the account's id, which the client reads with GET /admin/whoami."""
+    closed. Since Korely 1.0.23 the deletion names the account, and since
+    0.2.0 the caller types its id: the client reading it from GET
+    /admin/whoami itself made a flag and the key enough again."""
+
+    _TYPED = f'To delete account {FakeCloud.ACCOUNT}, pass confirm="{FakeCloud.ACCOUNT}".'
 
     def _client(self, cloud):
         k = Korely(api_key="kor_live_test")
         k._send = cloud
         return k
 
-    def test_nothing_leaves_without_confirm_true(self):
-        for kw in ({}, {"confirm": False}, {"confirm": "yes"}, {"confirm": 1},
-                   {"confirm": FakeCloud.ACCOUNT}):
-            with self.subTest(**{k: repr(v) for k, v in kw.items()}):
-                rec = _Recorder()
-                with self.assertRaises(KorelyError) as caught:
-                    _client(rec).delete_account(**kw)
-                self.assertNotIsInstance(caught.exception, APIError)
-                self.assertEqual(caught.exception.code, "confirmation_required")
-                self.assertEqual(rec.calls, [])
-
-    def test_the_account_is_named_with_the_id_whoami_gives(self):
+    def test_the_account_goes_with_its_id_typed(self):
         from korely_memory import AccountDeleteReceipt
 
+        for typed in (FakeCloud.ACCOUNT, f"  {FakeCloud.ACCOUNT}\n"):
+            with self.subTest(typed=typed):
+                cloud = FakeCloud("id")
+                r = self._client(cloud).delete_account(confirm=typed)
+                self.assertEqual(cloud.calls, [
+                    ("GET", "/admin/whoami", {}),
+                    ("DELETE", "/v1/account", {"confirm": FakeCloud.ACCOUNT})])
+                self.assertTrue(cloud.deleted)
+                self.assertIsInstance(r, AccountDeleteReceipt)
+                self.assertIs(r.deleted, True)
+                self.assertEqual(r.removed, {"memories": 12, "facts": 30, "keys": 1})
+
+    def test_no_flag_and_no_other_id_sends_the_delete(self):
+        """Missing, a flag, a word, not an id, an id in another spelling, the
+        id of another account: the DELETE never leaves, on either server, and
+        the error names the id to type."""
+        import uuid
+
+        acc = FakeCloud.ACCOUNT
+        for kw in ({}, {"confirm": None}, {"confirm": False}, {"confirm": True},
+                   {"confirm": "true"}, {"confirm": "True"}, {"confirm": "1"}, {"confirm": 1},
+                   {"confirm": "yes"}, {"confirm": ""}, {"confirm": "   "},
+                   {"confirm": "not-an-account"}, {"confirm": acc.replace("-", "")},
+                   {"confirm": "{" + acc + "}"}, {"confirm": "urn:uuid:" + acc},
+                   {"confirm": acc.upper()}, {"confirm": uuid.UUID(acc)},
+                   {"confirm": FakeCloud.OTHER}):
+            for server in ("id", "flag"):
+                with self.subTest(server=server, **{k: repr(v) for k, v in kw.items()}):
+                    cloud = FakeCloud(server)
+                    with self.assertRaises(KorelyError) as caught:
+                        self._client(cloud).delete_account(**kw)
+                    self.assertNotIsInstance(caught.exception, APIError)
+                    self.assertEqual(caught.exception.code, "confirmation_required")
+                    self.assertIn("nothing was deleted", str(caught.exception).lower())
+                    self.assertIn(self._TYPED, str(caught.exception))
+                    self.assertEqual(cloud.deletes, [])
+                    self.assertFalse(cloud.deleted)
+
+    def test_the_id_of_another_account_says_whose_the_key_is(self):
         cloud = FakeCloud("id")
-        r = self._client(cloud).delete_account(confirm=True)
-        self.assertEqual(cloud.calls, [("GET", "/admin/whoami", {}),
-                                       ("DELETE", "/v1/account", {"confirm": FakeCloud.ACCOUNT})])
-        self.assertTrue(cloud.deleted)
-        self.assertIsInstance(r, AccountDeleteReceipt)
-        self.assertIs(r.deleted, True)
-        self.assertEqual(r.removed, {"memories": 12, "facts": 30, "keys": 1})
+        with self.assertRaises(KorelyError) as caught:
+            self._client(cloud).delete_account(confirm=FakeCloud.OTHER)
+        self.assertIn(f"The account of this key is {FakeCloud.ACCOUNT}, and the confirmation "
+                      f"names {FakeCloud.OTHER}", str(caught.exception))
+        self.assertEqual(cloud.calls, [("GET", "/admin/whoami", {})])
+
+    def test_a_whoami_with_no_uuid_never_becomes_the_confirmation(self):
+        """A tenant_id of "true" sent as the id deletes on a server before
+        1.0.23: nothing that is not a UUID leaves, whatever was typed."""
+        for whoami in ((200, {"tenant_id": "true"}), (200, {"tenant_id": "1"}),
+                       (200, {"tenant_id": "  "}), (200, {"tenant_id": 123}),
+                       (200, {"tenant_id": [FakeCloud.ACCOUNT]}), (200, {"kind": "api_key"}),
+                       (200, [FakeCloud.ACCOUNT]), (200, {})):
+            for typed in ("true", FakeCloud.ACCOUNT, None):
+                with self.subTest(whoami=whoami, typed=typed):
+                    cloud = FakeCloud("flag", whoami=whoami)
+                    with self.assertRaises(KorelyError) as caught:
+                        self._client(cloud).delete_account(confirm=typed)
+                    self.assertEqual(caught.exception.code, "confirmation_required")
+                    self.assertEqual(cloud.deletes, [])
+                    self.assertFalse(cloud.deleted)
+
+    def test_a_key_that_may_not_read_its_account_deletes_nothing(self):
+        refused = (403, {"code": "forbidden", "message": "needs the admin scope"})
+        cloud = FakeCloud("id", whoami=refused)
+        with self.assertRaises(NamespaceForbiddenError) as caught:
+            self._client(cloud).delete_account(confirm=FakeCloud.ACCOUNT)
+        self.assertEqual(caught.exception.status, 403)
+        self.assertEqual(cloud.calls, [("GET", "/admin/whoami", {})])
+        # Without the id the refusal is the confirmation's, and says why it
+        # cannot name the id.
+        cloud = FakeCloud("id", whoami=refused)
+        with self.assertRaises(KorelyError) as caught:
+            self._client(cloud).delete_account(confirm=True)
+        self.assertEqual(caught.exception.code, "confirmation_required")
+        self.assertIn("could not read: needs the admin scope", str(caught.exception))
+        self.assertEqual(cloud.deletes, [])
+
+    def test_only_the_answer_deleted_true_is_a_deletion(self):
+        """A redirect, or a 2xx without `deleted: true`, is not the server
+        saying the account is gone (a proxy's 307 was a deletion)."""
+        for status, body in ((301, {}), (302, {}), (303, {}), (307, {}), (308, {}),
+                             (200, {}), (202, {}), (204, {}), (200, {"deleted": False}),
+                             (200, {"deleted": "true"}), (200, {"removed": {"keys": 1}})):
+            with self.subTest(status=status, body=body):
+                rec = _Recorder().queue(*self._WHOAMI).queue(status, body)
+                with self.assertRaises(KorelyError) as caught:
+                    self._client(rec).delete_account(confirm=FakeCloud.ACCOUNT)
+                if status >= 300:
+                    self.assertIsInstance(caught.exception, APIError)
+                    self.assertEqual(caught.exception.status, status)
+                    self.assertIn("redirect this client does not follow", str(caught.exception))
+                else:
+                    self.assertIn("without `deleted: true`", str(caught.exception))
+                self.assertEqual([c["method"] for c in rec.calls], ["GET", "DELETE"])
+
+    def test_every_call_takes_only_a_2xx_as_its_answer(self):
+        rec = _Recorder().queue(307, {"id": "mem_1"})
+        with self.assertRaises(APIError) as caught:
+            self._client(rec).delete("mem_1")
+        self.assertEqual(caught.exception.status, 307)
 
     def test_a_server_before_1_0_23_is_told_to_upgrade_never_sent_the_flag(self):
         """It would delete with ?confirm=true; the client never sends it."""
@@ -1858,34 +1951,34 @@ class DeletingTheAccountOfAKey(unittest.TestCase):
 
         cloud = FakeCloud("flag")
         with self.assertRaises(APIError) as caught:
-            self._client(cloud).delete_account(confirm=True)
+            self._client(cloud).delete_account(confirm=FakeCloud.ACCOUNT)
         e = caught.exception
         self.assertEqual((e.status, e.code), (422, "server_too_old"))
         for words in ("1.0.23", "korely-memory 0.1.29", "Nothing was deleted"):
             self.assertIn(words, str(e))
         self.assertFalse(cloud.deleted)
-        self.assertEqual([c[2] for c in cloud.calls if c[0] == "DELETE"],
-                         [{"confirm": FakeCloud.ACCOUNT}])
+        self.assertEqual(cloud.deletes, [{"confirm": FakeCloud.ACCOUNT}])
         ak = AsyncKorely(api_key="kor_live_test")
         ak._sync._send = cloud = FakeCloud("flag")
         with self.assertRaises(APIError) as caught:
-            asyncio.run(ak.delete_account(confirm=True))
+            asyncio.run(ak.delete_account(confirm=FakeCloud.ACCOUNT))
         self.assertEqual(caught.exception.code, "server_too_old")
         self.assertFalse(cloud.deleted)
 
-    def test_no_account_id_no_deletion(self):
-        rec = _Recorder().queue(200, {"kind": "api_key", "name": "api key"})
-        with self.assertRaises(KorelyError) as caught:
-            _client(rec).delete_account(confirm=True)
-        self.assertEqual(caught.exception.code, "confirmation_required")
-        self.assertEqual([c["path"] for c in rec.calls], ["/admin/whoami"])
+    def test_the_async_client_types_the_id_too(self):
+        import asyncio
 
-    def test_a_key_that_may_not_read_its_account_deletes_nothing(self):
-        rec = _Recorder().queue(403, {"code": "forbidden", "message": "needs the admin scope"})
-        with self.assertRaises(APIError) as caught:
-            _client(rec).delete_account(confirm=True)
-        self.assertEqual(caught.exception.status, 403)
-        self.assertEqual([c["path"] for c in rec.calls], ["/admin/whoami"])
+        from korely_memory import AsyncKorely
+
+        ak = AsyncKorely(api_key="kor_live_test")
+        ak._sync._send = cloud = FakeCloud("id")
+        with self.assertRaises(KorelyError) as caught:
+            asyncio.run(ak.delete_account(confirm=True))
+        self.assertEqual(caught.exception.code, "confirmation_required")
+        self.assertEqual(cloud.deletes, [])
+        r = asyncio.run(ak.delete_account(confirm=FakeCloud.ACCOUNT))
+        self.assertIs(r.deleted, True)
+        self.assertTrue(cloud.deleted)
 
     _WHOAMI = (200, {"kind": "api_key", "name": "api key", "tenant_id": FakeCloud.ACCOUNT})
 
@@ -1896,7 +1989,7 @@ class DeletingTheAccountOfAKey(unittest.TestCase):
             "code": "account_has_login",
             "message": "This key belongs to an account with a Korely login."})
         with self.assertRaises(ConflictError) as caught:
-            _client(rec).delete_account(confirm=True)
+            _client(rec).delete_account(confirm=FakeCloud.ACCOUNT)
         self.assertNotIsInstance(caught.exception, StaleWriteError)
         self.assertEqual(caught.exception.code, "account_has_login")
 
@@ -1904,7 +1997,7 @@ class DeletingTheAccountOfAKey(unittest.TestCase):
         rec = _Recorder().queue(*self._WHOAMI).queue(400, {
             "code": "confirmation_required", "message": "Send ?confirm=<this account's id>."})
         with self.assertRaises(APIError) as caught:
-            _client(rec).delete_account(confirm=True)
+            _client(rec).delete_account(confirm=FakeCloud.ACCOUNT)
         self.assertEqual((caught.exception.status, caught.exception.code),
                          (400, "confirmation_required"))
 
@@ -1914,13 +2007,141 @@ class DeletingTheAccountOfAKey(unittest.TestCase):
         rec = _Recorder().queue(404, {"detail": "Not Found", "code": "not_found",
                                       "message": "Not Found"})
         with self.assertRaises(NotFoundError):
-            _client(rec).delete_account(confirm=True)
+            _client(rec).delete_account(confirm=FakeCloud.ACCOUNT)
         rec.queue(*self._WHOAMI).queue(405, {"detail": "Method Not Allowed",
                                              "code": "method_not_allowed",
                                              "message": "Method Not Allowed"})
         with self.assertRaises(APIError) as caught:
-            _client(rec).delete_account(confirm=True)
+            _client(rec).delete_account(confirm=FakeCloud.ACCOUNT)
         self.assertEqual(caught.exception.code, "method_not_allowed")
+
+
+class _Server:
+    """A real HTTP server on 127.0.0.1, in this process: each request is
+    recorded (method, path, headers) and answered by ``answer(method, path)``
+    -> (status, headers, body)."""
+
+    def __init__(self, answer):
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        self.seen = []
+        server = self
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def _answer(self):
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    self.rfile.read(length)
+                server.seen.append((self.command, self.path, dict(self.headers.items())))
+                status, headers, body = answer(self.command, self.path)
+                data = json.dumps(body).encode("utf-8") if body is not None else b""
+                self.send_response(status)
+                for k, v in headers.items():
+                    self.send_header(k, v)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            do_GET = do_POST = do_DELETE = do_PATCH = do_PUT = _answer
+
+        self._httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self._httpd.server_address[1]}"
+        threading.Thread(target=self._httpd.serve_forever, kwargs={"poll_interval": 0.05},
+                         daemon=True).start()
+
+    def close(self):
+        self._httpd.shutdown()
+        self._httpd.server_close()
+
+
+class TheKeyGoesOnlyToItsServer(unittest.TestCase):
+    """urllib copies a request's headers onto the request a redirect makes,
+    to any host: a GET answered 302 by the server sent the key to wherever
+    the redirect pointed. Two real servers, on two ports (two origins)."""
+
+    KEY = "kor_self_redirect_probe_0123456789"
+
+    def setUp(self):
+        from unittest import mock
+
+        # Straight to 127.0.0.1, whatever proxy the machine sets.
+        patcher = mock.patch.dict(os.environ, {"no_proxy": "*", "NO_PROXY": "*"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.other = _Server(lambda m, p: (200, {}, {
+            "ok": True, "tier": "pro", "region": "elsewhere", "scopes": [],
+            "id": "mem_1", "tenant_id": FakeCloud.OTHER}))
+        self.addCleanup(self.other.close)
+
+    def _ours(self, answer):
+        s = _Server(answer)
+        self.addCleanup(s.close)
+        return s, Korely(api_key=self.KEY, base_url=s.url)
+
+    def _the_key_in(self, seen):
+        return [(m, p) for m, p, headers in seen if any(self.KEY in v for v in headers.values())]
+
+    def test_a_redirect_to_another_server_goes_without_the_key(self):
+        import urllib.request
+
+        for status in (301, 302, 303, 307, 308):
+            with self.subTest(status=status):
+                self.other.seen.clear()
+                ours, k = self._ours(lambda m, p: (status, {"Location": self.other.url + p}, {}))
+                if hasattr(urllib.request.HTTPRedirectHandler, f"http_error_{status}"):
+                    self.assertTrue(k.ping().ok)
+                    self.assertEqual([(m, p) for m, p, _ in self.other.seen],
+                                     [("GET", "/v1/ping")])
+                    self.assertNotIn("Authorization", self.other.seen[0][2])
+                else:  # 308 before Python 3.11: not followed, so not an answer
+                    with self.assertRaises(APIError) as caught:
+                        k.ping()
+                    self.assertEqual(caught.exception.status, status)
+                    self.assertEqual(self.other.seen, [])
+                self.assertEqual(ours.seen[0][2].get("Authorization"), "Bearer " + self.KEY)
+                self.assertEqual(self._the_key_in(self.other.seen), [])
+
+    def test_a_write_redirected_elsewhere_goes_without_the_key_too(self):
+        # urllib follows a POST answered 301, 302 or 303 as a GET.
+        for status in (301, 302, 303):
+            with self.subTest(status=status):
+                self.other.seen.clear()
+                _, k = self._ours(lambda m, p: (status, {"Location": self.other.url + "/x"}, {}))
+                k.add("hello", user_id="dana")
+                self.assertEqual(len(self.other.seen), 1)
+                self.assertEqual(self._the_key_in(self.other.seen), [])
+
+    def test_a_redirect_on_the_same_server_goes_without_the_key_as_well(self):
+        """The key goes to the address the client was given, never to a
+        redirect's: the other path answers 401, an error, not a leak."""
+        def answer(m, p):
+            if p == "/v1/ping":
+                return 302, {"Location": "/v1/elsewhere"}, {}
+            return 401, {}, {"code": "invalid_key", "message": "Missing key."}
+
+        ours, k = self._ours(answer)
+        with self.assertRaises(AuthenticationError):
+            k.ping()
+        self.assertEqual([p for _, p, _ in ours.seen], ["/v1/ping", "/v1/elsewhere"])
+        self.assertEqual(self._the_key_in(ours.seen), [("GET", "/v1/ping")])
+
+    def test_a_delete_answered_with_a_redirect_is_no_deletion(self):
+        def answer(m, p):
+            if p == "/admin/whoami":
+                return 200, {}, {"tenant_id": FakeCloud.ACCOUNT}
+            return 307, {"Location": self.other.url + p}, {}
+
+        ours, k = self._ours(answer)
+        with self.assertRaises(APIError) as caught:
+            k.delete_account(confirm=FakeCloud.ACCOUNT)
+        self.assertEqual(caught.exception.status, 307)
+        self.assertEqual([m for m, _, _ in ours.seen], ["GET", "DELETE"])
+        self.assertEqual(self.other.seen, [])
 
 
 class SigningUpWithoutAKey(unittest.TestCase):
