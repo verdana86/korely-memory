@@ -451,6 +451,11 @@ async function exchange(
         headers,
         body,
         signal: controller.signal,
+        // Only a GET follows a redirect. `fetch` follows a POST answered 301,
+        // 302 or 303 as a GET with no body, and that GET's answer came back
+        // as the POST's; any other call takes the 3xx as its answer (Node
+        // gives it whole, a browser as an "opaqueredirect" of status 0).
+        redirect: method === "GET" ? "follow" : "manual",
       });
     } catch (e: any) {
       throw failed(e);
@@ -481,14 +486,47 @@ async function exchange(
     }
   }
   if (!resp.ok) {
-    raiseFor(resp.status, parsed, resp.headers.get("retry-after"));
+    raiseFor(resp.status, parsed, resp.headers.get("retry-after"), redirectOf(resp, url));
   }
   return parsed && typeof parsed === "object" ? parsed : {};
 }
 
+/** `scheme://host[:port]` of an address: where a redirect points, its path
+ *  and query left out. Undefined for one that does not parse. */
+function originOf(address: string, base?: string): string | undefined {
+  try {
+    return new URL(address, base).origin;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Where a redirect pointed: the Location of a 3xx not followed, or the
+ *  other origin a followed GET ended at (`fetch` leaves the key behind on
+ *  the way: its 401 is that). */
+function redirectOf(resp: Response, url: string): string | undefined {
+  const location = resp.headers.get("location");
+  if (resp.status >= 300 && resp.status < 400 && location) return originOf(location, url);
+  if (resp.redirected && resp.url) {
+    const at = originOf(resp.url);
+    if (at && at !== originOf(url)) return at;
+  }
+  return undefined;
+}
+
 /** The error an answer that is not a success maps to, by status and code. */
-function raiseFor(status: number, body: any, retryAfter: string | null): never {
-  const { code, message: msg } = errorFields(status, body);
+function raiseFor(status: number, body: any, retryAfter: string | null, redirect?: string): never {
+  let { code, message: msg } = errorFields(status, body);
+  if (status === 401 && redirect) {
+    msg += ` The call was redirected to ${redirect}, and fetch does not send the key to ` +
+      "another origin: if that is the server, use that address as baseUrl.";
+  }
+  if ((status >= 300 && status < 400) || status === 0) {
+    // 0: a browser's "opaqueredirect", which shows neither status nor Location.
+    msg = `The server answered ${status || "with"} a redirect${redirect ? ` to ${redirect}` : ""} ` +
+      "this client does not follow (a call that is not a GET is never redirected): that " +
+      "is not the answer to the call, and nothing says it was done.";
+  }
   // Retry-After on every status (2026-10-06), not only on a 429: the Cloud's
   // 503 `writes_paused` sends it too, and it is the one number that says
   // when writes resume.
@@ -741,11 +779,15 @@ export class Korely {
    * `confirmation_required` (the server's code for the same refusal) and
    * whose message names the id to type when the key may read it. A key that
    * may not read GET /admin/whoami (403, a key without the `admin` scope)
-   * rejects with that error, nothing deleted.
+   * deletes nothing: with no id typed it rejects with that same
+   * `confirmation_required`, whose message says whoami could not be read;
+   * with the id typed, with the server's refusal of the whoami,
+   * NamespaceForbiddenError (an APIError, `status` 403, `code` `forbidden`).
    *
    * The account is deleted only on the server's answer that says so
-   * (`deleted: true`); any other answer, a redirect not followed or a 2xx
-   * without it, rejects, and the account may still be there. A server older
+   * (`deleted: true`); any other answer, a redirect (never followed: the
+   * DELETE is not a GET) or a 2xx without it, rejects, and the account may
+   * still be there. A server older
    * than 1.0.23 takes only `?confirm=true` and refuses the id (422): that
    * rejects with an APIError whose `code` is `server_too_old`, nothing is
    * deleted, and the client does not fall back to the flag. Upgrade the
@@ -793,10 +835,10 @@ export class Korely {
       }
       throw e;
     }
-    // The server's answer to a deletion is `deleted: true` and the rows
-    // removed (AccountDeleted), as Supermemory's reset answers `success:
-    // true`. A 2xx without it (an empty 202 of a proxy, a page, the GET a
-    // 303 turns the DELETE into) was read as a deletion.
+    // The server's answer to a deletion is the API's AccountDeleted answer,
+    // `deleted: true` and the rows removed, as Supermemory's reset answers
+    // `success: true`. A 2xx without it (an empty 202 of a proxy, a page)
+    // was read as a deletion.
     if (body?.deleted !== true) {
       throw new KorelyError(
         "DELETE /v1/account answered without `deleted: true`, the answer that says the " +

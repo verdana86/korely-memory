@@ -1001,11 +1001,10 @@ test("deleteAccount(): a conflict, the server's refusal, the Self-hosted", async
   assert.equal(f.calls.filter((c) => c.init.method === "DELETE").length, 3);
 });
 
-test("a redirect to another server goes without the key (Node's fetch)", async () => {
-  // Two real servers on two ports, two origins: Node's fetch follows the
-  // redirect and drops Authorization on the way (the Fetch standard).
+// Two real servers on two ports, two origins.
+const KEY = "kor_self_redirect_probe_0123456789";
+async function twoServers(otherAnswer) {
   const { createServer } = await import("node:http");
-  const KEY = "kor_self_redirect_probe_0123456789";
   const listen = (handler) => new Promise((resolve) => {
     const s = createServer(handler);
     s.listen(0, "127.0.0.1", () => resolve([s, `http://127.0.0.1:${s.address().port}`]));
@@ -1013,31 +1012,84 @@ test("a redirect to another server goes without the key (Node's fetch)", async (
   const seen = { ours: [], other: [] };
   const [other, otherUrl] = await listen((req, res) => {
     seen.other.push([req.method, req.url, req.headers]);
-    res.writeHead(200, { "content-type": "application/json" });
-    res.end(JSON.stringify({ ok: true, tier: "pro", region: "elsewhere", scopes: [], id: "mem_1" }));
+    const [status, body] = otherAnswer;
+    res.writeHead(status, { "content-type": "application/json" });
+    res.end(JSON.stringify(body));
   });
-  let status = 302;
+  const state = { status: 302, location: (u) => otherUrl + u };
   const [ours, oursUrl] = await listen((req, res) => {
     seen.ours.push([req.method, req.url, req.headers]);
-    res.writeHead(status, { location: otherUrl + req.url });
+    res.writeHead(state.status, { location: state.location(req.url) });
     res.end();
   });
+  return { seen, state, otherUrl, oursUrl, close: () => { ours.close(); other.close(); } };
+}
+
+test("a GET redirected to another server goes without the key (Node's fetch)", async () => {
+  // Node's fetch follows a GET's redirect and drops Authorization on the way
+  // to another origin (the Fetch standard).
+  const s = await twoServers([200, { ok: true, tier: "pro", region: "elsewhere", scopes: [] }]);
   try {
-    for (status of [301, 302, 303, 307, 308]) {
-      seen.ours.length = 0;
-      seen.other.length = 0;
-      const k = new Korely({ apiKey: KEY, baseUrl: oursUrl });
-      await k.ping();
-      await k.add("hello", { user_id: "dana" });
-      assert.equal(seen.ours[0][2].authorization, `Bearer ${KEY}`);
-      assert.equal(seen.other.length, 2, String(status));
-      for (const [, , headers] of seen.other) {
-        assert.ok(!Object.values(headers).some((v) => String(v).includes(KEY)), String(status));
+    for (s.state.status of [301, 302, 303, 307, 308]) {
+      s.seen.ours.length = 0;
+      s.seen.other.length = 0;
+      await new Korely({ apiKey: KEY, baseUrl: s.oursUrl }).ping();
+      assert.equal(s.seen.ours[0][2].authorization, `Bearer ${KEY}`);
+      assert.deepEqual(s.seen.other.map(([m, u]) => [m, u]), [["GET", "/v1/ping"]]);
+      assert.ok(!Object.values(s.seen.other[0][2]).some((v) => String(v).includes(KEY)), String(s.state.status));
+    }
+  } finally {
+    s.close();
+  }
+});
+
+test("a call that is not a GET is never redirected", async () => {
+  // fetch follows a POST answered 301, 302 or 303 as a GET with no body, and
+  // that GET's answer came back as the POST's: add() said stored from another
+  // address's reply. Every redirect of a POST, a PATCH or a DELETE is now its
+  // answer, and nothing reaches the other server.
+  const s = await twoServers([200, { id: "mem_1", status: "ready", deleted: true }]);
+  s.state.location = (u) => s.otherUrl + "/x?token=t";
+  const calls = {
+    POST: (k) => k.add("hello", { user_id: "dana" }),
+    PATCH: (k) => k.update("mem_1", { content: "hello" }),
+    DELETE: (k) => k.delete("mem_1"),
+  };
+  try {
+    for (const [method, call] of Object.entries(calls)) {
+      for (s.state.status of [301, 302, 303, 307, 308]) {
+        s.seen.ours.length = 0;
+        s.seen.other.length = 0;
+        const k = new Korely({ apiKey: KEY, baseUrl: s.oursUrl });
+        await assert.rejects(() => call(k), (e) => {
+          assert.ok(e instanceof APIError, String(e));
+          assert.equal(e.status, s.state.status);
+          assert.ok(e.message.includes(`redirect to ${s.otherUrl} this client does not follow`), e.message);
+          assert.ok(!e.message.includes("token"));
+          return true;
+        }, `${method} ${s.state.status}`);
+        assert.deepEqual(s.seen.ours.map(([m]) => m), [method]);
+        assert.deepEqual(s.seen.other, [], `${method} ${s.state.status}`);
       }
     }
   } finally {
-    ours.close();
-    other.close();
+    s.close();
+  }
+});
+
+test("a 401 after a GET redirected to another server says so", async () => {
+  const s = await twoServers([401, { code: "invalid_key", message: "Missing key." }]);
+  try {
+    await assert.rejects(() => new Korely({ apiKey: KEY, baseUrl: s.oursUrl }).ping(), (e) => {
+      assert.ok(e instanceof AuthenticationError);
+      assert.equal(e.message, `Missing key. The call was redirected to ${s.otherUrl}, and fetch does ` +
+        "not send the key to another origin: if that is the server, use that address as baseUrl.");
+      return true;
+    });
+    await assert.rejects(() => new Korely({ apiKey: KEY, baseUrl: s.otherUrl }).ping(),
+      (e) => e instanceof AuthenticationError && e.message === "Missing key.");
+  } finally {
+    s.close();
   }
 });
 
