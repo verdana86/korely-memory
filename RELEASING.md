@@ -57,7 +57,12 @@ Python, **due** posti insieme (un test li lega):
 - `__version__` in `python/korely_memory/client.py`, che va nello User-Agent e
   in `korely --version`
 
-E una voce in `CHANGELOG.md`.
+E una voce in `CHANGELOG.md`: il titolo `## Unreleased` diventa quello della
+versione, nello stile dei precedenti (`## Python 0.2.0, npm 0.2.0
+(2026-11-14)`, con `### Python 0.2.0` e `### npm 0.2.0` sotto), e il paragrafo
+iniziale dice cosa cambia per chi aggiorna e resta vero dopo la pubblicazione
+(niente "non ancora pubblicato"). Si pubblica dal commit che contiene questo
+titolo.
 
 ## Pubblicare
 
@@ -76,7 +81,23 @@ npm publish
 `prepublishOnly` esegue la build, quindi `npm publish` non pubblica mai sorgenti
 non compilati.
 
+Poi i tag, sul commit pubblicato (lo stesso da cui sono usciti i pacchetti),
+uno per pacchetto pubblicato, annotati come i precedenti:
+
+```bash
+git tag -a python-v0.2.0 -m "Python 0.2.0" <commit pubblicato>
+git tag -a npm-v0.2.0 -m "npm 0.2.0" <commit pubblicato>
+git push origin python-v0.2.0 npm-v0.2.0
+```
+
 ## Dopo il rilascio
+
+Controllare che i registri abbiano le versioni del repository (rosso se il
+locale e' avanti, cioe' se una versione non e' arrivata a chi installa):
+
+```bash
+python3 scripts/check_published.py --strict
+```
 
 Controllare che le schede mostrino il link al sorgente:
 

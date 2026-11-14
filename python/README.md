@@ -114,8 +114,8 @@ the `admin` scope, else answers 404 (405 where it serves its dashboard).
 
 The key goes only to `base_url`. A `GET`'s redirect is followed without it,
 to another server or the same one, so a server that wants it after a
-redirect answers 401, and the `AuthenticationError` says where the call was
-redirected: point `base_url` at that address. A call that is not a `GET`
+redirect answers 401; when it went to another server, the `AuthenticationError`
+says where: point `base_url` at that address. A call that is not a `GET`
 (`POST`, `PATCH`, `DELETE`) is never redirected: a 3xx raises `APIError` with
 its status, its message naming the origin the redirect pointed to.
 

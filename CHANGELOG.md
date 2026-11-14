@@ -8,19 +8,26 @@ The server side of the entries marked "API" shipped on 2026-09-28. Against an
 older server these clients keep working: the old field names are still read,
 and a batch `timestamp` is refused there with a 422.
 
-## Unreleased
+## Python 0.2.0, npm 0.2.0 (2026-11-14)
 
-Not published to PyPI or npm yet; the version numbers are unchanged. **The
-next release of both is a minor version, not a patch: Python 0.2.0 after
-0.1.29, npm 0.2.0 after 0.1.18.** In both, deleting an account takes the
-account's id typed (`delete_account(confirm="<id>")`, `deleteAccount({
-confirm: "<id>" })`, `korely delete-account --confirm <id>`): `confirm=True`
-and `--yes` no longer delete, and no deletion works against a server older
-than Korely 1.0.23. In Python a CLI script that passed an id a command never
-sent stops with exit 2. In npm the package has a new `node` export condition
-and its `sideEffects` changed (below).
+Minor releases, after Python 0.1.29 and npm 0.1.18, because two changes break
+code written for those versions:
 
-### Python
+1. **Deleting an account takes the account's id, typed:**
+   `delete_account(confirm="<id>")` in Python, `deleteAccount({ confirm:
+   "<id>" })` in npm, `korely delete-account --confirm <id>` on the command
+   line. `confirm=True`, `{ confirm: true }` and `--yes` no longer delete
+   anything, and a deletion needs Korely 1.0.23 or later on the server.
+2. **The `korely` command line refuses an id it would not send:** a command
+   given `--user-id` or `--agent-id` that it does not send stops with exit 2
+   and does nothing. Remove the flag.
+
+Also in both: a call that is not a `GET` is never redirected (a server or a
+proxy that redirects a write now gets an error, not a silent answer from
+elsewhere), and the key is never sent after a redirect. The npm package has a
+new `node` export condition and its `sideEffects` changed.
+
+### Python 0.2.0
 
 - `delete()` and `delete_agent()` (and `AsyncKorely`'s) keep
   `facts_reopened`, which Korely 1.0.2 and later send: the facts that are
@@ -139,9 +146,11 @@ and its `sideEffects` changed (below).
   urllib's own `HTTPBasicAuthHandler` sends it): a `GET`'s redirect is still
   followed, never with the key, on another server or on the same one. A
   server that wants the key after a redirect answers 401
-  (`AuthenticationError`), and the message then says the call was
-  redirected, to which address, and to use that address as `base_url`.
-  Tested with two local servers.
+  (`AuthenticationError`); when the redirect went to another server
+  (another scheme, host or port), the message says so, names that address
+  and says to use it as `base_url`. Tested with two local servers. A `GET`'s
+  redirect that urllib does not follow (a 300, a 304, a 308 before Python
+  3.11) is an `APIError` that says so.
 - `audit()`'s events keep `api_key_id`, which Korely 1.0.23 sends: the key
   that made each call, by the id the dashboard's Keys page lists it with
   (never the key); None for an act with no key and from an older server.
@@ -159,7 +168,7 @@ and its `sideEffects` changed (below).
   since Korely 1.0.19 a write must name an id. A test runs the examples and
   checks that every write names the user.
 
-### npm
+### npm 0.2.0
 
 - `DeleteReceipt` and `AgentDeleteReceipt` type `facts_reopened`. The field
   already reached the program at run time; a program reading it under
@@ -356,7 +365,7 @@ accept such a write.
 - `korely init --name "Maria Rossi" --user-id maria` declares a person's full
   name for their memory, and `Korely.declare_name(name, user_id=...)` (and
   `AsyncKorely.declare_name`) is the call behind it (API: `POST
-  /v1/users/{user_id}/names`, korely-agent after 0.1.41). The store never
+  /v1/users/{user_id}/names`, Korely Agent after 0.1.41). The store never
   merges two names of a person by itself; after the declaration the facts
   about the name read as that user's, those already written included. A name
   declared for somebody else in that memory raises `ConflictError`. `--name`
