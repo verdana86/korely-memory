@@ -128,7 +128,9 @@ Korely 1.0.23 (below).
   Against a server older than 1.0.23, which takes only `?confirm=true`, it
   does not fall back to the flag: nothing is deleted and it rejects with an
   `APIError` (`status` 422, `code` `server_too_old`) saying to upgrade the
-  server or to use korely-memory 0.1.18.
+  server or to use korely-memory 0.1.18. A key that cannot read
+  `/admin/whoami` (403, a key without the `admin` scope) or an answer with
+  no `tenant_id` deletes nothing.
 - The example at the top of the client names the end user in its write
   (`{ user_id: "dana", agent_id: "coding-assistant" }`), as the README's do;
   a test runs the examples of `index.ts` and `client.ts` and checks every

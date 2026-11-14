@@ -99,8 +99,11 @@ made, which nobody signs in to; one with a Korely login answers
 confirmation Korely 1.0.23 and later require. A server older than 1.0.23
 takes only `?confirm=true`: the client does not fall back to it, deletes
 nothing and raises `APIError` with the code `server_too_old` (upgrade the
-server, or use korely-memory 0.1.29). Cloud only: the Self-hosted answers 404
-(405 where it serves its dashboard).
+server, or use korely-memory 0.1.29). A 403 at `GET /admin/whoami` (a key
+without the `admin` scope) or an answer with no `tenant_id` deletes nothing.
+Cloud only: the Self-hosted, which has no such route, stops at that 403 for a
+key without the `admin` scope, else answers 404 (405 where it serves its
+dashboard).
 
 `audit()` reads the trail of the key's project, newest first: who acted
 (`actor`), what (`action`: `read`, `write`, `fact_write`, `fact_invalidate`,
