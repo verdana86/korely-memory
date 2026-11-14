@@ -53,14 +53,21 @@ Not published to PyPI or npm yet; the version numbers are unchanged.
 - `korely hook` masks keys made of hex digits alone before a session
   leaves the machine, as it masks the mixed-case ones: a run of 24 or more
   hex digits of one case, letters and digits mixed and spread like a random
-  string, alone or as a piece of a run (`TOKEN=<hex>`, `dd_<hex>`,
-  `0x<hex>`). None of 2,000 random hex keys was masked; now, of 2,000 each
-  (seeded, in the tests), at least 1,800 of 24 digits, 1,980 of 32 and all
-  of 40 and 64. By its shape such a key is a full git commit hash or a
-  sha256 digest too, which are now masked as well; the short hash git
-  prints (7 to 12 characters) and UUIDs are not. The limit of five failed
-  sends stays: after the fifth the turns are dropped with a line in
-  `~/.korely/hook.log`; the README now says so.
+  string, alone, joined to the rest of a run by `=`, `_`, `-` or `+`
+  (`TOKEN=<hex>`, `dd_<hex>`), or after `0x`. None of 2,000 random hex keys
+  was masked; now, of 2,000 each (seeded, in the tests), at least 1,800 of
+  24 digits, 1,980 of 32 and all of 40 and 64. **Hex identifiers have the
+  same shape and are masked too:** full git commit hashes, sha256 and md5
+  digests, Docker image ids, MongoDB ObjectIds, trace ids, UUIDs written
+  without dashes (a Notion page link becomes
+  `https://app.notion.com/[redacted]`) and Ethereum addresses. Not masked:
+  UUIDs with dashes, short hashes (under 24 hex digits), numbers. Not
+  caught, listed in the README: hex keys of 20 to 23 characters, a prefix
+  glued to hex digits with no separator, keys of letters alone, base32 and
+  other upper-case-and-digit keys, dashed-UUID-shaped keys, keys split into
+  pieces under 24 characters, some base64 with `/`, URL-encoded keys. The
+  limit of five failed sends stays: after the fifth the turns are dropped
+  with a line in `~/.korely/hook.log`; the README now says so.
 - The examples in the package's docstrings (`import korely_memory`,
   `Korely`) name the end user in their write:
   `korely.add("User prefers TypeScript", user_id="dana",

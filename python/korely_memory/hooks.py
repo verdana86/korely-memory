@@ -193,9 +193,11 @@ def _looks_random(run: str) -> bool:
     many different characters; identifiers and file names do not do all of
     it. A hex token has one case and 16 symbols: it is masked when the run,
     or a piece of it (`TOKEN=<hex>`, `prefix_<hex>`), is one. By its shape a
-    hex key cannot be told from a full git commit hash or a sha256 digest,
-    so those are masked too; a UUID's pieces are too short, and the 7 to 12
-    characters git shows of a hash are under the 24 of a run.
+    hex key cannot be told from a hex identifier (a full git commit hash, a
+    sha256 or md5 digest, an ObjectId, a UUID written without dashes), so
+    those are masked too; the pieces of a UUID with dashes are too short,
+    and the 7 to 12 characters git shows of a hash are under the 24 of a run.
+    What this does not catch is listed in the README ("Not caught").
     """
     core = run.strip("=")
     if any(_random_hex(piece) for piece in [core, *_JOINS.split(core)]):

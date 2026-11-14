@@ -462,10 +462,28 @@ Tuesday. It installs hooks, the assistant's own lifecycle commands, that run
 
 Before anything leaves the machine, what looks like a generated key, a
 private key or a password in a URL is replaced by `[redacted]`. A generated
-key is told by its shape: 24 characters or more mixing upper case, lower case
-and digits, or hex digits alone (also after `NAME=`, a prefix or `0x`), so a
-full git commit hash or a sha256 digest is masked too; the short hash git
-prints is not. A hook never breaks the assistant: a failure is a line in
+key is told by its shape alone, with no list of vendors:
+
+- **Masked:** a run of 24 characters or more that mixes upper case, lower
+  case and digits, spread like a random string; and a run of 24 hex digits or
+  more of one case, letters and digits mixed, alone, joined to the rest of a
+  run by `=`, `_`, `-` or `+`, or after `0x`. Hex identifiers have that shape
+  too and are masked with the keys: full git commit hashes, sha256 and md5
+  digests, Docker image ids, MongoDB ObjectIds, trace ids, UUIDs written
+  without dashes (a Notion page link becomes
+  `https://app.notion.com/[redacted]`) and Ethereum addresses.
+- **Not masked:** UUIDs with dashes, short hashes (under 24 hex digits, as
+  the 7 to 12 git prints), numbers, words and identifiers.
+- **Not caught:** hex keys of 20 to 23 characters; a prefix glued to hex
+  digits with no `=`, `_`, `-` or `+` between them (letters then 32 hex
+  digits: the run is neither hex nor mixed case); keys of letters alone;
+  base32 secrets (an authenticator's) and other keys of upper case and
+  digits only; keys shaped like a UUID with dashes; a key split across lines
+  into pieces under 24 characters; some base64 keys holding `/`, and keys
+  written URL-encoded. Do not count on it to keep a secret pasted into a
+  session.
+
+A hook never breaks the assistant: a failure is a line in
 `~/.korely/hook.log`, without the text of the session. Turns that could not
 be sent stay in the buffer and go with the next send; after the fifth failed
 send they are dropped, with a line in `hook.log` (`gave up on ...`).

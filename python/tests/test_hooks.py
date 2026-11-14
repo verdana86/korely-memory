@@ -99,6 +99,17 @@ class Redaction(unittest.TestCase):
                          if "[redacted]" in hooks.redact(hex_key(n, upper=rng.random() < 0.5)))
             self.assertGreaterEqual(masked, at_least, n)
 
+    def test_a_hex_key_needs_24_digits_and_letters_among_them(self):
+        # The same well-spread digits: 24 are a key, 23 are not (the
+        # threshold, where a piece of a run is tested on its own).
+        key = "0123456789abcdef01a2b3c4"
+        self.assertEqual(hooks.redact(f"token={key}"), "[redacted]")
+        self.assertEqual(hooks.redact(f"token={key[:23]}"), f"token={key[:23]}")
+        # Digits alone are a number, however spread: no letter, no key.
+        number = "012345678901234567890123456789"
+        self.assertEqual(hooks.redact(f"order {number}"), f"order {number}")
+        self.assertEqual(hooks.redact(f"id={number}"), f"id={number}")
+
     def test_a_full_commit_hash_is_masked_like_a_hex_key(self):
         # By its shape a 40-digit hex key is a commit hash: both are masked.
         # The short hash git prints, under 24 digits, stays.
