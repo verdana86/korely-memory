@@ -842,6 +842,91 @@ class TheMemoryCommands(_RunsCommands):
         self.assertEqual(data, {"events": [], "processing": 0})
 
 
+class AnIdACommandTakesIsAnIdItSends(_RunsCommands):
+    """`--user-id` and `--agent-id` were on the parent every command shares,
+    so every command took both and some sent neither: `delete-all --user-id
+    u --agent-id a --yes` erased u in every agent of the project. A command
+    takes the ids it sends, and refuses the others before doing anything."""
+
+    # The smallest call of every command that reads the shared flags.
+    CALLS = {
+        ("auth",): [], ("ping",): [], ("add",): ["x"], ("update",): ["mem_1", "x"],
+        ("search",): ["q"], ("context",): ["q"], ("facts",): [],
+        ("add-fact",): ["s", "p", "o"], ("correct-fact",): ["fct_1", "--object", "x"],
+        ("forget-fact",): ["fct_1"], ("profile",): [], ("users",): [], ("agents",): [],
+        ("list",): [], ("get",): ["mem_1"], ("history",): ["mem_1"], ("events",): [],
+        ("delete",): ["mem_1"], ("delete-all",): ["--yes"], ("delete-agent",): ["--yes"],
+        ("batch",): ["-"], ("batch-status",): ["job_1"], ("audit",): [],
+        ("projects",): [], ("projects", "list"): [], ("projects", "create"): ["p"],
+        ("projects", "rename"): ["p", "q"], ("projects", "archive"): ["p"],
+        ("projects", "unarchive"): ["p"], ("projects", "delete"): ["p", "--yes"],
+        ("keys",): [], ("keys", "list"): [], ("keys", "create"): ["--name", "n"],
+        ("keys", "move"): ["k1", "--project", "p"], ("keys", "revoke"): ["k1", "--yes"],
+        ("delete-account",): ["--yes"],
+    }
+
+    @staticmethod
+    def _commands(parser, path=()):
+        """Every command and action of the parser, as the words that call it."""
+        import argparse
+
+        found = {path} if path else set()
+        for action in parser._actions:
+            if isinstance(action, argparse._SubParsersAction):
+                for name, sub in action.choices.items():
+                    found |= AnIdACommandTakesIsAnIdItSends._commands(sub, path + (name,))
+        return found
+
+    def test_the_table_has_every_command(self):
+        # `init` and `hook` have parsers of their own: their ids are saved, not sent.
+        self.assertEqual(self._commands(cli.build_parser()) - {("init",), ("hook",)},
+                         set(self.CALLS))
+
+    def test_every_id_a_command_takes_reaches_the_server(self):
+        import json as _json
+
+        for words, rest in sorted(self.CALLS.items()):
+            for flag in ("--user-id", "--agent-id"):
+                with self.subTest(command=" ".join(words), flag=flag):
+                    value = "zz" + flag.strip("-") + "zz"
+                    argv = [*words, *rest, flag, value]
+                    rec = _Recorder()
+                    err = io.StringIO()
+                    try:
+                        with redirect_stderr(err), redirect_stdout(io.StringIO()):
+                            a = _args(argv)
+                    except SystemExit as refused:
+                        # Refused before any call ("unrecognized arguments",
+                        # or, under `projects`/`keys`, not an action).
+                        self.assertEqual(refused.code, 2)
+                        self.assertIn(value, err.getvalue())
+                        continue
+                    stdin = '[{"content": "c"}]' if words == ("batch",) else None
+                    from unittest import mock
+
+                    with redirect_stderr(io.StringIO()), redirect_stdout(io.StringIO()), \
+                            mock.patch.object(sys, "stdin", io.StringIO(stdin or "")):
+                        a.func(_client(rec), a)
+                    self.assertIn(value, _json.dumps(rec.calls),
+                                  f"{' '.join(argv)} took {flag} and did not send it")
+
+    def test_a_deletion_with_an_id_it_cannot_honour_deletes_nothing(self):
+        for argv in (["delete-all", "--user-id", "alex", "--agent-id", "bot", "--yes"],
+                     ["delete-agent", "--agent-id", "bot", "--user-id", "alex", "--yes"]):
+            with self.subTest(argv=argv):
+                err = io.StringIO()
+                with redirect_stderr(err), self.assertRaises(SystemExit) as refused:
+                    cli.main(argv)
+                self.assertEqual(refused.exception.code, 2)
+                self.assertIn("unrecognized arguments", err.getvalue())
+
+    def test_delete_all_says_it_takes_every_agent(self):
+        out = io.StringIO()
+        with redirect_stdout(out), self.assertRaises(SystemExit):
+            cli.build_parser().parse_args(["--help"])
+        self.assertIn("whichever agent wrote it", " ".join(out.getvalue().split()))
+
+
 class TheAgentFactAndBatchCommands(_RunsCommands):
     """agents, delete-agent, the fact writes and the batch: routes the SDK had
     and the CLI did not (2026-10-06)."""

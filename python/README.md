@@ -298,6 +298,14 @@ same refusal.
 | `korely audit [--all]` | `GET /v1/audit` (`--action`, `--since`, `--until`) |
 | `korely delete-account --yes` | `DELETE /v1/account` (Cloud only) |
 
+A command takes `--user-id` and `--agent-id` only when it sends them, and
+refuses them otherwise, before doing anything: `korely delete-all --user-id U
+--agent-id A` is refused, because the erasure of an end user takes every agent
+of the project (to purge one agent, `korely delete-agent --agent-id A`);
+`korely delete-agent --user-id U` is refused too. In 0.1.29 and earlier
+every command took both, and `delete-all` erased the end user in every
+agent with the agent id unread.
+
 `korely batch` reads a JSON array, an object with `memories`, or JSON Lines
 (`-` for stdin); an item is the body of one `add`, or a string taken as its
 content. `--user-id` and `--agent-id` scope the items that name none; an item

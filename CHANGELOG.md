@@ -27,6 +27,19 @@ Not published to PyPI or npm yet; the version numbers are unchanged.
   Whether a cap slot is free is `cap` and `used` of `list_agents()`.
   `korely delete-agent` no longer has a line for it (it could never print).
 
+- The CLI's commands take `--user-id` and `--agent-id` only when they send
+  them, and refuse them otherwise (exit 2, `unrecognized arguments`, nothing
+  done). Every command took both, from the flags they share, and some sent
+  neither: `korely delete-all --user-id U --agent-id A --yes` erased U in
+  every agent of the project, the agent id unread, because the erasure of an
+  end user takes no agent. Now `delete-all` takes `--user-id` alone (to purge
+  one agent: `korely delete-agent --agent-id A`), `delete-agent`,
+  `users` take `--agent-id` alone, `events` and `audit` `--user-id` alone,
+  and `auth`, `ping`, `update`, `get`, `history`, `delete`, `correct-fact`,
+  `forget-fact`, `agents`, `batch-status`, `projects`, `keys` and
+  `delete-account` neither. **A script that passed an id one of these
+  commands never sent stops with exit 2: remove the flag.**
+
 ### npm
 
 - `DeleteReceipt` and `AgentDeleteReceipt` type `facts_reopened`. The field

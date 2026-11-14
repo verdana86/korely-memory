@@ -714,9 +714,9 @@ def cmd_batch(k: Korely, a) -> int:
     if not items:
         print(f"error: no memories in {a.file}.", file=sys.stderr)
         return 2
-    # --user-id / --agent-id are the scope of the items that name none: every
-    # command takes them, and a flag that a command ignores in silence is a
-    # batch that lands in the wrong namespace.
+    # --user-id / --agent-id are the scope of the items that name none: a
+    # flag that a command ignores in silence is a batch that lands in the
+    # wrong namespace.
     for item in items:
         if a.user_id:
             item.setdefault("user_id", a.user_id)
@@ -1268,13 +1268,25 @@ def build_parser() -> argparse.ArgumentParser:
     common.add_argument("--json", action="store_true", help="machine-readable output")
     common.add_argument("--api-key", help="override KORELY_API_KEY")
     common.add_argument("--base-url", help="API base URL (default https://api.korely.ai)")
-    common.add_argument("--user-id",
-                        help="end-user namespace (unlimited per tier); a write needs it or "
-                             "--agent-id, unless `korely init --user-id` saved one")
-    common.add_argument("--agent-id", help="agent namespace (counts against your agent cap)")
     common.add_argument("--profile",
                         help="use the key saved with `korely init --profile <name>` "
                              "(else KORELY_PROFILE, else the default one)")
+    # Whose memory a command acts on: only on the commands that send it, so
+    # an id a command would not send is refused before anything is done.
+    # On the shared parent every command took both, and `delete-all --user-id
+    # u --agent-id a` erased u in every agent of the project, the agent id
+    # unread (the server erases an end user whole: DELETE
+    # /v1/users/{id}/memories takes no agent). Mem0's delete_all, by
+    # contrast, scopes by every id it is given (docs.mem0.ai, "Delete
+    # memories", read 2026-11-14).
+    user_flag = argparse.ArgumentParser(add_help=False)
+    user_flag.add_argument("--user-id",
+                           help="end-user namespace (unlimited per tier); a write needs it or "
+                                "--agent-id, unless `korely init --user-id` saved one")
+    agent_flag = argparse.ArgumentParser(add_help=False)
+    agent_flag.add_argument("--agent-id",
+                            help="agent namespace (counts against your agent cap)")
+    both = [common, user_flag, agent_flag]
 
     sub = p.add_subparsers(dest="command", required=True)
 
@@ -1353,7 +1365,7 @@ def build_parser() -> argparse.ArgumentParser:
                         help="the key's tier, region and scopes (no scope, no quota)")
     sp.set_defaults(func=cmd_ping)
 
-    sp = sub.add_parser("add", parents=[common], help="store a memory ('-' or pipe for stdin)")
+    sp = sub.add_parser("add", parents=both, help="store a memory ('-' or pipe for stdin)")
     sp.add_argument("content", nargs="?", help="text to remember; '-' reads stdin")
     sp.add_argument("--run-id", help="optional run/session id")
     sp.add_argument("--timestamp",
@@ -1370,7 +1382,7 @@ def build_parser() -> argparse.ArgumentParser:
                     help="the updated_at you read: refused (stale_write) if it changed since")
     sp.set_defaults(func=cmd_update)
 
-    sp = sub.add_parser("search", parents=[common], help="semantic search over memories")
+    sp = sub.add_parser("search", parents=both, help="semantic search over memories")
     sp.add_argument("query")
     sp.add_argument("--run-id", help="scope to one run/session")
     # No default of our own (2026-10-06): it was 10 against the API's 15, so
@@ -1384,7 +1396,7 @@ def build_parser() -> argparse.ArgumentParser:
                     help="leave out the work sessions and what only they stated")
     sp.set_defaults(func=cmd_search)
 
-    sp = sub.add_parser("context", parents=[common],
+    sp = sub.add_parser("context", parents=both,
                         help="assembled, prompt-ready context block (the agent call)")
     sp.add_argument("query")
     sp.add_argument("--token-budget", type=int, default=800)
@@ -1393,7 +1405,7 @@ def build_parser() -> argparse.ArgumentParser:
                     help="leave out the work sessions and what only they stated")
     sp.set_defaults(func=cmd_context)
 
-    sp = sub.add_parser("facts", parents=[common],
+    sp = sub.add_parser("facts", parents=both,
                         help="typed facts; --as-of DATE for point-in-time (time-travel)")
     sp.add_argument("--entity", help="match subject OR object")
     sp.add_argument("--subject")
@@ -1409,7 +1421,7 @@ def build_parser() -> argparse.ArgumentParser:
                     help="leave out the work sessions and what only they stated")
     sp.set_defaults(func=cmd_facts)
 
-    sp = sub.add_parser("add-fact", parents=[common],
+    sp = sub.add_parser("add-fact", parents=both,
                         help="write a typed fact directly, no extraction (contradiction-checked)")
     sp.add_argument("subject")
     sp.add_argument("predicate")
@@ -1438,14 +1450,15 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--at", help="ISO date it STOPPED being true (default: now)")
     sp.set_defaults(func=cmd_forget_fact)
 
-    sp = sub.add_parser("profile", parents=[common], help="assembled profile of one end user")
+    sp = sub.add_parser("profile", parents=both, help="assembled profile of one end user")
     sp.add_argument("--as-of", help="ISO date: the point-in-time profile")
     sp.add_argument("--known-as-of", help="ISO date: the profile as Korely knew it then")
     sp.add_argument("--exclude-sessions", action="store_true",
                     help="leave out the work sessions and what only they stated")
     sp.set_defaults(func=cmd_profile)
 
-    sp = sub.add_parser("users", parents=[common], help="end users you've stored data for")
+    sp = sub.add_parser("users", parents=[common, agent_flag],
+                        help="end users you've stored data for")
     sp.add_argument("--limit", type=int, default=50)
     sp.set_defaults(func=cmd_users)
 
@@ -1455,7 +1468,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--offset", type=int, default=0)
     sp.set_defaults(func=cmd_agents)
 
-    sp = sub.add_parser("list", parents=[common], help="the memories of a scope, newest first")
+    sp = sub.add_parser("list", parents=both, help="the memories of a scope, newest first")
     sp.add_argument("--run-id", help="one run/session")
     sp.add_argument("--limit", type=int, default=50, help="up to 200 (default 50)")
     sp.add_argument("--offset", type=int, default=0)
@@ -1472,7 +1485,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("memory_id")
     sp.set_defaults(func=cmd_history)
 
-    sp = sub.add_parser("events", parents=[common],
+    sp = sub.add_parser("events", parents=[common, user_flag],
                         help="which writes are still being extracted (status per memory)")
     sp.add_argument("--status", choices=["processing", "ready", "error"],
                     help="only this state, before --limit")
@@ -1483,17 +1496,18 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("memory_id")
     sp.set_defaults(func=cmd_delete)
 
-    sp = sub.add_parser("delete-all", parents=[common],
-                        help="GDPR: forget EVERY memory + fact for one --user-id (needs --yes)")
+    sp = sub.add_parser("delete-all", parents=[common, user_flag],
+                        help="GDPR: forget EVERY memory + fact for one --user-id, whichever "
+                             "agent wrote it (needs --yes); one agent: delete-agent")
     sp.add_argument("--yes", action="store_true", help="confirm the irreversible wipe")
     sp.set_defaults(func=cmd_delete_all)
 
-    sp = sub.add_parser("delete-agent", parents=[common],
+    sp = sub.add_parser("delete-agent", parents=[common, agent_flag],
                         help="purge one --agent-id of this project, freeing its slot (needs --yes)")
     sp.add_argument("--yes", action="store_true", help="confirm the irreversible purge")
     sp.set_defaults(func=cmd_delete_agent)
 
-    sp = sub.add_parser("batch", parents=[common],
+    sp = sub.add_parser("batch", parents=both,
                         help="bulk import (up to 500): JSON array, {\"memories\": [...]} or JSON Lines")
     sp.add_argument("file", help="the file; '-' reads stdin")
     sp.set_defaults(func=cmd_batch)
@@ -1502,7 +1516,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("job_id")
     sp.set_defaults(func=cmd_batch_status)
 
-    sp = sub.add_parser("audit", parents=[common],
+    sp = sub.add_parser("audit", parents=[common, user_flag],
                         help="the audit trail of this key's project, newest first (--all to export)")
     sp.add_argument("--action",
                     help="read | write | fact_write | fact_invalidate | erase | key_create | "
