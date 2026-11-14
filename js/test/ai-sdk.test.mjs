@@ -12,7 +12,7 @@ import assert from "node:assert/strict";
 import { readdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { generateText, jsonSchema, stepCountIs, streamText, tool, wrapLanguageModel } from "ai";
-import { Korely, KorelyError } from "../dist/index.js";
+import { Korely, KorelyError } from "korely-memory";
 import { korelyMemoryMiddleware, korelyTools, withKorelyMemory } from "../dist/ai-sdk.js";
 
 const require = createRequire(import.meta.url);

@@ -1,6 +1,7 @@
 // SDK tests, no network. A fake fetch records the request and returns a canned
 // response; we assert the SDK builds the right request and parses the right
-// shape. Runs against the built package (dist), so build first:
+// shape. Runs against the built package (dist), imported by its name as a
+// program imports it (on Node, the `node` export condition), so build first:
 //   npm run build && npm test
 import test from "node:test";
 import assert from "node:assert/strict";
@@ -17,7 +18,7 @@ import {
   TooManyBatchesError,
   APIError,
   VERSION,
-} from "../dist/index.js";
+} from "korely-memory";
 
 function fakeFetch(queue) {
   const calls = [];
