@@ -467,6 +467,38 @@ class AlsoRead(Base):
                          hooks.hook_command("/bin/korely", "stop", "claude-code",
                                             also_read_user=["founder"]))
 
+    def test_the_reads_of_a_start_share_one_time_budget(self):
+        """Three reads in turn, each allowed 8 s: a slow server kept the start
+        24 s, past the 10 s Claude Code gives it, and all the context was lost."""
+        now = [100.0]
+
+        class Slow(FakeClient):
+            def __init__(self, text):
+                super().__init__(text)
+                self.timeout = hooks.NETWORK_TIMEOUT
+                self.allowed = []
+
+            def get_context(self, query, user_id=None, token_budget=800):
+                self.allowed.append(self.timeout)
+                now[0] += min(5.0, self.timeout)  # the server takes 5 s, or the client gives up
+                return super().get_context(query, user_id=user_id, token_budget=token_budget)
+
+        shared, private = Slow("- shared fact"), Slow("- private fact")
+        clients = {None: shared, "private": private}
+        with mock.patch.object(hooks, "_monotonic", lambda: now[0], create=True):
+            out = json.loads(hooks.run_hook(
+                "session-start", "claude-code", {"session_id": "p9", "cwd": str(self.repo)},
+                client_factory=lambda profile=None: clients[profile],
+                background=self.background.append,
+                also_read_user=["founder"], also_read=["private"]))
+        self.assertLessEqual(now[0] - 100.0, hooks.NETWORK_TIMEOUT)
+        # the repository's read had all the time; the user_id's read what was left
+        self.assertEqual(shared.allowed, [hooks.NETWORK_TIMEOUT, 3.0])
+        # nothing left for the profile: not begun, and the others still go
+        self.assertEqual(private.allowed, [])
+        text = out["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("shared fact", text)
+
     def test_a_profile_that_fails_leaves_the_rest(self):
         def factory(profile=None):
             if profile:

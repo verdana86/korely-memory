@@ -66,6 +66,13 @@ EXTRA_BUDGET = 700
 # without saying so (a closed terminal): the next session start sends it.
 STALE_SECONDS = 2 * 3600
 NETWORK_TIMEOUT = 8.0
+# The reads of one hook share NETWORK_TIMEOUT seconds, not one each: the
+# assistant gives the hook 10 s (TIMEOUTS), and a start that also reads a
+# user_id and a profile made three reads in turn, each allowed 8 s, so a slow
+# server kept it 24 s and Claude Code cut it off, the context of all three
+# lost. A read with less than MIN_READ left is not begun.
+MIN_READ = 1.0
+_monotonic = time.monotonic
 
 
 # ── where things live ────────────────────────────────────────────────────────
@@ -486,8 +493,16 @@ def _quiet_output(tool: str, event: str) -> str:
     return json.dumps({"continue": True}) if event == "prompt" else "{}"
 
 
-def _block(client: Any, query: str, budget: int, user_id: Optional[str], heading: str) -> str:
-    """One context block under its heading, or "" when Korely holds nothing."""
+def _block(client: Any, query: str, budget: int, user_id: Optional[str], heading: str,
+           deadline: Optional[float] = None) -> str:
+    """One context block under its heading, or "" when Korely holds nothing.
+    With a `deadline` (time.monotonic), the read may take what is left of it
+    and no more."""
+    if deadline is not None:
+        left = deadline - _monotonic()
+        if left < MIN_READ:
+            raise TimeoutError("the hook's time for reading is spent")
+        client.timeout = min(getattr(client, "timeout", left), left)
     ctx = client.get_context(query=query[:2000], user_id=user_id, token_budget=budget)
     body = (getattr(ctx, "context", "") or "").strip()
     if not body or not getattr(ctx, "sources", None):
@@ -502,23 +517,27 @@ def _context_text(client_factory: Callable[..., Any], scope: str, repo: str, que
     same project (a memory that spans repositories, e.g. `founder`), then the
     whole project of each profile in `also_read` (a private project next to
     the shared one), each block under its own heading. A block that cannot be
-    read is left out, never the rest."""
+    read is left out, never the rest. All the reads together take at most
+    NETWORK_TIMEOUT seconds (`MIN_READ`)."""
+    deadline = _monotonic() + NETWORK_TIMEOUT
     main = client_factory()
     blocks = [_block(main, query, budget, scope,
                      f"Korely memory of the repository {repo} (user_id {scope}), what earlier "
-                     f"sessions stored, whichever assistant they ran in:")]
+                     f"sessions stored, whichever assistant they ran in:", deadline)]
     for user in also_read_user:
         if user == scope:
             continue
         try:
             blocks.append(_block(main, query, EXTRA_BUDGET, user,
-                                 f"Korely memory of user_id {user} (across repositories):"))
+                                 f"Korely memory of user_id {user} (across repositories):",
+                                 deadline))
         except Exception as e:  # noqa: BLE001 - the other blocks still go
             _log(f"user_id {user}: {type(e).__name__}: {e}")
     for name in also_read:
         try:
             blocks.append(_block(client_factory(name), query, EXTRA_BUDGET, None,
-                                 f"Korely memory of the profile {name} (its whole project):"))
+                                 f"Korely memory of the profile {name} (its whole project):",
+                                 deadline))
         except Exception as e:  # noqa: BLE001 - the other blocks still go
             _log(f"profile {name}: {type(e).__name__}: {e}")
     return "\n\n".join(b for b in blocks if b)

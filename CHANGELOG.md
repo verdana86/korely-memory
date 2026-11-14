@@ -40,6 +40,19 @@ Not published to PyPI or npm yet; the version numbers are unchanged.
   `delete-account` neither. **A script that passed an id one of these
   commands never sent stops with exit 2: remove the flag.**
 
+- `korely hook session-start` and the first `prompt` (the coding
+  assistants' hooks): the reads of one hook (the repository's memory, each
+  `--also-read-user`, each `--also-read`) share the 8 seconds of
+  `NETWORK_TIMEOUT` instead of each having 8. With a slow server a start
+  with three reads kept the hook up to 24 s, past the 10 s Claude Code gives
+  it, and the whole context was lost; now the reads end within about 8 s
+  and the hook keeps what it read in time (measured on a Mac with a server
+  answering each read in 5 s, three reads: the whole hook 15.6 s before,
+  8.5 s after, with the repository's block kept). A read with less than a second left
+  is not begun, and is a line in `~/.korely/hook.log`. A single read (the
+  default install) is unchanged: it still gives up at 8 s. The timeout
+  bounds each wait for the server, not a reply that keeps arriving slowly.
+
 ### npm
 
 - `DeleteReceipt` and `AgentDeleteReceipt` type `facts_reopened`. The field
