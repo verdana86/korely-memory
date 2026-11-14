@@ -5,10 +5,12 @@ wiring + per-command guards. Run with:
     cd python && python3 -m unittest discover -s tests -v
 """
 import io
+import json
 import os
 import sys
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from unittest import mock
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -882,43 +884,66 @@ class AnIdACommandTakesIsAnIdItSends(_RunsCommands):
         self.assertEqual(self._commands(cli.build_parser()) - {("init",), ("hook",)},
                          set(self.CALLS))
 
-    def test_every_id_a_command_takes_reaches_the_server(self):
-        import json as _json
+    # The ids each command sends, as the server's routes take them: the
+    # other ids are refused. Both ways: an id a command stops sending fails
+    # here too, not only an id it takes and drops.
+    SENDS = {
+        **{(c,): {"--user-id", "--agent-id"}
+           for c in ("add", "add-fact", "batch", "search", "context", "facts", "profile", "list")},
+        **{(c,): {"--user-id"} for c in ("delete-all", "events", "audit")},
+        **{(c,): {"--agent-id"} for c in ("delete-agent", "users")},
+    }
 
+    def test_each_command_takes_the_ids_it_sends_and_refuses_the_others(self):
+        import json as _json
+        from unittest import mock
+
+        self.assertLessEqual(set(self.SENDS), set(self.CALLS))
         for words, rest in sorted(self.CALLS.items()):
             for flag in ("--user-id", "--agent-id"):
-                with self.subTest(command=" ".join(words), flag=flag):
+                sends = flag in self.SENDS.get(words, set())
+                with self.subTest(command=" ".join(words), flag=flag, sends=sends):
                     value = "zz" + flag.strip("-") + "zz"
                     argv = [*words, *rest, flag, value]
-                    rec = _Recorder()
-                    err = io.StringIO()
-                    try:
-                        with redirect_stderr(err), redirect_stdout(io.StringIO()):
-                            a = _args(argv)
-                    except SystemExit as refused:
+                    if not sends:
                         # Refused before any call ("unrecognized arguments",
                         # or, under `projects`/`keys`, not an action).
-                        self.assertEqual(refused.code, 2)
-                        self.assertIn(value, err.getvalue())
+                        with self.assertRaises(SystemExit) as refused:
+                            _args(argv)
+                        self.assertEqual(refused.exception.code, 2)
+                        self.assertIn(value, refused.exception.message)
                         continue
-                    stdin = '[{"content": "c"}]' if words == ("batch",) else None
-                    from unittest import mock
-
+                    rec = _Recorder()
+                    a = _args(argv)
+                    stdin = '[{"content": "c"}]' if words == ("batch",) else ""
                     with redirect_stderr(io.StringIO()), redirect_stdout(io.StringIO()), \
-                            mock.patch.object(sys, "stdin", io.StringIO(stdin or "")):
+                            mock.patch.object(sys, "stdin", io.StringIO(stdin)):
                         a.func(_client(rec), a)
                     self.assertIn(value, _json.dumps(rec.calls),
-                                  f"{' '.join(argv)} took {flag} and did not send it")
+                                  f"{' '.join(argv)} did not send {flag}")
 
     def test_a_deletion_with_an_id_it_cannot_honour_deletes_nothing(self):
         for argv in (["delete-all", "--user-id", "alex", "--agent-id", "bot", "--yes"],
                      ["delete-agent", "--agent-id", "bot", "--user-id", "alex", "--yes"]):
             with self.subTest(argv=argv):
                 err = io.StringIO()
-                with redirect_stderr(err), self.assertRaises(SystemExit) as refused:
-                    cli.main(argv)
-                self.assertEqual(refused.exception.code, 2)
-                self.assertIn("unrecognized arguments", err.getvalue())
+                with redirect_stderr(err), mock.patch.object(cli, "Korely") as made:
+                    rc = cli.main(argv)
+                self.assertEqual(rc, 2)
+                self.assertEqual(made.call_count, 0)
+                self.assertIn("usage: korely", err.getvalue())
+                self.assertIn("error: unrecognized arguments", err.getvalue())
+
+    def test_with_json_a_refused_command_line_is_a_json_error(self):
+        err = io.StringIO()
+        with redirect_stderr(err), mock.patch.object(cli, "Korely") as made:
+            rc = cli.main(["delete-all", "--user-id", "alex", "--agent-id", "bot", "--yes",
+                           "--json"])
+        self.assertEqual((rc, made.call_count), (2, 0))
+        error = json.loads(err.getvalue())
+        self.assertEqual(error["code"], "invalid_arguments")
+        self.assertIn("unrecognized arguments: --agent-id bot", error["message"])
+        self.assertIsNone(error["status"])
 
     def test_delete_all_says_it_takes_every_agent(self):
         out = io.StringIO()

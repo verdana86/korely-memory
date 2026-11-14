@@ -1256,8 +1256,26 @@ def cmd_keys(k: Korely, a) -> int:
 
 
 # ── parser ──────────────────────────────────────────────────────────────────
+class _Refused(SystemExit):
+    """A command line the parser refuses: exit 2, as argparse exits, with
+    what argparse would have printed kept, so that `main` says it as text or,
+    with --json, as the JSON error every other refusal is."""
+
+    def __init__(self, prog: str, usage: str, message: str):
+        super().__init__(2)
+        self.prog, self.usage, self.message = prog, usage, message
+
+
+class _Parser(argparse.ArgumentParser):
+    """argparse, whose refusals `main` prints (`_Refused`). Its subcommands
+    are made of this class too (add_subparsers takes the parser's type)."""
+
+    def error(self, message: str):
+        raise _Refused(self.prog, self.format_usage(), message)
+
+
 def build_parser() -> argparse.ArgumentParser:
-    p = argparse.ArgumentParser(
+    p = _Parser(
         prog="korely",
         description="Memory for AI agents: bi-temporal typed facts, semantic retrieval.",
         epilog="Set KORELY_API_KEY (kor_live_...). Docs: https://korely.ai/agents/docs",
@@ -1587,7 +1605,20 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main(argv=None) -> int:
-    args = build_parser().parse_args(argv)
+    try:
+        args = build_parser().parse_args(argv)
+    except _Refused as refused:
+        # With --json a refused command line is the JSON error the README
+        # promises (an argparse text until now), with its own code.
+        given = sys.argv[1:] if argv is None else list(argv)
+        if "--json" in given:
+            print(json.dumps({"code": "invalid_arguments",
+                              "message": f"{refused.prog}: {refused.message}",
+                              "status": None}, ensure_ascii=False), file=sys.stderr)
+        else:
+            sys.stderr.write(refused.usage)
+            print(f"{refused.prog}: error: {refused.message}", file=sys.stderr)
+        return 2
     # `init` is the one command that runs WITHOUT a key: it mints one.
     if getattr(args, "command", None) == "init":
         try:

@@ -256,7 +256,8 @@ own.
 `pip install korely-memory` also installs `korely`, one command per API call,
 reading the key from `KORELY_API_KEY` or from the file `korely init` saved.
 Every command takes `--json` (the API's own shape; an error is a JSON object on
-stderr), `--api-key` and `--base-url`; `--user-id` and `--agent-id` scope the
+stderr, `{"code": "invalid_arguments", ...}` for a command line it refuses),
+`--api-key` and `--base-url`; `--user-id` and `--agent-id` scope the
 ones that read or write memories.
 
 A write (`add`, `add-fact`, `batch`) says whose memory it is. Say it once and

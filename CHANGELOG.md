@@ -10,7 +10,10 @@ and a batch `timestamp` is refused there with a 422.
 
 ## Unreleased
 
-Not published to PyPI or npm yet; the version numbers are unchanged.
+Not published to PyPI or npm yet; the version numbers are unchanged. **The
+next Python release must be a minor version (0.2.0 after 0.1.29), not a
+patch:** a CLI script that passed an id a command never sent now stops with
+exit 2 (below).
 
 ### Python
 
@@ -37,7 +40,11 @@ Not published to PyPI or npm yet; the version numbers are unchanged.
   and `auth`, `ping`, `update`, `get`, `history`, `delete`, `correct-fact`,
   `forget-fact`, `agents`, `batch-status`, `projects`, `keys` and
   `delete-account` neither. **A script that passed an id one of these
-  commands never sent stops with exit 2: remove the flag.**
+  commands never sent stops with exit 2: remove the flag.** With `--json`,
+  a command line the CLI refuses (this one, or any other) is now the JSON
+  error the README promises, on stderr with exit 2:
+  `{"code": "invalid_arguments", "message": "korely: unrecognized arguments:
+  --agent-id A", "status": null}`; it was argparse's text.
 - `korely hook session-start` and the first `prompt` (the coding
   assistants' hooks): the reads of one hook (the repository's memory, each
   `--also-read-user`, each `--also-read`) share the 8 seconds of
