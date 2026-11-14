@@ -1209,20 +1209,26 @@ class DeleteAccountForgetsTheDeadKey(_CleanEnv, _RunsCommands):
         self.assertEqual(rc, 2)
         self.assertIn("--yes", err)
 
+    _ACCOUNT = "3f1c9a52-7b1e-4d4a-9c2e-0b6f5d8e1a77"
+
+    def _whoami(self):
+        return _Recorder().queue(200, {"kind": "api_key", "tenant_id": self._ACCOUNT})
+
     def test_the_account_goes_and_so_does_the_saved_key(self):
         self._save("kor_live_test")
-        rec = _Recorder().queue(200, {"deleted": True,
-                                      "removed": {"memories": 12, "facts": 30, "keys": 1}})
+        rec = self._whoami().queue(200, {"deleted": True,
+                                         "removed": {"memories": 12, "facts": 30, "keys": 1}})
         rc, out = self._run(rec, ["delete-account", "--yes"])
         self.assertEqual(rc, 0)
+        self.assertEqual(rec.calls[0]["path"], "/admin/whoami")
         self.assertEqual((rec.last["method"], rec.last["path"], rec.last["params"]),
-                         ("DELETE", "/v1/account", {"confirm": "true"}))
+                         ("DELETE", "/v1/account", {"confirm": self._ACCOUNT}))
         self.assertIn("removed: 12 memories, 30 facts, 1 keys", out)
         self.assertEqual(self._config(), {"base_url": "https://api.korely.ai"})
 
     def test_a_different_saved_key_is_left_alone(self):
         self._save("kor_live_another_key")
-        rec = _Recorder().queue(200, {"deleted": True, "removed": {}})
+        rec = self._whoami().queue(200, {"deleted": True, "removed": {}})
         rc, data = self._run(rec, ["delete-account", "--yes", "--json"])
         self.assertEqual(data, {"deleted": True, "removed": {}})
         self.assertEqual(self._config()["api_key"], "kor_live_another_key")
@@ -1231,14 +1237,37 @@ class DeleteAccountForgetsTheDeadKey(_CleanEnv, _RunsCommands):
         from unittest import mock
 
         self._save("kor_live_test")
-        rec = _Recorder().queue(409, {"code": "account_has_login",
-                                      "message": "This key belongs to an account with a Korely login."})
+        rec = self._whoami().queue(409, {
+            "code": "account_has_login",
+            "message": "This key belongs to an account with a Korely login."})
         err = io.StringIO()
         with mock.patch.object(cli, "Korely", side_effect=lambda **kw: _client(rec)), \
                 redirect_stderr(err), redirect_stdout(io.StringIO()):
             rc = cli.main(["delete-account", "--yes"])
         self.assertEqual(rc, 1)
         self.assertIn("[account_has_login]", err.getvalue())
+        self.assertEqual(self._config()["api_key"], "kor_live_test")
+
+    def test_a_server_before_1_0_23_is_told_to_upgrade_and_the_key_stays(self):
+        # It reads `confirm` as a boolean: the id is a 422 of validation.
+        self._save("kor_live_test")
+        rec = self._whoami().queue(422, {
+            "detail": [{"type": "bool_parsing", "loc": ["query", "confirm"],
+                        "msg": "Input should be a valid boolean"}],
+            "code": "invalid_request", "message": "query.confirm: Input should be a valid boolean"})
+        for argv, shown in ((["delete-account", "--yes"], "[server_too_old]"),
+                            (["delete-account", "--yes", "--json"], '"code": "server_too_old"')):
+            err = io.StringIO()
+            with mock.patch.object(cli, "Korely", side_effect=lambda **kw: _client(rec)), \
+                    redirect_stderr(err), redirect_stdout(io.StringIO()):
+                rc = cli.main(argv)
+            self.assertEqual(rc, 1)
+            self.assertIn(shown, err.getvalue())
+            self.assertIn("1.0.23", err.getvalue())
+            rec.queue(200, {"kind": "api_key", "tenant_id": self._ACCOUNT}).queue(
+                422, {"code": "invalid_request", "message": "query.confirm"})
+        self.assertEqual([c["params"] for c in rec.calls if c["method"] == "DELETE"],
+                         [{"confirm": self._ACCOUNT}] * 2)
         self.assertEqual(self._config()["api_key"], "kor_live_test")
 
 

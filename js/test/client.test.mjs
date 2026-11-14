@@ -820,8 +820,45 @@ test("iterAudit() keeps an until given, resumes at an offset, stops on an empty 
   ]);
 });
 
-test("deleteAccount() needs { confirm: true } before anything leaves, then DELETE /v1/account?confirm=true", async () => {
-  for (const opts of [undefined, {}, { confirm: false }, { confirm: "yes" }, { confirm: 1 }]) {
+// DELETE /v1/account and GET /admin/whoami as a server answers them. "id":
+// Korely 1.0.23 and later, ?confirm= must be the account's id. "flag": before
+// 1.0.23, `confirm` is a boolean query parameter, so the id is a 422 of
+// validation and `true` deletes.
+const ACCOUNT = "3f1c9a52-7b1e-4d4a-9c2e-0b6f5d8e1a77";
+function fakeCloud(confirmsWith) {
+  const state = { calls: [], deleted: false };
+  const reply = (status, body) => ({
+    ok: status >= 200 && status < 300, status,
+    async text() { return JSON.stringify(body); },
+    headers: { get: () => null },
+  });
+  state.fetch = async (url, init) => {
+    const u = new URL(url);
+    state.calls.push([init.method, u.pathname, Object.fromEntries(u.searchParams)]);
+    if (init.method === "GET" && u.pathname === "/admin/whoami") {
+      return reply(200, { kind: "api_key", name: "api key", tenant_id: ACCOUNT });
+    }
+    const confirm = u.searchParams.get("confirm");
+    let ok;
+    if (confirmsWith === "id") {
+      ok = confirm === ACCOUNT;
+    } else {
+      const words = { true: true, 1: true, yes: true, on: true, false: false, 0: false, no: false, off: false };
+      if (confirm !== null && !(confirm.toLowerCase() in words)) {
+        return reply(422, { detail: [{ type: "bool_parsing", loc: ["query", "confirm"], msg: "Input should be a valid boolean" }],
+                            code: "invalid_request", message: "query.confirm: Input should be a valid boolean" });
+      }
+      ok = words[(confirm ?? "false").toLowerCase()];
+    }
+    if (!ok) return reply(400, { code: "confirmation_required", message: "Send ?confirm=..." });
+    state.deleted = true;
+    return reply(200, { deleted: true, removed: { memories: 12, facts: 30, keys: 1 } });
+  };
+  return state;
+}
+
+test("deleteAccount() needs { confirm: true } before anything leaves", async () => {
+  for (const opts of [undefined, {}, { confirm: false }, { confirm: "yes" }, { confirm: 1 }, { confirm: ACCOUNT }]) {
     const { k, f } = client([]);
     await assert.rejects(() => k.deleteAccount(opts), (e) => {
       assert.ok(e instanceof KorelyError);
@@ -831,21 +868,55 @@ test("deleteAccount() needs { confirm: true } before anything leaves, then DELET
     });
     assert.equal(f.calls.length, 0);
   }
+});
+
+test("deleteAccount() names the account with the id GET /admin/whoami gives (Korely 1.0.23)", async () => {
+  const cloud = fakeCloud("id");
+  const k = new Korely({ apiKey: "kor_live_test", fetch: cloud.fetch });
+  const r = await k.deleteAccount({ confirm: true });
+  assert.deepEqual(cloud.calls, [["GET", "/admin/whoami", {}], ["DELETE", "/v1/account", { confirm: ACCOUNT }]]);
+  assert.equal(cloud.deleted, true);
+  assert.deepEqual(r, { deleted: true, removed: { memories: 12, facts: 30, keys: 1 } });
+});
+
+test("deleteAccount() tells a server before 1.0.23 to upgrade, and never sends it the flag", async () => {
+  const cloud = fakeCloud("flag");
+  const k = new Korely({ apiKey: "kor_live_test", fetch: cloud.fetch });
+  await assert.rejects(() => k.deleteAccount({ confirm: true }), (e) => {
+    assert.ok(e instanceof APIError);
+    assert.equal(e.status, 422);
+    assert.equal(e.code, "server_too_old");
+    for (const words of ["1.0.23", "korely-memory 0.1.18", "Nothing was deleted"]) assert.ok(e.message.includes(words), words);
+    return true;
+  });
+  assert.equal(cloud.deleted, false);
+  assert.deepEqual(cloud.calls.filter((c) => c[0] === "DELETE").map((c) => c[2]), [{ confirm: ACCOUNT }]);
+});
+
+test("deleteAccount(): no account id, a conflict, the server's refusal, the Self-hosted", async () => {
+  const whoami = { status: 200, body: { kind: "api_key", tenant_id: ACCOUNT } };
   const { k, f } = client([
-    { status: 200, body: { deleted: true, removed: { memories: 12, facts: 30, keys: 1 } } },
+    { status: 200, body: { kind: "api_key", name: "api key" } },
+    whoami,
     { status: 409, body: { code: "account_has_login", message: "This key belongs to an account with a Korely login." } },
+    whoami,
+    { status: 400, body: { code: "confirmation_required", message: "Send ?confirm=<this account's id>." } },
+    { status: 403, body: { code: "forbidden", message: "needs the admin scope" } },
+    whoami,
     { status: 405, body: { detail: "Method Not Allowed", code: "method_not_allowed", message: "Method Not Allowed" } },
   ]);
-  const r = await k.deleteAccount({ confirm: true });
-  assert.equal(f.calls[0].init.method, "DELETE");
-  assert.equal(f.calls[0].url, "https://api.test/v1/account?confirm=true");
-  assert.deepEqual(r, { deleted: true, removed: { memories: 12, facts: 30, keys: 1 } });
+  await assert.rejects(() => k.deleteAccount({ confirm: true }), (e) => !(e instanceof APIError) && e.code === "confirmation_required");
+  assert.equal(f.calls.length, 1);
   await assert.rejects(() => k.deleteAccount({ confirm: true }), (e) => {
     assert.ok(e instanceof ConflictError);
     assert.ok(!(e instanceof StaleWriteError));
     assert.equal(e.code, "account_has_login");
     return true;
   });
+  await assert.rejects(() => k.deleteAccount({ confirm: true }), (e) => e instanceof APIError && e.status === 400 && e.code === "confirmation_required");
+  // A key that may not read its account: nothing goes.
+  await assert.rejects(() => k.deleteAccount({ confirm: true }), (e) => e instanceof APIError && e.status === 403);
+  assert.equal(f.calls.filter((c) => c.init.method === "DELETE").length, 2);
   // The Self-hosted has no such route: 405 where it serves its dashboard.
   await assert.rejects(() => k.deleteAccount({ confirm: true }), (e) => e instanceof APIError && e.code === "method_not_allowed");
 });

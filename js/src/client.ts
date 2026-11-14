@@ -707,15 +707,22 @@ export class Korely {
   }
 
   /**
-   * DELETE /v1/account?confirm=true: delete the account of this key for good,
-   * with every key, project, memory, fact and webhook of it; the key stops
-   * working. Cloud only, for an account made by `Korely.initAgent()` or
-   * `korely init --agent`, which nobody signs in to: the key is the account,
-   * and this is how it is closed (GDPR Art. 17).
+   * DELETE /v1/account?confirm=<the account's id>: delete the account of this
+   * key for good, with every key, project, memory, fact and webhook of it; the
+   * key stops working. Cloud only, for an account made by `Korely.initAgent()`
+   * or `korely init --agent`, which nobody signs in to: the key is the
+   * account, and this is how it is closed (GDPR Art. 17).
    *
    * `{ confirm: true }` is required, and checked here, before anything is
    * sent: without it, a KorelyError whose `code` is `confirmation_required`,
-   * the code the server gives the same refusal.
+   * the code the server gives the same refusal. With it, the client reads the
+   * account's id (`tenant_id` of GET /admin/whoami, with the same key) and
+   * sends it as the confirmation, which Korely 1.0.23 and later require: a
+   * flag alone no longer deletes an account. A server older than 1.0.23 takes
+   * only `?confirm=true` and refuses the id (422): that rejects with an
+   * APIError whose `code` is `server_too_old`, nothing is deleted, and the
+   * client does not fall back to the flag. Upgrade the server, or use
+   * korely-memory 0.1.18.
    *
    * An account with a Korely login rejects with 409 `account_has_login`
    * (ConflictError): a key that ended up in a log must not be able to delete
@@ -732,7 +739,34 @@ export class Korely {
         { code: "confirmation_required" },
       );
     }
-    return this.request("DELETE", "/v1/account", { params: { confirm: "true" } });
+    // Korely 1.0.23: the deletion names the account it deletes, so a key that
+    // leaked, or a script pointed at the wrong key, is not enough with a flag.
+    // The person says yes ({ confirm: true }); the client adds the id the
+    // server gives the same key.
+    const who: { tenant_id?: unknown } | undefined = await this.request("GET", "/admin/whoami");
+    const account = typeof who?.tenant_id === "string" ? who.tenant_id.trim() : "";
+    if (!account) {
+      throw new KorelyError("GET /admin/whoami named no account for this key: nothing was deleted.",
+        { code: "confirmation_required" });
+    }
+    try {
+      return await this.request("DELETE", "/v1/account", { params: { confirm: account } });
+    } catch (e) {
+      // Only a server before 1.0.23 refuses the id itself: it reads `confirm`
+      // as a boolean (422 of validation). Sending the flag instead would undo
+      // the check, so the error says what to do.
+      if (e instanceof APIError && e.status === 422) {
+        throw new APIError(
+          "This server is older than Korely 1.0.23: it deletes an account with " +
+            "?confirm=true, and this client confirms with the account's id and does not " +
+            "fall back to the flag. Nothing was deleted. Upgrade the server to 1.0.23 or " +
+            "later, or delete the account with korely-memory 0.1.18 " +
+            "(npm install korely-memory@0.1.18).",
+          { status: 422, code: "server_too_old" },
+        );
+      }
+      throw e;
+    }
   }
 
   // ── audit ─────────────────────────────────────────────────────────────────

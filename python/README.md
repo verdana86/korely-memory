@@ -94,8 +94,13 @@ calls. Cloud only: a Self-hosted install mints its keys in its own dashboard.
 every key, memory and fact of it. It is for an account `korely init --agent`
 made, which nobody signs in to; one with a Korely login answers
 `ConflictError` (`account_has_login`) and is closed from the app. Without
-`confirm=True` nothing is sent. Cloud only: the Self-hosted answers 404 (405
-where it serves its dashboard).
+`confirm=True` nothing is sent. With it, the client reads the account's id
+(`tenant_id` of `GET /admin/whoami`, same key) and sends it as the
+confirmation Korely 1.0.23 and later require. A server older than 1.0.23
+takes only `?confirm=true`: the client does not fall back to it, deletes
+nothing and raises `APIError` with the code `server_too_old` (upgrade the
+server, or use korely-memory 0.1.29). Cloud only: the Self-hosted answers 404
+(405 where it serves its dashboard).
 
 `audit()` reads the trail of the key's project, newest first: who acted
 (`actor`), what (`action`: `read`, `write`, `fact_write`, `fact_invalidate`,
@@ -319,7 +324,9 @@ memory. `--offset` resumes an export that stopped (pass the same `--until`).
 
 `korely delete-account --yes` closes the account of an `init --agent` key and
 removes that key from `~/.korely/config.json`, so the next `korely init` can
-save a new one.
+save a new one. Like `delete_account()`, it names the account with its id, and
+against a server older than Korely 1.0.23 it stops with `server_too_old`,
+nothing deleted and the key kept.
 
 ## LangGraph
 

@@ -13,7 +13,8 @@ and a batch `timestamp` is refused there with a 422.
 Not published to PyPI or npm yet; the version numbers are unchanged. **The
 next Python release must be a minor version (0.2.0 after 0.1.29), not a
 patch:** a CLI script that passed an id a command never sent now stops with
-exit 2 (below).
+exit 2, and `delete_account()` no longer works against a server older than
+Korely 1.0.23 (below).
 
 ### Python
 
@@ -79,6 +80,20 @@ exit 2 (below).
   pieces under 24 characters, some base64 with `/`, URL-encoded keys. The
   limit of five failed sends stays: after the fifth the turns are dropped
   with a line in `~/.korely/hook.log`; the README now says so.
+- `delete_account(confirm=True)` (and `AsyncKorely`'s, and `korely
+  delete-account --yes`) names the account it deletes, as Korely 1.0.23
+  requires: it reads the account's id (`tenant_id` of `GET /admin/whoami`,
+  with the same key) and sends `DELETE /v1/account?confirm=<that id>`. A
+  flag no longer deletes an account on 1.0.23, so that a key that leaked,
+  or a script pointed at the wrong key, is not enough. The person still
+  says yes (`confirm=True`, `--yes`); nothing is sent without it. A server
+  older than 1.0.23 takes only `?confirm=true` and refuses the id with a
+  422: the client does not fall back to the flag, deletes nothing and
+  raises `APIError` with `status` 422 and `code` `server_too_old`, whose
+  message says to upgrade the server or to delete the account with
+  korely-memory 0.1.29 (the CLI exits 1 with `[server_too_old]` and keeps
+  the key in `~/.korely/config.json`). A key that cannot read
+  `/admin/whoami` (403) or an answer with no `tenant_id` deletes nothing.
 - The examples in the package's docstrings (`import korely_memory`,
   `Korely`) name the end user in their write:
   `korely.add("User prefers TypeScript", user_id="dana",
@@ -107,6 +122,13 @@ exit 2 (below).
   built-ins out when it bundles for a browser; others are not tested.
   `require()` worked before and works the same. Checked in Docker on Node
   18.20.8.
+- `deleteAccount({ confirm: true })` names the account it deletes, as
+  Korely 1.0.23 requires: it reads the account's id (`tenant_id` of
+  `GET /admin/whoami`) and sends `DELETE /v1/account?confirm=<that id>`.
+  Against a server older than 1.0.23, which takes only `?confirm=true`, it
+  does not fall back to the flag: nothing is deleted and it rejects with an
+  `APIError` (`status` 422, `code` `server_too_old`) saying to upgrade the
+  server or to use korely-memory 0.1.18.
 - The example at the top of the client names the end user in its write
   (`{ user_id: "dana", agent_id: "coding-assistant" }`), as the README's do;
   a test runs the examples of `index.ts` and `client.ts` and checks every

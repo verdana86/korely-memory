@@ -1748,13 +1748,56 @@ class ExportingTheAuditTrail(unittest.TestCase):
         self.assertEqual(rec.calls[1]["params"]["until"], "2026-10-06T10:00:00Z")
 
 
+class FakeCloud:
+    """DELETE /v1/account and GET /admin/whoami as a server answers them, at
+    the client's transport seam. `confirms_with` "id": Korely 1.0.23 and
+    later, ``?confirm=`` must be the account's id. "flag": before 1.0.23,
+    ``confirm`` is a boolean query parameter (FastAPI), so the id is a 422 of
+    validation and ``true`` deletes."""
+
+    ACCOUNT = "3f1c9a52-7b1e-4d4a-9c2e-0b6f5d8e1a77"
+
+    def __init__(self, confirms_with: str):
+        self.confirms_with, self.calls, self.deleted = confirms_with, [], False
+
+    def __call__(self, method, path, *, params=None, json_body=None):
+        self.calls.append((method, path, dict(params or {})))
+        if (method, path) == ("GET", "/admin/whoami"):
+            return 200, {"kind": "api_key", "name": "api key", "tenant_id": self.ACCOUNT}
+        if (method, path) != ("DELETE", "/v1/account"):
+            return 404, {"code": "not_found", "message": "Not Found"}
+        confirm = (params or {}).get("confirm")
+        if self.confirms_with == "id":
+            ok = confirm == self.ACCOUNT
+        else:
+            words = {"true": True, "1": True, "yes": True, "on": True,
+                     "false": False, "0": False, "no": False, "off": False}
+            if confirm is not None and str(confirm).lower() not in words:
+                return 422, {"detail": [{"type": "bool_parsing", "loc": ["query", "confirm"],
+                                         "msg": "Input should be a valid boolean"}],
+                             "code": "invalid_request",
+                             "message": "query.confirm: Input should be a valid boolean"}
+            ok = words.get(str(confirm).lower(), False)
+        if not ok:
+            return 400, {"code": "confirmation_required", "message": "Send ?confirm=..."}
+        self.deleted = True
+        return 200, {"deleted": True, "removed": {"memories": 12, "facts": 30, "keys": 1}}
+
+
 class DeletingTheAccountOfAKey(unittest.TestCase):
-    """DELETE /v1/account?confirm=true (Cloud only, GordonPro
-    app/api/v1_account.py): an account made by `korely init --agent` has no
-    login, its key is the account, and this is how it is closed."""
+    """DELETE /v1/account (Cloud only): an account made by `korely init
+    --agent` has no login, its key is the account, and this is how it is
+    closed. Since Korely 1.0.23 the deletion names the account: ``?confirm=``
+    is the account's id, which the client reads with GET /admin/whoami."""
+
+    def _client(self, cloud):
+        k = Korely(api_key="kor_live_test")
+        k._send = cloud
+        return k
 
     def test_nothing_leaves_without_confirm_true(self):
-        for kw in ({}, {"confirm": False}, {"confirm": "yes"}, {"confirm": 1}):
+        for kw in ({}, {"confirm": False}, {"confirm": "yes"}, {"confirm": 1},
+                   {"confirm": FakeCloud.ACCOUNT}):
             with self.subTest(**{k: repr(v) for k, v in kw.items()}):
                 rec = _Recorder()
                 with self.assertRaises(KorelyError) as caught:
@@ -1763,46 +1806,86 @@ class DeletingTheAccountOfAKey(unittest.TestCase):
                 self.assertEqual(caught.exception.code, "confirmation_required")
                 self.assertEqual(rec.calls, [])
 
-    def test_the_request_and_the_receipt(self):
+    def test_the_account_is_named_with_the_id_whoami_gives(self):
         from korely_memory import AccountDeleteReceipt
 
-        rec = _Recorder().queue(200, {"deleted": True,
-                                      "removed": {"memories": 12, "facts": 30, "keys": 1}})
-        r = _client(rec).delete_account(confirm=True)
-        self.assertEqual((rec.last["method"], rec.last["path"]), ("DELETE", "/v1/account"))
-        self.assertEqual(rec.last["params"], {"confirm": "true"})
-        self.assertIsNone(rec.last["json"])
+        cloud = FakeCloud("id")
+        r = self._client(cloud).delete_account(confirm=True)
+        self.assertEqual(cloud.calls, [("GET", "/admin/whoami", {}),
+                                       ("DELETE", "/v1/account", {"confirm": FakeCloud.ACCOUNT})])
+        self.assertTrue(cloud.deleted)
         self.assertIsInstance(r, AccountDeleteReceipt)
         self.assertIs(r.deleted, True)
         self.assertEqual(r.removed, {"memories": 12, "facts": 30, "keys": 1})
 
+    def test_a_server_before_1_0_23_is_told_to_upgrade_never_sent_the_flag(self):
+        """It would delete with ?confirm=true; the client never sends it."""
+        import asyncio
+
+        from korely_memory import AsyncKorely
+
+        cloud = FakeCloud("flag")
+        with self.assertRaises(APIError) as caught:
+            self._client(cloud).delete_account(confirm=True)
+        e = caught.exception
+        self.assertEqual((e.status, e.code), (422, "server_too_old"))
+        for words in ("1.0.23", "korely-memory 0.1.29", "Nothing was deleted"):
+            self.assertIn(words, str(e))
+        self.assertFalse(cloud.deleted)
+        self.assertEqual([c[2] for c in cloud.calls if c[0] == "DELETE"],
+                         [{"confirm": FakeCloud.ACCOUNT}])
+        ak = AsyncKorely(api_key="kor_live_test")
+        ak._sync._send = cloud = FakeCloud("flag")
+        with self.assertRaises(APIError) as caught:
+            asyncio.run(ak.delete_account(confirm=True))
+        self.assertEqual(caught.exception.code, "server_too_old")
+        self.assertFalse(cloud.deleted)
+
+    def test_no_account_id_no_deletion(self):
+        rec = _Recorder().queue(200, {"kind": "api_key", "name": "api key"})
+        with self.assertRaises(KorelyError) as caught:
+            _client(rec).delete_account(confirm=True)
+        self.assertEqual(caught.exception.code, "confirmation_required")
+        self.assertEqual([c["path"] for c in rec.calls], ["/admin/whoami"])
+
+    def test_a_key_that_may_not_read_its_account_deletes_nothing(self):
+        rec = _Recorder().queue(403, {"code": "forbidden", "message": "needs the admin scope"})
+        with self.assertRaises(APIError) as caught:
+            _client(rec).delete_account(confirm=True)
+        self.assertEqual(caught.exception.status, 403)
+        self.assertEqual([c["path"] for c in rec.calls], ["/admin/whoami"])
+
+    _WHOAMI = (200, {"kind": "api_key", "name": "api key", "tenant_id": FakeCloud.ACCOUNT})
+
     def test_an_account_with_a_login_is_a_conflict(self):
         from korely_memory import ConflictError
 
-        rec = _Recorder().queue(409, {"code": "account_has_login",
-                                      "message": "This key belongs to an account with a Korely login."})
+        rec = _Recorder().queue(*self._WHOAMI).queue(409, {
+            "code": "account_has_login",
+            "message": "This key belongs to an account with a Korely login."})
         with self.assertRaises(ConflictError) as caught:
             _client(rec).delete_account(confirm=True)
         self.assertNotIsInstance(caught.exception, StaleWriteError)
         self.assertEqual(caught.exception.code, "account_has_login")
 
     def test_the_server_s_own_refusal_keeps_its_code(self):
-        rec = _Recorder().queue(400, {"code": "confirmation_required",
-                                      "message": "Add ?confirm=true."})
+        rec = _Recorder().queue(*self._WHOAMI).queue(400, {
+            "code": "confirmation_required", "message": "Send ?confirm=<this account's id>."})
         with self.assertRaises(APIError) as caught:
             _client(rec).delete_account(confirm=True)
         self.assertEqual((caught.exception.status, caught.exception.code),
                          (400, "confirmation_required"))
 
     def test_the_self_hosted_has_no_such_route(self):
-        """404, or 405 where it serves its dashboard (its GET catch-all
-        matches the path for another method)."""
+        """No account to read and no route to delete it: 404 (405 where it
+        serves its dashboard), before anything is deleted."""
         rec = _Recorder().queue(404, {"detail": "Not Found", "code": "not_found",
                                       "message": "Not Found"})
         with self.assertRaises(NotFoundError):
             _client(rec).delete_account(confirm=True)
-        rec.queue(405, {"detail": "Method Not Allowed", "code": "method_not_allowed",
-                        "message": "Method Not Allowed"})
+        rec.queue(*self._WHOAMI).queue(405, {"detail": "Method Not Allowed",
+                                             "code": "method_not_allowed",
+                                             "message": "Method Not Allowed"})
         with self.assertRaises(APIError) as caught:
             _client(rec).delete_account(confirm=True)
         self.assertEqual(caught.exception.code, "method_not_allowed")
