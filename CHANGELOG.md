@@ -47,8 +47,8 @@ Not published to PyPI or npm yet; the version numbers are unchanged.
   and the hook keeps what it read in time (measured on a Mac with a server
   answering each read in 5 s, three reads: the whole hook 15.6 s before,
   8.5 s after, with the repository's block kept). A read with less than a
-  second left is not begun, and is a line in `~/.korely/hook.log`. A single read (the
-  default install) is unchanged: it still gives up at 8 s. The timeout
+  second left is not begun, and is a line in `~/.korely/hook.log`. A single
+  read (the default install) is unchanged: it still gives up at 8 s. The timeout
   bounds each wait for the server, not a reply that keeps arriving slowly.
 - `korely hook` masks keys made of hex digits alone before a session
   leaves the machine, as it masks the mixed-case ones: a run of 24 or more
