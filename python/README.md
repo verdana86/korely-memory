@@ -73,7 +73,7 @@ Every method wraps exactly one REST endpoint.
 | `batch(memories)` | `POST /v1/batch` |
 | `batch_status(job_id)` | `GET /v1/batch/:id` |
 | `ping()` | `GET /v1/ping` |
-| `delete_account(*, confirm=True)` | `DELETE /v1/account` (Cloud only) |
+| `delete_account(*, confirm="<account id>")` | `DELETE /v1/account` (Cloud only) |
 | `Korely.init_agent(agent_caller=None, *, base_url=, …)` | `POST /v1/agents/init`, no key (Cloud only) |
 | `audit(*, user_id=, action=, since=, until=, limit=, offset=)` | `GET /v1/audit` |
 | `iter_audit(*, user_id=, action=, since=, until=, page_size=, offset=)` | `GET /v1/audit`, every page |
@@ -90,20 +90,29 @@ it is a class method: the answer carries the key once (`repr()` leaves it
 out), then `Korely(api_key=result.api_key)`. It is what `korely init --agent`
 calls. Cloud only: a Self-hosted install mints its keys in its own dashboard.
 
-`delete_account(confirm=True)` deletes the account of the key, for good, with
-every key, memory and fact of it. It is for an account `korely init --agent`
-made, which nobody signs in to; one with a Korely login answers
-`ConflictError` (`account_has_login`) and is closed from the app. Without
-`confirm=True` nothing is sent. With it, the client reads the account's id
-(`tenant_id` of `GET /admin/whoami`, same key) and sends it as the
-confirmation Korely 1.0.23 and later require. A server older than 1.0.23
-takes only `?confirm=true`: the client does not fall back to it, deletes
-nothing and raises `APIError` with the code `server_too_old` (upgrade the
-server, or use korely-memory 0.1.29). A 403 at `GET /admin/whoami` (a key
-without the `admin` scope) or an answer with no `tenant_id` deletes nothing.
-Cloud only: the Self-hosted, which has no such route, stops at that 403 for a
-key without the `admin` scope, else answers 404 (405 where it serves its
-dashboard).
+`delete_account(confirm="<account id>")` deletes the account of the key, for
+good, with every key, memory and fact of it. It is for an account `korely init
+--agent` made, which nobody signs in to; one with a Korely login answers
+`ConflictError` (`account_has_login`) and is closed from the app. `confirm` is
+the account's id, typed (`tenant_id` of `GET /admin/whoami`), as the dashboard
+has the email typed: the DELETE is sent only when it is a UUID equal, spaces
+stripped, to the id `GET /admin/whoami` gives the same key. Missing, `True`,
+`"true"` or another id: nothing is sent but that GET, and it raises
+`KorelyError` with the code `confirmation_required`, whose message names the
+id to type. Only the server's answer `deleted: true` is a deletion; a redirect
+or a 2xx without it raises, and the account may still be there. A server
+older than 1.0.23 takes only `?confirm=true`: the client does not fall back to
+it, deletes nothing and raises `APIError` with the code `server_too_old`
+(upgrade the server, or use korely-memory 0.1.29). A 403 at `GET
+/admin/whoami` (a key without the `admin` scope) deletes nothing. Cloud only:
+the Self-hosted, which has no such route, stops at that 403 for a key without
+the `admin` scope, else answers 404 (405 where it serves its dashboard).
+
+The key goes only to `base_url`: a redirect is followed without it (as a
+`GET` or `HEAD`), to another server or the same one, so a server that wants
+it after a redirect answers 401. Point `base_url` at the address the redirect
+names. A redirect urllib does not follow (of a `DELETE`, `PATCH` or `PUT`, a
+307 or 308 of a `POST`) raises `APIError` with its status.
 
 `audit()` reads the trail of the key's project, newest first: who acted
 (`actor`), what (`action`: `read`, `write`, `fact_write`, `fact_invalidate`
@@ -310,7 +319,7 @@ same refusal.
 | `korely delete-agent --agent-id A --yes` | `DELETE /v1/agents/:agent_id` |
 | `korely batch FILE` / `korely batch-status JOB` | `POST /v1/batch` / `GET /v1/batch/:id` |
 | `korely audit [--all]` | `GET /v1/audit` (`--action`, `--since`, `--until`) |
-| `korely delete-account --yes` | `DELETE /v1/account` (Cloud only) |
+| `korely delete-account --confirm ID` | `DELETE /v1/account` (Cloud only) |
 
 A command takes `--user-id` and `--agent-id` only when it sends them, and
 refuses them otherwise, before doing anything: `korely delete-all --user-id U
@@ -330,11 +339,14 @@ the batch stops before sending, naming the item.
 JSON document in the API's shape, streamed, so a long trail never sits in
 memory. `--offset` resumes an export that stopped (pass the same `--until`).
 
-`korely delete-account --yes` closes the account of an `init --agent` key and
-removes that key from `~/.korely/config.json`, so the next `korely init` can
-save a new one. Like `delete_account()`, it names the account with its id, and
-against a server older than Korely 1.0.23 it stops with `server_too_old`,
-nothing deleted and the key kept.
+`korely delete-account --confirm <account id>` closes the account of an `init
+--agent` key and removes that key from `~/.korely/config.json`, so the next
+`korely init` can save a new one. Without `--confirm`, or with another id,
+nothing is deleted and the error names the id to type (`korely
+delete-account` alone shows it); `--yes` is no longer taken. The key leaves
+the file only when the server answers `deleted: true`. Against a server older
+than Korely 1.0.23 it stops with `server_too_old`, nothing deleted and the key
+kept.
 
 ## LangGraph
 

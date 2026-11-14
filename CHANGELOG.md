@@ -11,10 +11,14 @@ and a batch `timestamp` is refused there with a 422.
 ## Unreleased
 
 Not published to PyPI or npm yet; the version numbers are unchanged. **The
-next Python release must be a minor version (0.2.0 after 0.1.29), not a
-patch:** a CLI script that passed an id a command never sent now stops with
-exit 2, and `delete_account()` no longer works against a server older than
-Korely 1.0.23 (below).
+next release of both is a minor version, not a patch: Python 0.2.0 after
+0.1.29, npm 0.2.0 after 0.1.18.** In both, deleting an account takes the
+account's id typed (`delete_account(confirm="<id>")`, `deleteAccount({
+confirm: "<id>" })`, `korely delete-account --confirm <id>`): `confirm=True`
+and `--yes` no longer delete, and no deletion works against a server older
+than Korely 1.0.23. In Python a CLI script that passed an id a command never
+sent stops with exit 2. In npm the package has a new `node` export condition
+and its `sideEffects` changed (below).
 
 ### Python
 
@@ -80,20 +84,53 @@ Korely 1.0.23 (below).
   pieces under 24 characters, some base64 with `/`, URL-encoded keys. The
   limit of five failed sends stays: after the fifth the turns are dropped
   with a line in `~/.korely/hook.log`; the README now says so.
-- `delete_account(confirm=True)` (and `AsyncKorely`'s, and `korely
-  delete-account --yes`) names the account it deletes, as Korely 1.0.23
-  requires: it reads the account's id (`tenant_id` of `GET /admin/whoami`,
-  with the same key) and sends `DELETE /v1/account?confirm=<that id>`. A
-  flag no longer deletes an account on 1.0.23, so that a key that leaked,
-  or a script pointed at the wrong key, is not enough. The person still
-  says yes (`confirm=True`, `--yes`); nothing is sent without it. A server
-  older than 1.0.23 takes only `?confirm=true` and refuses the id with a
-  422: the client does not fall back to the flag, deletes nothing and
-  raises `APIError` with `status` 422 and `code` `server_too_old`, whose
-  message says to upgrade the server or to delete the account with
-  korely-memory 0.1.29 (the CLI exits 1 with `[server_too_old]` and keeps
-  the key in `~/.korely/config.json`). A key that cannot read
-  `/admin/whoami` (403) or an answer with no `tenant_id` deletes nothing.
+- **`delete_account(confirm="<the account's id>")`** (and `AsyncKorely`'s)
+  and **`korely delete-account --confirm <the account's id>`**: the person
+  types the id of the account (`tenant_id` of `GET /admin/whoami`), as the
+  dashboard has the email typed. `confirm=True` and `--yes` no longer
+  delete. Korely 1.0.23's `DELETE /v1/account` wants the id so that a key
+  that leaked, or a script pointed at the wrong key, is not enough with a
+  flag; until now the client read the id itself and sent it, so a flag was
+  enough again. Now the client sends the DELETE only when `confirm` is a
+  UUID (8-4-4-4-12 hex digits) equal, spaces stripped, to the `tenant_id`
+  that `GET /admin/whoami` gives the same key. A missing, `True`, `"true"`,
+  non-UUID or other id sends no DELETE and raises `KorelyError` with the
+  code `confirmation_required`, whose message names the id to type
+  (`To delete account <id>, pass confirm="<id>"`; the CLI says `re-run it
+  with --confirm <id>`) when the key may read `/admin/whoami`; a key that
+  may not (403) gets that error and nothing is deleted. A `tenant_id` that
+  is not a UUID (a whoami answering `"true"`) deletes nothing. **A script
+  that ran `korely delete-account --yes` stops with exit 2
+  (`unrecognized arguments: --yes`), nothing sent: pass `--confirm <id>`;
+  `korely delete-account` alone prints the id.** A refused confirmation
+  exits 1 with `[confirmation_required]` (with `--json`, `{"code":
+  "confirmation_required", ...}` on stderr). A server older than 1.0.23
+  takes only `?confirm=true` and refuses the id with a 422: the client does
+  not fall back to the flag, deletes nothing and raises `APIError` with
+  `status` 422 and `code` `server_too_old`, whose message says to upgrade
+  the server or to delete the account with korely-memory 0.1.29 (the CLI
+  exits 1 with `[server_too_old]` and keeps the key in
+  `~/.korely/config.json`).
+- An account is counted as deleted only on the server's answer that says
+  so, `deleted: true`. A `DELETE /v1/account` answered with a redirect, or
+  with a 2xx without `deleted: true` (an empty 202 of a proxy), returned a
+  receipt, and `korely delete-account` removed the key from the config file
+  while the account still existed (already in 0.1.29). Now it is an
+  error (`APIError` with the redirect's status, or `KorelyError`), and the
+  CLI keeps the key. More generally, every call takes only a 2xx as its
+  answer: a 3xx urllib does not follow (any redirect of a DELETE, PATCH or
+  PUT, a 307 or 308 of a POST) is an `APIError` with that status, no longer
+  an empty result.
+- The key goes only to the server the client was given. urllib copies a
+  request's headers onto the request a redirect makes, so a `GET` answered
+  302 by the server sent `Authorization` to whatever host, scheme or port
+  the redirect named. The key is now sent as an unredirected header (as
+  urllib's own `HTTPBasicAuthHandler` sends it): a redirect is still
+  followed (GET and HEAD, and the POST that urllib turns into a GET), never
+  with the key, on another server or on the same one. A server that wants
+  the key after a redirect answers 401 (`AuthenticationError`); use the
+  address the redirect points to as `base_url`. Tested with two local
+  servers.
 - `audit()`'s events keep `api_key_id`, which Korely 1.0.23 sends: the key
   that made each call, by the id the dashboard's Keys page lists it with
   (never the key); None for an act with no key and from an older server.
@@ -131,15 +168,31 @@ Korely 1.0.23 (below).
   built-ins out when it bundles for a browser; others are not tested.
   `require()` worked before and works the same. Checked in Docker on Node
   18.20.8.
-- `deleteAccount({ confirm: true })` names the account it deletes, as
-  Korely 1.0.23 requires: it reads the account's id (`tenant_id` of
-  `GET /admin/whoami`) and sends `DELETE /v1/account?confirm=<that id>`.
-  Against a server older than 1.0.23, which takes only `?confirm=true`, it
-  does not fall back to the flag: nothing is deleted and it rejects with an
-  `APIError` (`status` 422, `code` `server_too_old`) saying to upgrade the
-  server or to use korely-memory 0.1.18. A key that cannot read
-  `/admin/whoami` (403, a key without the `admin` scope) or an answer with
-  no `tenant_id` deletes nothing.
+- **`deleteAccount({ confirm: "<the account's id>" })`**: the person types
+  the id of the account (`tenant_id` of `GET /admin/whoami`); `{ confirm:
+  true }` no longer deletes, and `confirm` is typed `string`, so TypeScript
+  refuses `true` at compile time. Korely 1.0.23 wants the id so that a key
+  that leaked, or a script pointed at the wrong key, is not enough with a
+  flag; until now the client read the id itself and sent it. Now the client
+  sends the DELETE only when `confirm` is a UUID (8-4-4-4-12 hex digits)
+  equal, spaces trimmed, to the `tenant_id` that `GET /admin/whoami` gives
+  the same key. A missing, `true`, `"true"`, non-UUID or other id sends no
+  DELETE and rejects with a `KorelyError` whose `code` is
+  `confirmation_required` and whose message names the id to type (`To
+  delete account <id>, pass { confirm: "<id>" }`) when the key may read
+  `/admin/whoami`; a key that may not (403) rejects with that error and
+  nothing is deleted. A `tenant_id` that is not a UUID deletes nothing. A
+  server older than 1.0.23 takes only `?confirm=true`: the client does not
+  fall back to the flag, deletes nothing and rejects with an `APIError`
+  (`status` 422, `code` `server_too_old`) saying to upgrade the server or
+  to use korely-memory 0.1.18.
+- `deleteAccount()` counts the account as deleted only on the server's
+  answer `deleted: true`: a 2xx without it (an empty 202 of a proxy, or the
+  `GET` that `fetch` turns a DELETE answered 303 into) returned it as a
+  receipt; now it rejects with a `KorelyError`. A redirect the `fetch` does
+  not follow already rejected (`APIError`). Node's `fetch` follows a
+  redirect to another origin without `Authorization`; a test with two
+  local servers keeps it so.
 - `AuditEvent` types `api_key_id` (the key that made the call, Korely
   1.0.23), and `AuditAction` names `forget`, the action 1.0.23 files a
   memory forgotten under, apart from `erase`. The fields already reached

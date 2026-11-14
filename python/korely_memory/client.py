@@ -459,7 +459,7 @@ class Korely:
         free-form label of who signed up, kept for your reference. The answer
         carries the key, shown once (save it), its ``tier``, ``region``,
         ``scopes`` and ``quotas``. The account it creates has no login: the
-        key is the account, and ``delete_account(confirm=<the account's id>)``
+        key is the account, and ``delete_account(confirm="<the account's id>")``
         closes it.
 
         ``processing_region`` chooses where the new project's memories are
