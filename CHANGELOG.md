@@ -94,6 +94,15 @@ Korely 1.0.23 (below).
   korely-memory 0.1.29 (the CLI exits 1 with `[server_too_old]` and keeps
   the key in `~/.korely/config.json`). A key that cannot read
   `/admin/whoami` (403) or an answer with no `tenant_id` deletes nothing.
+- `audit()`'s events keep `api_key_id`, which Korely 1.0.23 sends: the key
+  that made each call, by the id the dashboard's Keys page lists it with
+  (never the key); None for an act with no key and from an older server.
+  `AuditEvent` dropped it, as it drops any field it does not declare: a
+  field a later server adds is still left out, not an error. `korely audit
+  --json` carries it. The docs and `korely audit --action` name `forget`,
+  the action 1.0.23 files a memory forgotten under (its text kept), apart
+  from `erase` (gone for good) and `fact_invalidate` (a fact closed); rows
+  written before 1.0.23 keep `erase` for a forget.
 - The examples in the package's docstrings (`import korely_memory`,
   `Korely`) name the end user in their write:
   `korely.add("User prefers TypeScript", user_id="dana",
@@ -131,6 +140,11 @@ Korely 1.0.23 (below).
   server or to use korely-memory 0.1.18. A key that cannot read
   `/admin/whoami` (403, a key without the `admin` scope) or an answer with
   no `tenant_id` deletes nothing.
+- `AuditEvent` types `api_key_id` (the key that made the call, Korely
+  1.0.23), and `AuditAction` names `forget`, the action 1.0.23 files a
+  memory forgotten under, apart from `erase`. The fields already reached
+  the program at run time; a program reading `api_key_id` under `strict` did
+  not compile.
 - The example at the top of the client names the end user in its write
   (`{ user_id: "dana", agent_id: "coding-assistant" }`), as the README's do;
   a test runs the examples of `index.ts` and `client.ts` and checks every

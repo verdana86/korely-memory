@@ -389,6 +389,8 @@ export type AuditAction =
   | "write"
   | "fact_write"
   | "fact_invalidate"
+  /** A memory forgotten: out of every read, its text kept (Korely 1.0.23; filed as "erase" before). */
+  | "forget"
   | "erase"
   | "key_create"
   | "key_revoke"
@@ -417,6 +419,13 @@ export interface AuditEvent {
   ip?: string | null;
   /** On a read, what it returned; with `known_as_of` on getFacts() or getContext() (Korely Agent 0.1.26) it rebuilds what an agent knew when it decided. */
   read?: AuditRead | null;
+  /**
+   * The key that made the call, by the id the dashboard's Keys page lists it
+   * with, never the key itself. Null for an act with no key (a person signed
+   * in to the dashboard, the command line, the worker); undefined from a
+   * server older than Korely 1.0.23.
+   */
+  api_key_id?: string | null;
 }
 
 /** Iterable page of the audit trail, newest first. `total` counts the matches across every page. */

@@ -1596,6 +1596,38 @@ class TheAuditTrail(unittest.TestCase):
     korely-agent api/audit.py): the events of the key's project, newest first,
     `{events, total}`. The SDKs had no way to read it."""
 
+    # Rows as Korely 1.0.23 answers them (api/audit.py AuditRow): the key of
+    # each call, and a forget filed apart from an erasure.
+    _ROWS_1_0_23 = [
+        {"ts": "2026-11-14T15:00:00Z", "actor": "rest", "action": "forget", "result": "ok",
+         "api_key_id": "6b1d4c0e-2f3a-4e5b-8c7d-9a0b1c2d3e4f", "user_id": "maria",
+         "target_id": "mem_1", "meta": {"facts_invalidated": 1}, "ip": None, "read": None},
+        {"ts": "2026-11-14T14:00:00Z", "actor": "rest", "action": "erase", "result": "ok",
+         "api_key_id": "6b1d4c0e-2f3a-4e5b-8c7d-9a0b1c2d3e4f", "user_id": "maria",
+         "target_id": "mem_2", "meta": {"erase": True}, "ip": None, "read": None},
+        {"ts": "2026-11-14T13:00:00Z", "actor": "rest", "action": "fact_invalidate",
+         "result": "ok", "api_key_id": "6b1d4c0e-2f3a-4e5b-8c7d-9a0b1c2d3e4f",
+         "user_id": "maria", "target_id": "fct_1", "meta": None, "ip": None, "read": None},
+        {"ts": "2026-11-14T12:00:00Z", "actor": "dashboard", "action": "key_create",
+         "result": "ok", "api_key_id": None, "user_id": None, "target_id": None,
+         "meta": None, "ip": None, "read": None, "a_field_of_a_later_server": {"x": 1}},
+    ]
+
+    def test_the_key_of_each_call_and_the_forget_of_1_0_23(self):
+        """`api_key_id` was dropped (only declared fields are kept); a field
+        a later server adds is still left out without an error."""
+        rec = _Recorder().queue(200, {"events": self._ROWS_1_0_23, "total": 4})
+        page = _client(rec).audit(action="forget")
+        self.assertEqual(rec.last["params"], {"action": "forget", "limit": 100, "offset": 0})
+        self.assertEqual([e.action for e in page], ["forget", "erase", "fact_invalidate",
+                                                    "key_create"])
+        self.assertEqual([e.api_key_id for e in page],
+                         ["6b1d4c0e-2f3a-4e5b-8c7d-9a0b1c2d3e4f"] * 3 + [None])
+        self.assertFalse(hasattr(page[3], "a_field_of_a_later_server"))
+        older = _Recorder().queue(200, {"events": [_audit_event("2026-10-06T09:00:00Z")],
+                                        "total": 1})
+        self.assertIsNone(_client(older).audit()[0].api_key_id)
+
     def test_the_request_and_the_page(self):
         from korely_memory import AuditEvent, AuditPage, AuditRead
 

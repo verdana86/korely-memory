@@ -778,6 +778,23 @@ test("audit() reads GET /v1/audit: filters, defaults, an iterable page", async (
   assert.deepEqual(Object.fromEntries(new URL(f.calls[1].url).searchParams), { limit: "100", offset: "0" });
 });
 
+test("audit() hands over each call's key and the forget of Korely 1.0.23", async () => {
+  // Rows as Korely 1.0.23 answers them (api/audit.py AuditRow); a field a
+  // later server adds passes through untouched.
+  const key = "6b1d4c0e-2f3a-4e5b-8c7d-9a0b1c2d3e4f";
+  const { k, f } = client([{ status: 200, body: { events: [
+    auditEvent("2026-11-14T15:00:00Z", { action: "forget", api_key_id: key, target_id: "mem_1" }),
+    auditEvent("2026-11-14T14:00:00Z", { action: "erase", api_key_id: key, target_id: "mem_2" }),
+    auditEvent("2026-11-14T13:00:00Z", { action: "fact_invalidate", api_key_id: key, target_id: "fct_1" }),
+    auditEvent("2026-11-14T12:00:00Z", { action: "key_create", actor: "dashboard", api_key_id: null, later: 1 }),
+  ], total: 4 } }]);
+  const page = await k.audit({ action: "forget" });
+  assert.equal(new URL(f.calls[0].url).searchParams.get("action"), "forget");
+  assert.deepEqual(page.events.map((e) => [e.action, e.api_key_id]), [
+    ["forget", key], ["erase", key], ["fact_invalidate", key], ["key_create", null]]);
+  assert.equal(page.events[3].later, 1);
+});
+
 test("audit() refuses an empty filter and what is not a moment, before sending", async () => {
   // Both servers read `user_id=` as no filter: every end user's events.
   for (const opts of [{ user_id: "" }, { action: "" }, { since: 1696118400 }, { until: new Date("nope") }]) {

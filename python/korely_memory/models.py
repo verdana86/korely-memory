@@ -589,14 +589,23 @@ class AuditEvent:
     - ``ts``: when it happened, ISO 8601.
     - ``actor``: ``rest``, ``mcp``, ``worker``, ``dashboard`` (Cloud only) or
       ``manage`` (Self-hosted only).
-    - ``action``: ``read``, ``write``, ``fact_write``, ``fact_invalidate``,
-      ``erase``, ``key_create``, ``key_revoke``, and ``tenant_create`` on the
-      Self-hosted only.
+    - ``action``: ``read``, ``write``, ``fact_write``, ``fact_invalidate`` (a
+      fact closed, kept in its history), ``forget`` (a memory forgotten: out
+      of every read, its text kept), ``erase`` (gone for good),
+      ``key_create``, ``key_revoke``, and ``tenant_create`` on the
+      Self-hosted only. Until Korely 1.0.23 a forget was filed as ``erase``,
+      and the rows already written stay so.
     - ``result``: ``ok``, ``denied`` or ``error``.
     - ``user_id``: the end user the event touched; ``target_id``: the memory or
       fact acted on, by public id.
     - ``meta``: counts and labels, never content; ``ip``: the caller's address.
-    - ``read``: on a read, what it returned (:class:`AuditRead`); else None."""
+    - ``read``: on a read, what it returned (:class:`AuditRead`); else None.
+    - ``api_key_id``: the key that made the call, by the id the dashboard's
+      Keys page lists it with, never the key itself; None for an act with no
+      key (a person signed in to the dashboard, the command line, the
+      worker) and from a server older than Korely 1.0.23.
+
+    A field a newer server adds is left out, not an error."""
     ts: Optional[str] = None
     actor: Optional[str] = None
     action: Optional[str] = None
@@ -606,6 +615,7 @@ class AuditEvent:
     meta: Optional[dict] = None
     ip: Optional[str] = None
     read: Optional[AuditRead] = None
+    api_key_id: Optional[str] = None
 
     @classmethod
     def from_dict(cls, d: dict) -> "AuditEvent":

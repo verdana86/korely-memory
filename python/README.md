@@ -106,10 +106,15 @@ key without the `admin` scope, else answers 404 (405 where it serves its
 dashboard).
 
 `audit()` reads the trail of the key's project, newest first: who acted
-(`actor`), what (`action`: `read`, `write`, `fact_write`, `fact_invalidate`,
-`erase`, `key_create`, `key_revoke`, and `tenant_create` on the Self-hosted;
-open strings, not an enum), the `result`, the end user and the
-memory or fact touched, and for a read the ids it returned, never the content.
+(`actor`), what (`action`: `read`, `write`, `fact_write`, `fact_invalidate`
+for a fact closed, `forget` for a memory forgotten with its text kept,
+`erase` for one gone for good, `key_create`, `key_revoke`, and
+`tenant_create` on the Self-hosted; open strings, not an enum; until Korely
+1.0.23 a forget was filed as `erase`), the `result`, the end user and the
+memory or fact touched, `api_key_id` (the key that made the call, by the id
+the dashboard lists it with, never the key; Korely 1.0.23 and later), and
+for a read the ids it returned, never the content. A field a newer server
+adds is left out, not an error.
 Both products have it, and the key needs `memories:read`; it costs no quota.
 `user_id=` answers an access or erasure request for one person; `since` and
 `until` take ISO 8601 text, a `datetime` (UTC when it has no zone) or a

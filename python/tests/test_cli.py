@@ -1109,6 +1109,19 @@ def _ev(ts, **kw):
 class PingAndTheAuditTrail(_RunsCommands):
     """ping and audit, new in the SDK and in the CLI on 2026-10-06."""
 
+    def test_audit_json_carries_the_key_and_the_help_names_forget(self):
+        row = {"ts": "2026-11-14T15:00:00Z", "actor": "rest", "action": "forget",
+               "result": "ok", "api_key_id": "6b1d4c0e-2f3a-4e5b-8c7d-9a0b1c2d3e4f",
+               "user_id": "maria", "target_id": "mem_1", "meta": None, "ip": None,
+               "read": None}
+        rec = _Recorder().queue(200, {"events": [row], "total": 1})
+        rc, data = self._run(rec, ["audit", "--action", "forget", "--json"])
+        self.assertEqual(rec.last["params"]["action"], "forget")
+        self.assertEqual(data["events"][0]["api_key_id"], "6b1d4c0e-2f3a-4e5b-8c7d-9a0b1c2d3e4f")
+        audit = next(a for a in cli.build_parser()._subparsers._group_actions[0].choices[
+            "audit"]._actions if "--action" in a.option_strings)
+        self.assertIn("forget", audit.help)
+
     def test_ping(self):
         body = {"ok": True, "tier": "hobby", "region": "eu-hel1", "scopes": ["memories:read"]}
         rec = _Recorder().queue(200, dict(body)).queue(200, dict(body))

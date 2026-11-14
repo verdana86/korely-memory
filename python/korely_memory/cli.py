@@ -1539,8 +1539,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("audit", parents=[common, user_flag],
                         help="the audit trail of this key's project, newest first (--all to export)")
     sp.add_argument("--action",
-                    help="read | write | fact_write | fact_invalidate | erase | key_create | "
-                         "key_revoke (and tenant_create on the Self-hosted)")
+                    help="read | write | fact_write | fact_invalidate | forget | erase | "
+                         "key_create | key_revoke (and tenant_create on the Self-hosted); "
+                         "forget: a memory forgotten, its text kept (Korely 1.0.23; filed as "
+                         "erase before)")
     sp.add_argument("--since", help="ISO 8601 date or datetime: events at or after it")
     sp.add_argument("--until", help="ISO 8601 date or datetime: events at or before it")
     sp.add_argument("--limit", type=int, default=None,
