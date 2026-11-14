@@ -103,16 +103,21 @@ id to type. Only the server's answer `deleted: true` is a deletion; a redirect
 or a 2xx without it raises, and the account may still be there. A server
 older than 1.0.23 takes only `?confirm=true`: the client does not fall back to
 it, deletes nothing and raises `APIError` with the code `server_too_old`
-(upgrade the server, or use korely-memory 0.1.29). A 403 at `GET
-/admin/whoami` (a key without the `admin` scope) deletes nothing. Cloud only:
+(upgrade the server, or use korely-memory 0.1.29). A key that may not read
+`GET /admin/whoami` (403, a key without the `admin` scope) deletes nothing:
+with no id typed it raises that `confirmation_required`, whose message says
+whoami could not be read; with the id typed, the whoami's refusal,
+`NamespaceForbiddenError` (an `APIError`, `status` 403, `code` `forbidden`).
+Cloud only:
 the Self-hosted, which has no such route, stops at that 403 for a key without
 the `admin` scope, else answers 404 (405 where it serves its dashboard).
 
-The key goes only to `base_url`: a redirect is followed without it (as a
-`GET` or `HEAD`), to another server or the same one, so a server that wants
-it after a redirect answers 401. Point `base_url` at the address the redirect
-names. A redirect urllib does not follow (of a `DELETE`, `PATCH` or `PUT`, a
-307 or 308 of a `POST`) raises `APIError` with its status.
+The key goes only to `base_url`. A `GET`'s redirect is followed without it,
+to another server or the same one, so a server that wants it after a
+redirect answers 401, and the `AuthenticationError` says where the call was
+redirected: point `base_url` at that address. A call that is not a `GET`
+(`POST`, `PATCH`, `DELETE`) is never redirected: a 3xx raises `APIError` with
+its status, its message naming the origin the redirect pointed to.
 
 `audit()` reads the trail of the key's project, newest first: who acted
 (`actor`), what (`action`: `read`, `write`, `fact_write`, `fact_invalidate`

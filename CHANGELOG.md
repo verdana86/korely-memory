@@ -97,8 +97,12 @@ and its `sideEffects` changed (below).
   non-UUID or other id sends no DELETE and raises `KorelyError` with the
   code `confirmation_required`, whose message names the id to type
   (`To delete account <id>, pass confirm="<id>"`; the CLI says `re-run it
-  with --confirm <id>`) when the key may read `/admin/whoami`; a key that
-  may not (403) gets that error and nothing is deleted. A `tenant_id` that
+  with --confirm <id>`) when the key may read `/admin/whoami`. A key that
+  may not read it (403, a key without the `admin` scope) deletes nothing:
+  with no id typed it gets that `confirmation_required`, whose message says
+  `/admin/whoami` could not be read; with the id typed, the server's refusal
+  of the whoami, `NamespaceForbiddenError` (an `APIError`, `status` 403,
+  `code` `forbidden`). A `tenant_id` that
   is not a UUID (a whoami answering `"true"`) deletes nothing. **A script
   that ran `korely delete-account --yes` stops with exit 2
   (`unrecognized arguments: --yes`), nothing sent: pass `--confirm <id>`;
@@ -118,19 +122,26 @@ and its `sideEffects` changed (below).
   while the account still existed (already in 0.1.29). Now it is an
   error (`APIError` with the redirect's status, or `KorelyError`), and the
   CLI keeps the key. More generally, every call takes only a 2xx as its
-  answer: a 3xx urllib does not follow (any redirect of a DELETE, PATCH or
-  PUT, a 307 or 308 of a POST) is an `APIError` with that status, no longer
-  an empty result.
+  answer: a 3xx that is not followed is an `APIError` with that status, no
+  longer an empty result.
+- A call that is not a `GET` is never redirected. urllib followed a `POST`
+  answered 301, 302 or 303 as a `GET` with no body, and the answer of that
+  `GET`, from wherever the redirect pointed, came back as the `POST`'s:
+  `add()` could report a memory stored that no server stored. Now any
+  redirect of a `POST`, `PATCH` or `DELETE` is its answer: an `APIError`
+  with the redirect's status, whose message names where it pointed (the
+  scheme, host and port of its `Location`, never its path or query), and
+  nothing is sent there.
 - The key goes only to the server the client was given. urllib copies a
   request's headers onto the request a redirect makes, so a `GET` answered
   302 by the server sent `Authorization` to whatever host, scheme or port
   the redirect named. The key is now sent as an unredirected header (as
-  urllib's own `HTTPBasicAuthHandler` sends it): a redirect is still
-  followed (GET and HEAD, and the POST that urllib turns into a GET), never
-  with the key, on another server or on the same one. A server that wants
-  the key after a redirect answers 401 (`AuthenticationError`); use the
-  address the redirect points to as `base_url`. Tested with two local
-  servers.
+  urllib's own `HTTPBasicAuthHandler` sends it): a `GET`'s redirect is still
+  followed, never with the key, on another server or on the same one. A
+  server that wants the key after a redirect answers 401
+  (`AuthenticationError`), and the message then says the call was
+  redirected, to which address, and to use that address as `base_url`.
+  Tested with two local servers.
 - `audit()`'s events keep `api_key_id`, which Korely 1.0.23 sends: the key
   that made each call, by the id the dashboard's Keys page lists it with
   (never the key); None for an act with no key and from an older server.
@@ -180,19 +191,31 @@ and its `sideEffects` changed (below).
   DELETE and rejects with a `KorelyError` whose `code` is
   `confirmation_required` and whose message names the id to type (`To
   delete account <id>, pass { confirm: "<id>" }`) when the key may read
-  `/admin/whoami`; a key that may not (403) rejects with that error and
-  nothing is deleted. A `tenant_id` that is not a UUID deletes nothing. A
+  `/admin/whoami`. A key that may not read it (403, a key without the
+  `admin` scope) deletes nothing: with no id typed it rejects with that
+  `confirmation_required`, whose message says `/admin/whoami` could not be
+  read; with the id typed, with the server's refusal of the whoami,
+  `NamespaceForbiddenError` (an `APIError`, `status` 403, `code`
+  `forbidden`). A `tenant_id` that is not a UUID deletes nothing. A
   server older than 1.0.23 takes only `?confirm=true`: the client does not
   fall back to the flag, deletes nothing and rejects with an `APIError`
   (`status` 422, `code` `server_too_old`) saying to upgrade the server or
   to use korely-memory 0.1.18.
 - `deleteAccount()` counts the account as deleted only on the server's
-  answer `deleted: true`: a 2xx without it (an empty 202 of a proxy, or the
-  `GET` that `fetch` turns a DELETE answered 303 into) returned it as a
-  receipt; now it rejects with a `KorelyError`. A redirect the `fetch` does
-  not follow already rejected (`APIError`). Node's `fetch` follows a
-  redirect to another origin without `Authorization`; a test with two
-  local servers keeps it so.
+  answer `deleted: true`: a 2xx without it (an empty 202 of a proxy)
+  returned it as a receipt; now it rejects with a `KorelyError`.
+- A call that is not a `GET` is never redirected: it is sent with
+  `redirect: "manual"`. `fetch` followed a `POST` answered 301, 302 or 303
+  (and a `DELETE` answered 303) as a `GET` with no body, and that `GET`'s
+  answer came back as the call's: `add()` could resolve with a memory no
+  server stored. Now any redirect of a `POST`, `PATCH` or `DELETE` rejects
+  with an `APIError` with the redirect's status, whose message names where
+  it pointed (the origin of its `Location`, never its path or query); in a
+  browser, where `fetch` hides a redirect it does not follow, `status` is 0.
+  A `GET` still follows a redirect, and Node's `fetch` drops
+  `Authorization` on the way to another origin (tested with two local
+  servers); its 401 there now says the call was redirected, to which
+  origin, and to use it as `baseUrl`.
 - `AuditEvent` types `api_key_id` (the key that made the call, Korely
   1.0.23), and `AuditAction` names `forget`, the action 1.0.23 files a
   memory forgotten under, apart from `erase`. The fields already reached
