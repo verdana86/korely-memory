@@ -6,7 +6,7 @@
  *
  *   import { Korely } from "korely-memory";
  *   const korely = new Korely({ apiKey: "kor_live_..." });
- *   await korely.add("User prefers TypeScript", { agent_id: "coding-assistant" });
+ *   await korely.add("User prefers TypeScript", { user_id: "dana", agent_id: "coding-assistant" });
  */
 import {
   APIError,

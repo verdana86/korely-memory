@@ -7,7 +7,7 @@ checking) runs server-side.
     from korely_memory import Korely
 
     korely = Korely(api_key="kor_live_...", region="eu")
-    korely.add("User prefers TypeScript", agent_id="coding-assistant")
+    korely.add("User prefers TypeScript", user_id="dana", agent_id="coding-assistant")
     ctx = korely.get_context(query="what does the user like?", user_id="dana")
 """
 from .aio import AsyncKorely

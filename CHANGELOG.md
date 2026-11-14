@@ -65,6 +65,14 @@ Not published to PyPI or npm yet; the version numbers are unchanged.
   sends stays: after the fifth the turns are dropped with a line in
   `~/.korely/hook.log`; the README now says so.
 
+- The examples in the package's docstrings (`import korely_memory`,
+  `Korely`) name the end user in their write:
+  `korely.add("User prefers TypeScript", user_id="dana",
+  agent_id="coding-assistant")`. With `agent_id` alone, the write was an
+  agent's note (with no `user_id` the store reads "I" as the agent), and
+  since Korely 1.0.19 a write must name an id. A test runs the examples and
+  checks that every write names the user.
+
 ### npm
 
 - `DeleteReceipt` and `AgentDeleteReceipt` type `facts_reopened`. The field
@@ -81,6 +89,10 @@ Not published to PyPI or npm yet; the version numbers are unchanged.
   `korely-memory/ai-sdk` still use the same classes. `sideEffects` names
   the Node entry, which a bundler must not drop. `require()` worked before
   and works the same. Checked in Docker on Node 18.20.8.
+- The example at the top of the client names the end user in its write
+  (`{ user_id: "dana", agent_id: "coding-assistant" }`), as the README's do;
+  a test runs the examples of `index.ts` and `client.ts` and checks every
+  write.
 - `AgentDeleteReceipt.slot_freed` is marked `@deprecated` and documented as
   always undefined: no Korely server sends it, and none ever has. It stays
   in the type, so a program reading it still compiles; read `cap` and

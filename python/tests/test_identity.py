@@ -396,3 +396,45 @@ class KorelyMcp(_OwnConfig):
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
+
+class TheExamplesNameTheUser(unittest.TestCase):
+    """The package's own examples, run as written: every write they make
+    names the end user. `add(..., agent_id=...)` alone was the example, and
+    whoever copied it wrote an agent's note in place of the user's memory
+    (with no user_id, the store reads "I" as the agent). Mem0, Zep and
+    Supermemory name the user in their first write (their quickstarts,
+    read 2026-11-14)."""
+
+    @staticmethod
+    def _examples():
+        import doctest
+        import textwrap
+
+        import korely_memory
+
+        # The module's: the block indented under its first paragraph.
+        block = [line for line in korely_memory.__doc__.splitlines() if line.startswith("    ")]
+        yield "korely_memory", textwrap.dedent("\n".join(block))
+        for name in korely_memory.__all__:
+            obj = getattr(korely_memory, name)
+            if isinstance(obj, type) and obj.__doc__ and ">>>" in obj.__doc__:
+                yield name, "".join(e.source for e in doctest.DocTestParser().get_examples(obj.__doc__))
+
+    def test_every_write_of_an_example_names_the_user(self):
+        examples = dict(self._examples())
+        self.assertIn("Korely", examples)
+        for name, code in examples.items():
+            with self.subTest(example=name):
+                sent = []
+
+                def send(self, method, path, *, params=None, json_body=None):
+                    sent.append((method, path, json_body))
+                    return 201, {"id": "mem_1", "context": "", "sources": []}
+
+                with mock.patch.object(Korely, "_send", send):
+                    exec(compile(code, name, "exec"), {"Korely": Korely})
+                writes = [body for method, path, body in sent if method == "POST"]
+                self.assertTrue(writes, code)
+                for body in writes:
+                    self.assertTrue(body.get("user_id"), f"{name}: {body}")

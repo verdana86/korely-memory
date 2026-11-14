@@ -361,7 +361,7 @@ class Korely:
     """Typed client over the Korely REST API.
 
     >>> korely = Korely(api_key="kor_live_...", region="eu")
-    >>> korely.add("User prefers TypeScript", agent_id="coding-assistant")
+    >>> korely.add("User prefers TypeScript", user_id="dana", agent_id="coding-assistant")
     """
 
     def __init__(

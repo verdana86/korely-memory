@@ -1071,3 +1071,29 @@ test("the ids a write names are the ids it sends", async () => {
   assert.equal(fact.user_id, "maria");
   assert.deepEqual(batch.memories, [{ content: "a", user_id: "maria" }, { content: "b", agent_id: "bot" }]);
 });
+
+test("the package's own examples, run as written, name the user in every write (2026-11-14)", async () => {
+  // `add(..., { agent_id })` alone was the example of the client: whoever
+  // copied it wrote an agent's note in place of the user's memory. Mem0, Zep
+  // and Supermemory name the user in their first write (their quickstarts,
+  // read 2026-11-14). The examples are the indented lines of each file's
+  // first comment.
+  for (const file of ["../src/index.ts", "../src/client.ts"]) {
+    const head = readFileSync(new URL(file, import.meta.url), "utf8").split("*/")[0];
+    const code = head.split("\n")
+      .filter((l) => l.startsWith(" *   ") && !l.includes("import "))
+      .map((l) => l.slice(5))
+      .join("\n");
+    assert.match(code, /korely\.add\(/, file);
+    const f = fakeFetch(Array.from({ length: 5 }, () => ({ status: 201, body: { id: "m1" } })));
+    class Example extends Korely {
+      constructor(opts) {
+        super({ ...opts, fetch: f });
+      }
+    }
+    await new Function("Korely", `return (async () => {\n${code}\n})();`)(Example);
+    const writes = f.calls.filter((c) => c.init.method === "POST");
+    assert.ok(writes.length > 0, file);
+    for (const w of writes) assert.ok(JSON.parse(w.init.body).user_id, `${file}: ${w.init.body}`);
+  }
+});
