@@ -96,9 +96,13 @@ exit 2 (below).
   the Node built-ins it needs (`dist/index.node.js` and `.cjs`); browsers,
   edge runtimes and bundlers for them keep the entry that imports none. The
   ES module entries share one copy of the client, so `korely-memory` and
-  `korely-memory/ai-sdk` still use the same classes. `sideEffects` names
-  the Node entry, which a bundler must not drop. `require()` worked before
-  and works the same. Checked in Docker on Node 18.20.8.
+  `korely-memory/ai-sdk` still use the same classes. `sideEffects`, which
+  was `false` for the whole package, now names the Node entry, whose one
+  statement (handing over the built-ins) is a side effect. esbuild, the one
+  bundler tried, keeps that call when it bundles for Node and leaves the
+  built-ins out when it bundles for a browser; others are not tested.
+  `require()` worked before and works the same. Checked in Docker on Node
+  18.20.8.
 - The example at the top of the client names the end user in its write
   (`{ user_id: "dana", agent_id: "coding-assistant" }`), as the README's do;
   a test runs the examples of `index.ts` and `client.ts` and checks every

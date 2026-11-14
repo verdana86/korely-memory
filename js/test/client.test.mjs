@@ -517,10 +517,15 @@ test("listAgents: total is this project, used is the account", async () => {
   assert.deepEqual([...page].map((a) => a.agent_id), ["bot"]);
 });
 
-test("deleteAgent: slot_freed, and a 404 for a name outside the project", async () => {
-  const ok = client([{ status: 200, body: { agent_id: "bot", memories_deleted: 3, facts_deleted: 1, audit_id: "aud_1", slot_freed: false } }]);
+test("deleteAgent: the server's receipt, no slot_freed, and a 404 for a name outside the project", async () => {
+  // The server's answer (no Korely server sends slot_freed): the field the
+  // type keeps, deprecated, stays undefined.
+  const body = { agent_id: "bot", memories_deleted: 3, facts_deleted: 1, facts_reopened: 0,
+                 read_marks_deleted: 0, audit_id: "aud_1" };
+  const ok = client([{ status: 200, body }]);
   const r = await ok.k.deleteAgent("bot");
-  assert.equal(r.slot_freed, false);
+  assert.equal(r.memories_deleted, 3);
+  assert.equal(r.slot_freed, undefined);
   const missing = client([{ status: 404, body: { code: "not_found", message: "No agent namespace 'bot' in this project." } }]);
   await assert.rejects(() => missing.k.deleteAgent("bot"), NotFoundError);
 });
