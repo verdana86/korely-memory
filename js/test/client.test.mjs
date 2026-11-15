@@ -56,13 +56,19 @@ test("requires an api key", () => {
     delete process.env.KORELY_API_KEY;
     process.env.KORELY_CONFIG_HOME = "/nonexistent-korely-config-home";
     assert.throws(() => new Korely({ fetch: async () => ({}) }), KorelyError);
-    // What a Node user does (pre-tester check, 15 Nov 2026): the npm package
-    // has no `korely` command, so the message does not send them to one; it
-    // names the call of this package that makes a key.
+    // What a Node user does (15 Nov 2026): the npm package has no `korely`
+    // command, so the message does not send them to one. A key is made once,
+    // as the README's cURL does: a call pasted at a program's start made a
+    // new account at every start. The file named is the one read.
     assert.throws(() => new Korely({ fetch: async () => ({}) }), (e) => {
-      assert.match(e.message, /Korely\.initAgent\(/);
       assert.doesNotMatch(e.message, /run `korely init`/);
+      assert.doesNotMatch(e.message, /await Korely\.initAgent/);
+      assert.match(e.message, /make one once/);
+      assert.match(e.message, /curl -X POST https:\/\/api\.korely\.ai\/v1\/agents\/init /);
+      assert.match(e.message, /then set KORELY_API_KEY/);
       assert.match(e.message, /Python package/);
+      assert.match(e.message, /from \/nonexistent-korely-config-home\/config\.json\./);
+      assert.doesNotMatch(e.message, /~\/\.korely/);
       return true;
     });
   } finally {

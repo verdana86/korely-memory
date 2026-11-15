@@ -602,17 +602,54 @@ export function useNodeFiles(files: NodeFiles): void {
  */
 function savedConfig(): { api_key?: unknown; base_url?: unknown } {
   try {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const proc = typeof process !== "undefined" ? (process as any) : undefined;
-    if (!proc?.versions?.node) return {};
-    const files = nodeFiles ?? lookedUp(proc);
-    if (!files) return {};
-    const home = proc.env?.KORELY_CONFIG_HOME || files.join(files.homedir(), ".korely");
-    const data = JSON.parse(files.readFileSync(files.join(home, "config.json"), "utf8"));
+    const at = configFile();
+    if (!at) return {};
+    const data = JSON.parse(at.files.readFileSync(at.path, "utf8"));
     return data && typeof data === "object" ? data : {};
   } catch {
     return {};
   }
+}
+
+/**
+ * The file `savedConfig()` reads, and the functions to read it: undefined
+ * where there is none (a browser, an edge runtime, an ES module of an older
+ * Node). The "No API key" error names this path, so it is the one read.
+ */
+function configFile(): { files: NodeFiles; path: string } | undefined {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const proc = typeof process !== "undefined" ? (process as any) : undefined;
+  if (!proc?.versions?.node) return undefined;
+  const files = nodeFiles ?? lookedUp(proc);
+  if (!files) return undefined;
+  const home = proc.env?.KORELY_CONFIG_HOME || files.join(files.homedir(), ".korely");
+  return { files, path: files.join(home, "config.json") };
+}
+
+/** The "No API key" error: how to give a key, how to make one once, and
+ * the file that was read, when one was. */
+function noKey(): KorelyError {
+  let file: string | undefined;
+  try {
+    file = configFile()?.path;
+  } catch {
+    file = undefined;
+  }
+  // A key is made once, not at every start: each signup makes a new account,
+  // with its own key and its own memories. So the way given is the README's,
+  // run by hand, and the key then goes where a program reads it.
+  return new KorelyError(
+    "No API key. Pass { apiKey: 'kor_live_...' } or set KORELY_API_KEY. " +
+      "No key yet: make one once, by hand, on Korely Cloud: " +
+      "curl -X POST https://api.korely.ai/v1/agents/init -H 'Content-Type: application/json' " +
+      "-d '{\"agent_caller\": \"your-name-here\"}' (or Korely.initAgent() run once), " +
+      "then set KORELY_API_KEY. Each call makes a new account; the answer shows the key once " +
+      "and says when it ends. A Self-hosted install makes its keys in its dashboard." +
+      (file
+        ? ` On Node a key saved by \`korely init\`, the command of the Python package ` +
+          `(pip install korely-memory), is read too, from ${file}.`
+        : ""),
+  );
 }
 
 /**
@@ -660,17 +697,10 @@ export class Korely {
     const saved = opts.apiKey && (opts.baseUrl || envBase) ? {} : savedConfig();
     const key = opts.apiKey ?? envKey ?? text(saved.api_key);
     if (!key) {
-      // What a Node user does (pre-tester check, 15 Nov 2026): this package
-      // has no `korely` command (the Python package has it), so the message
-      // names the call of this package that makes a key, and says the file
-      // is read only as the Python command's.
-      throw new KorelyError(
-        "No API key. Pass { apiKey: 'kor_live_...' } or set KORELY_API_KEY. " +
-          "No key yet: `const { api_key } = await Korely.initAgent('my-app')` makes one on " +
-          "Korely Cloud (shown once: save it); a Self-hosted install makes its keys in its " +
-          "dashboard. On Node a key saved by `korely init`, the command of the Python " +
-          "package (pip install korely-memory), in ~/.korely/config.json is read too.",
-      );
+      // What a Node user does (15 Nov 2026): this package has no `korely`
+      // command (the Python package has it), so the message does not send
+      // them to one, and names the file only where one was read.
+      throw noKey();
     }
     this.apiKey = key;
     const envClient =
