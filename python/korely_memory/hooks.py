@@ -23,7 +23,11 @@ assistant wrote it: what Claude Code learnt on Monday, Codex reads on Tuesday.
 A user_id costs nothing against the agent cap, which counts `agent_id`s.
 
 A hook never breaks the assistant: every failure is a line in
-~/.korely/hook.log (never the text of the session) and an exit code 0.
+~/.korely/hook.log (never the text of the session) and an exit code 0. A
+read that fails is also one line in what the assistant is handed, in the
+place of the memory it could not read, and a key that ends within
+KEY_WARN_DAYS is one line too: an empty memory is never how either reaches
+the session.
 """
 from __future__ import annotations
 
@@ -34,7 +38,7 @@ import re
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
@@ -73,6 +77,14 @@ NETWORK_TIMEOUT = 8.0
 # lost. A read with less than MIN_READ left is not begun.
 MIN_READ = 1.0
 _monotonic = time.monotonic
+# How long before the key ends the context says so: the server's own horizon
+# for the `key.expiring` webhook (14 days), so an agent with no webhook, which
+# is most of them, hears it when one would. Korely 1.0.23 and later say the
+# end on every answer (Korely.key_expires_at); after it every call is a 401.
+KEY_WARN_DAYS = 14
+# The words of a failed read the context keeps, start and end: enough for
+# the kind and the server's code, never a page of an HTML error.
+REASON_CHARS = 300
 
 
 # ── where things live ────────────────────────────────────────────────────────
@@ -540,6 +552,55 @@ def _block(client: Any, query: str, budget: int, user_id: Optional[str], heading
     return f"{heading}\n\n{body}"
 
 
+def _shown(path: Path) -> str:
+    """A path as the developer would type it: the home folder as `~`."""
+    home, text = str(Path.home()), str(path)
+    return "~" + text[len(home):] if text == home or text.startswith(home + os.sep) else text
+
+
+def _not_read(what: str, error: BaseException) -> str:
+    """The line in the place of a block that could not be read. Left out, a
+    read that failed (a timeout, a 401 of a key that ended, no key at all)
+    handed the assistant nothing, as an empty memory does: it went on
+    without knowing that the memory was there and unread, and only
+    hook.log knew. The error's kind and words, masked as a session's text
+    is (`redact`) and kept to REASON_CHARS on one line."""
+    reason = " ".join(_clip(redact(f"{type(error).__name__}: {error}"), REASON_CHARS).split())
+    return (f"Korely memory of {what} was not read ({reason}): this session starts without "
+            f"it. {_shown(_home() / 'hook.log')} has the line.")
+
+
+def _moment(value: Any) -> Optional[datetime]:
+    """An ISO 8601 moment as an aware datetime (no offset: UTC), or None."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        at = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return at if at.tzinfo is not None else at.replace(tzinfo=timezone.utc)
+
+
+def _key_ends(client: Any, whose: str, profile: Optional[str]) -> str:
+    """One line when the key `client` sends ends within KEY_WARN_DAYS, as
+    the server's last answer said (`Korely.key_expires_at`); "" for a key
+    that never ends, one further off, a server that does not say, and an
+    end that cannot be read."""
+    ends = _moment(getattr(client, "key_expires_at", None))
+    if ends is None:
+        return ""
+    left = ends - datetime.now(timezone.utc)
+    if left > timedelta(days=KEY_WARN_DAYS):
+        return ""
+    days = left.days
+    when = "in less than a day" if days < 1 else f"in {days} day{'' if days == 1 else 's'}"
+    save = "korely init --api-key <new key> --force" + (f" --profile {profile}" if profile else "")
+    return (f"The Korely key {whose} ends on "
+            f"{ends.astimezone(timezone.utc):%Y-%m-%d %H:%M} UTC ({when}): after that Korely "
+            f"refuses its reads and writes (401). Make a new key in the Korely dashboard and "
+            f"save it with `{save}`.")
+
+
 def _context_text(client_factory: Callable[..., Any], scope: str, repo: str, query: str,
                   budget: int, also_read: Sequence[str] = (),
                   also_read_user: Sequence[str] = ()) -> str:
@@ -547,27 +608,32 @@ def _context_text(client_factory: Callable[..., Any], scope: str, repo: str, que
     same project (a memory that spans repositories, e.g. `founder`), then the
     whole project of each profile in `also_read` (a private project next to
     the shared one), each block under its own heading. A block that cannot be
-    read, the repository's included, is a line in hook.log and is left out,
-    never the rest: the session starts with every block that could be read.
-    The reads share NETWORK_TIMEOUT seconds; one with less than MIN_READ left
-    is not begun (see `_block` for a reply that keeps arriving slowly)."""
+    read, the repository's included, is a line in hook.log and, in its place,
+    a line that says so (`_not_read`), never the end of the rest: the
+    session starts with every block that could be read. Last, one line for
+    each key that ends within KEY_WARN_DAYS (`_key_ends`). The reads share
+    NETWORK_TIMEOUT seconds; one with less than MIN_READ left is not begun
+    (see `_block` for a reply that keeps arriving slowly)."""
     deadline = _monotonic() + NETWORK_TIMEOUT
-    made: Dict[str, Any] = {}
+    made: Dict[Optional[str], Any] = {}
 
-    def main() -> Any:
-        # Made once, for the repository and the user_ids: a factory that
-        # fails fails each of them, and the profiles still go.
-        if "client" not in made:
-            made["client"] = client_factory()
-        return made["client"]
+    def client_of(profile: Optional[str]) -> Callable[[], Any]:
+        # Made once per profile (None the default one, for the repository
+        # and the user_ids): a factory that fails fails each read of that
+        # profile, and the others still go.
+        def get() -> Any:
+            if profile not in made:
+                made[profile] = client_factory(profile) if profile else client_factory()
+            return made[profile]
+        return get
 
-    reads = [(f"user_id {scope}", main, budget, scope,
+    reads = [(f"user_id {scope}", client_of(None), budget, scope,
               f"Korely memory of the repository {repo} (user_id {scope}), what earlier "
               f"sessions stored, whichever assistant they ran in:")]
-    reads += [(f"user_id {user}", main, EXTRA_BUDGET, user,
+    reads += [(f"user_id {user}", client_of(None), EXTRA_BUDGET, user,
                f"Korely memory of user_id {user} (across repositories):")
               for user in also_read_user if user != scope]
-    reads += [(f"profile {name}", lambda name=name: client_factory(name), EXTRA_BUDGET, None,
+    reads += [(f"profile {name}", client_of(name), EXTRA_BUDGET, None,
                f"Korely memory of the profile {name} (its whole project):")
               for name in also_read]
     blocks = []
@@ -576,6 +642,9 @@ def _context_text(client_factory: Callable[..., Any], scope: str, repo: str, que
             blocks.append(_block(client(), query, size, user_id, heading, deadline))
         except Exception as e:  # noqa: BLE001 - the other blocks still go
             _log(f"{what}: {type(e).__name__}: {e}")
+            blocks.append(_not_read(what, e))
+    blocks += [_key_ends(c, "these hooks use" if p is None else f"of the profile {p}", p)
+               for p, c in made.items()]
     return "\n\n".join(b for b in blocks if b)
 
 

@@ -28,6 +28,25 @@ addition is sent only when asked for.
   `--full-text`: the text output prints each hit's type next to its id and
   the whole text in place of the snippet, and `--json` carries `type`,
   `content` and `fact` (null when not asked).
+- `korely hook` says when a read failed. A read of the session start or of
+  the first prompt that failed (a timeout, a 401 of a key that ended, no key)
+  left its memory out and said nothing to the assistant, as if the memory
+  were empty; only `~/.korely/hook.log` knew. In its place the context now
+  has one line, `Korely memory of user_id repo:<name> was not read (<the
+  error>): this session starts without it`, with what looks like a key in
+  the error masked; the other reads still go, and the line in `hook.log`
+  stays. When every read fails, the assistant is now handed these lines
+  where it was handed nothing.
+- `Korely.key_expires_at`: when the key the client sends ends, as Korely
+  1.0.23 and later say on every answer to a key that expires
+  (`Korely-Key-Expires-At`). None before the first answer, for a key that
+  never ends and from an older server; an answer without the header keeps
+  the value.
+- `korely hook` warns before the key ends: when its end is 14 days away or
+  less (the window of the server's `key.expiring` webhook), the context it
+  hands the assistant ends with one line saying when, and the command that
+  saves a new key. Up to 0.2.0 the end reached a session as 401s in
+  `hook.log`.
 
 ### npm
 

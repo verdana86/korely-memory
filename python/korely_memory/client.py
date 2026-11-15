@@ -60,6 +60,9 @@ __version__ = "0.2.0"
 # dashboard: Europe (gpt-oss-120b on Scaleway, Paris) or Global (Gemini, by
 # Google), the default.
 _REGIONS = {"eu": "https://api.korely.ai"}
+# The header with which every answer to a key that expires says when
+# (Korely 1.0.23 and later).
+KEY_EXPIRES_HEADER = "Korely-Key-Expires-At"
 
 
 def _clean(d: dict) -> dict:
@@ -418,6 +421,15 @@ class Korely:
     >>> korely.add("User prefers TypeScript", user_id="dana", agent_id="coding-assistant")
     """
 
+    #: When the key this client sends ends (ISO 8601, UTC, to the second), as
+    #: the last answer that said it: Korely 1.0.23 and later put
+    #: ``Korely-Key-Expires-At`` on every answer to a key that expires, so a
+    #: program can warn before its calls start being refused with 401. None
+    #: before the first answer, for a key that never ends (the header is not
+    #: sent) and from an older server. An answer without the header (a 401, a
+    #: 500) leaves the value as it was: one client sends one key.
+    key_expires_at: Optional[str] = None
+
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -589,7 +601,9 @@ class Korely:
             with _open(req, timeout=self.timeout, **extra) as resp:
                 raw = resp.read()
                 status = getattr(resp, "status", resp.getcode())
+                self._note_the_key_end(getattr(resp, "headers", None))
         except _urlerror.HTTPError as e:
+            self._note_the_key_end(e.headers)
             try:
                 raw = e.read()
             except (OSError, _httpclient.HTTPException):
@@ -636,6 +650,12 @@ class Korely:
                 f"that is not JSON: {snippet!r}",
                 status=status,
             )
+
+    def _note_the_key_end(self, headers: Any) -> None:
+        """``key_expires_at`` from an answer's headers, when they say it."""
+        ends = headers.get(KEY_EXPIRES_HEADER) if headers is not None else None
+        if ends:
+            self.key_expires_at = ends
 
     def _call(self, method: str, path: str, *, params: Optional[dict] = None,
               json_body: Optional[Any] = None) -> dict:

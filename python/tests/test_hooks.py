@@ -253,7 +253,130 @@ class SessionFlow(Base):
     def test_a_hook_never_raises_and_never_blocks(self):
         out = self.hook("session-start", "claude-code", {"session_id": "s4"},
                         FakeClient(fail=True))
-        self.assertEqual(out, "")
+        # It answers, and what it answers says the read failed (NotRead below).
+        self.assertIn("was not read", json.loads(out)["hookSpecificOutput"]["additionalContext"])
+
+
+class NotRead(Base):
+    """Every read failing handed the assistant nothing, as an empty memory
+    does: the session went on without knowing that a memory was there and
+    unread (a timeout at startup, 11 times since 18 Oct 2026; a key that
+    ended), and only hook.log knew."""
+
+    def test_a_read_that_fails_says_so_where_the_memory_would_be(self):
+        key = _random_key(40)
+
+        class Down(FakeClient):
+            def get_context(self, query, user_id=None, token_budget=800):
+                raise RuntimeError(f"read operation timed out (token {key})")
+
+        for tool, event, data in (
+                ("claude-code", "session-start", {"session_id": "n1"}),
+                ("claude-code", "prompt", {"session_id": "n2", "prompt": "fix login"}),
+                ("cursor", "session-start", {"session_id": "n3"})):
+            with self.subTest(tool=tool, event=event):
+                out = json.loads(self.hook(event, tool, data, Down()))
+                text = (out["additional_context"] if tool == "cursor"
+                        else out["hookSpecificOutput"]["additionalContext"])
+                self.assertIn("Korely memory of user_id repo:shop-api was not read "
+                              "(RuntimeError: read operation timed out", text)
+                self.assertIn("this session starts without it", text)
+                self.assertIn("hook.log has the line", text)
+                self.assertNotIn(key, text)  # masked as a session's text is
+        log = (Path(os.environ["KORELY_CONFIG_HOME"]) / "hook.log").read_text()
+        self.assertIn("user_id repo:shop-api: RuntimeError: read operation timed out", log)
+
+    def test_only_the_block_that_failed_is_replaced(self):
+        shared = FakeClient("- shared fact")
+
+        def factory(profile=None):
+            if profile:
+                raise RuntimeError("no such profile")
+            return shared
+
+        out = json.loads(hooks.run_hook(
+            "session-start", "claude-code", {"session_id": "n4", "cwd": str(self.repo)},
+            client_factory=factory, background=self.background.append, also_read=["gone"]))
+        text = out["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("shared fact", text)
+        self.assertNotIn("repo:shop-api was not read", text)
+        self.assertIn("Korely memory of profile gone was not read (RuntimeError: no such "
+                      "profile)", text)
+        self.assertLess(text.index("shared fact"), text.index("profile gone was not read"))
+
+    def test_an_empty_memory_still_adds_nothing(self):
+        self.assertEqual(self.hook("session-start", "claude-code", {"session_id": "n5"},
+                                   FakeClient("")), "")
+
+
+class KeyEnds(Base):
+    """Korely 1.0.23 says on every answer when the key ends
+    (Korely-Key-Expires-At); the hook never read it, so a key's end reached
+    the session as a 401 in hook.log. A real server in this process, and the
+    real client: the header has to travel the whole way."""
+
+    def _start(self, ends, also_read=()):
+        from datetime import datetime, timedelta, timezone
+
+        from test_client import _Server
+        from korely_memory import Korely
+
+        headers = {}
+        if ends is not None:
+            at = datetime.now(timezone.utc) + timedelta(days=ends)
+            headers["Korely-Key-Expires-At"] = at.isoformat(timespec="seconds")
+        server = _Server(lambda method, path: (200, headers, {
+            "context": "## Known facts\n- The team ships on Fridays", "tokens": 9,
+            "sources": ["fct_1"]}))
+        self.addCleanup(server.close)
+        with mock.patch.dict(os.environ, {"no_proxy": "*", "NO_PROXY": "*"}):
+            out = hooks.run_hook(
+                "session-start", "claude-code", {"session_id": "k1", "cwd": str(self.repo)},
+                client_factory=lambda profile=None: Korely(
+                    api_key="kor_self_hook_probe_0123456789", base_url=server.url,
+                    timeout=hooks.NETWORK_TIMEOUT),
+                background=self.background.append, also_read=also_read)
+        return json.loads(out)["hookSpecificOutput"]["additionalContext"]
+
+    def test_a_key_that_ends_within_two_weeks_is_one_line(self):
+        text = self._start(3.5)
+        self.assertIn("ships on Fridays", text)
+        self.assertIn("The Korely key these hooks use ends on ", text)
+        self.assertIn("UTC (in 3 days): after that Korely refuses its reads and writes (401)",
+                      text)
+        self.assertIn("`korely init --api-key <new key> --force`", text)
+        self.assertEqual(text.count("The Korely key"), 1)  # one key, read twice or not
+
+    def test_a_profile_key_names_its_profile(self):
+        text = self._start(0.2, also_read=["private"])
+        self.assertIn("The Korely key of the profile private ends on ", text)
+        self.assertIn("(in less than a day)", text)
+        self.assertIn("`korely init --api-key <new key> --force --profile private`", text)
+
+    def test_a_key_further_off_or_without_an_end_adds_nothing(self):
+        for ends in (hooks.KEY_WARN_DAYS + 1, None):
+            with self.subTest(ends=ends):
+                text = self._start(ends)
+                self.assertIn("ships on Fridays", text)
+                self.assertNotIn("Korely key", text)
+
+    def test_the_client_keeps_the_end_its_server_said(self):
+        from test_client import _Server
+        from korely_memory import Korely
+
+        answers = [(200, {"Korely-Key-Expires-At": "2026-12-01T09:00:00+00:00"}, {"ok": True}),
+                   (401, {}, {"code": "unauthorized", "message": "Invalid API key"})]
+        server = _Server(lambda method, path: answers.pop(0))
+        self.addCleanup(server.close)
+        k = Korely(api_key="kor_self_hook_probe_0123456789", base_url=server.url)
+        self.assertIsNone(k.key_expires_at)
+        with mock.patch.dict(os.environ, {"no_proxy": "*", "NO_PROXY": "*"}):
+            k.ping()
+            self.assertEqual(k.key_expires_at, "2026-12-01T09:00:00+00:00")
+            with self.assertRaises(Exception):
+                k.ping()
+        # a 401 carries no end: the one said stays, it is the same key
+        self.assertEqual(k.key_expires_at, "2026-12-01T09:00:00+00:00")
 
 
 class Tools(Base):

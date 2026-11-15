@@ -278,6 +278,11 @@ header, or None when it sent none. A rate limit sends it, and so does
 daily model budget is spent (until 00:00 UTC). The SDK does not retry on its
 own.
 
+A key that expires ends with a 401 like any wrong key. To see it coming:
+Korely 1.0.23 and later say on every answer to such a key when it ends, and
+the client keeps it as `korely.key_expires_at` (ISO 8601, UTC; None before the
+first answer, for a key that never ends and from an older server).
+
 ## CLI
 
 `pip install korely-memory` also installs `korely`, one command per API call,
@@ -517,9 +522,23 @@ key is told by its shape alone, with no list of vendors:
   session.
 
 A hook never breaks the assistant: a failure is a line in
-`~/.korely/hook.log`, without the text of the session. Turns that could not
+`~/.korely/hook.log`, without the text of the session. A read that fails (a
+timeout, a key that ended, no key) is also one line in what the assistant is
+handed, in the place of that memory: `Korely memory of user_id repo:<name>
+was not read (<the error>): this session starts without it`, with what looks
+like a key in the error masked. The other reads still go. Turns that could not
 be sent stay in the buffer and go with the next send; after the fifth failed
 send they are dropped, with a line in `hook.log` (`gave up on ...`).
+
+A key that expires ends without warning in a session: after its last day
+every read and write is a 401. Korely 1.0.23 and later say on every answer
+when the key ends (the `Korely-Key-Expires-At` header, kept by the client as
+`Korely.key_expires_at`), and when that is 14 days away or less, the window of
+the server's `key.expiring` webhook, the context the hooks hand the assistant
+(at the start and on the first prompt) ends with one line: when the key ends
+and the command that saves a new one (`korely init --api-key <new key>
+--force`, with `--profile <name>` for a profile's key). An older server does
+not say, and the hook adds nothing.
 
 | Tool | Files (this repository) | With `--global` (every repository) | Notes |
 |---|---|---|---|
