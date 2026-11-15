@@ -2270,6 +2270,17 @@ class SigningUpWithoutAKey(unittest.TestCase):
         self.assertIsInstance(r, AgentInitResult)
         self.assertEqual((r.api_key, r.tier, r.region), (self._MINTED["api_key"], "hobby", "eu-hel1"))
         self.assertEqual(r.quotas["agents"], 2)
+        self.assertEqual((r.expires_at, r.note), (None, None), "a server older than 1.0.10")
+
+    def test_the_key_s_end_and_the_trial_are_kept(self):
+        """The 201 of Korely Agent 1.0.10 and later: when the key stops working
+        (`expires_at`) and the trial in words (`note`). Dropped by the model,
+        `korely init --agent` could say neither (pre-tester check, 15 Nov)."""
+        answer = dict(self._MINTED, expires_at="2026-11-22T18:00:00Z",
+                      note="This key is valid for 7 days (expires_at).")
+        with self._answering(body=answer):
+            r = Korely.init_agent("claude-code")
+        self.assertEqual((r.expires_at, r.note), (answer["expires_at"], answer["note"]))
 
     def test_the_processing_region_is_sent_only_when_chosen(self):
         """2026-10-07: where the new project's memories are read by a model."""

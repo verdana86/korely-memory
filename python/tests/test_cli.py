@@ -577,6 +577,43 @@ class InitSignsUpThroughTheSdk(_CleanEnv):
         self.assertEqual(_json.loads(seen[0].data)["processing_region"], "eu")
         self.assertIn("processing eu", printed)
 
+    # A server since Korely Agent 1.0.10: the key ends (`expires_at`) and,
+    # until the account is adopted, it is on trial (`note`, in words); the
+    # monthly `quotas` apply once it is adopted. The numbers here are not the
+    # Cloud's, so a client that wrote 7 days or 40 writes itself fails.
+    _TRIAL = dict(_ANSWER, expires_at="2026-11-22T19:00:00+01:00",
+                  note=("This key is valid for 3 days (expires_at). Until the account is adopted "
+                        "it is on trial: 12 writes in all, and no other keys. Sign in to the "
+                        "dashboard (https://app.example/dashboard/a-long-path-that-is-not-cut) "
+                        "with this key to adopt the account."))
+
+    def test_it_says_when_the_key_ends_and_the_trial_in_the_servers_words(self):
+        """15 Nov 2026 (pre-tester check): `init --agent` said "a free hobby
+        key" and the monthly quotas, and never that the key ends in 7 days nor
+        the 40 writes of the trial, which the 201 carried."""
+        import json as _json
+
+        rc, printed, _ = self._signup(self._TRIAL)
+        self.assertEqual(rc, 0)
+        self.assertNotIn("hobby key", printed)
+        self.assertIn("expires 2026-11-22 18:00:00 UTC", printed)
+        flat = " ".join(printed.split())
+        self.assertIn(self._TRIAL["note"], flat, "the note, whole, a long address uncut")
+        self.assertIn("(https://app.example/dashboard/a-long-path-that-is-not-cut)", printed.split())
+        self.assertIn("2000 writes / 10000 queries per month · 2 agents, once the account is adopted",
+                      printed)
+        cfg = _json.loads(open(os.path.join(self.cfg_dir, "config.json"), encoding="utf-8").read())
+        self.assertEqual(cfg["expires_at"], "2026-11-22T19:00:00+01:00")
+
+    def test_with_json_the_end_and_the_note_are_in_the_answer(self):
+        import json as _json
+
+        rc, printed, _ = self._signup(self._TRIAL, "--json")
+        self.assertEqual(rc, 0)
+        data = _json.loads(printed)
+        self.assertEqual((data["expires_at"], data["note"]),
+                         (self._TRIAL["expires_at"], self._TRIAL["note"]))
+
     def test_left_out_the_server_chooses(self):
         import json as _json
 
@@ -666,6 +703,27 @@ class InitDoesNotLoseASavedKey(_CleanEnv):
         self.assertEqual(rc, 0)
         self.assertEqual(len(calls), 1)
         self.assertEqual(self._config()["api_key"], "kor_live_new1111111111111111111111111111")
+
+    def test_the_end_of_a_replaced_key_does_not_stay_with_the_new_one(self):
+        """The slot says when its key ends (`init --agent` saves `expires_at`):
+        the end of the key replaced is not the new key's, as its tier is not."""
+        import json as _json
+
+        with open(os.path.join(self.cfg_dir, "config.json"), "w", encoding="utf-8") as fh:
+            _json.dump(dict(self._OLD, expires_at="2026-11-22T18:00:00Z"), fh)
+        rc, _, _ = self._init(["init", "--api-key", "kor_self_mine", "--base-url",
+                               "https://mine.example", "--force"])
+        self.assertEqual(rc, 0)
+        self.assertEqual(self._config(), {"api_key": "kor_self_mine",
+                                          "base_url": "https://mine.example"})
+        with open(os.path.join(self.cfg_dir, "config.json"), "w", encoding="utf-8") as fh:
+            _json.dump(dict(self._OLD, expires_at="2026-11-22T18:00:00Z"), fh)
+        rc, _, _ = self._init(["init", "--agent", "--force"],
+                              answer={"api_key": "kor_live_new1111111111111111111111111111",
+                                      "tier": "hobby", "region": "eu-hel1",
+                                      "scopes": [], "quotas": {}})
+        self.assertEqual(rc, 0)
+        self.assertNotIn("expires_at", self._config(), "a server that sends no end")
 
     def test_saving_another_key_is_refused_too(self):
         rc, err, _ = self._init(["init", "--api-key", "kor_self_mine", "--base-url",
@@ -1253,7 +1311,9 @@ class DeleteAccountForgetsTheDeadKey(_CleanEnv, _RunsCommands):
     def _save(self, key):
         import json as _json
         with open(os.path.join(self.cfg_dir, "config.json"), "w", encoding="utf-8") as fh:
-            _json.dump({"api_key": key, "base_url": "https://api.korely.ai", "tier": "hobby"}, fh)
+            # What `init --agent` saves: the key, the server, its tier and its end.
+            _json.dump({"api_key": key, "base_url": "https://api.korely.ai", "tier": "hobby",
+                        "expires_at": "2026-11-22T18:00:00Z"}, fh)
 
     def _config(self):
         import json as _json

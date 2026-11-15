@@ -514,16 +514,18 @@ class Korely:
                    processing_region: Optional[str] = None,
                    base_url: Optional[str] = None, timeout: float = 30.0,
                    ca_file: Optional[str] = None, verify: bool = True) -> AgentInitResult:
-        """POST /v1/agents/init, with no key: sign up for a free hobby key.
+        """POST /v1/agents/init, with no key: sign up for a key that costs nothing.
 
         The one call that runs without a key, because it is how one is
         obtained, so it is a class method: ``Korely.init_agent("my-app")``,
         then ``Korely(api_key=result.api_key)``. ``agent_caller`` is a
         free-form label of who signed up, kept for your reference. The answer
-        carries the key, shown once (save it), its ``tier``, ``region``,
-        ``scopes`` and ``quotas``. The account it creates has no login: the
-        key is the account, and ``delete_account(confirm="<the account's id>")``
-        closes it.
+        carries the key, shown once (save it), when it stops working
+        (``expires_at``), the trial in words (``note``: its limits until the
+        account is adopted, and how to adopt it), its ``tier``, ``region``,
+        ``scopes`` and ``quotas`` (the monthly numbers once adopted). The
+        account it creates has no login: the key is the account, and
+        ``delete_account(confirm="<the account's id>")`` closes it.
 
         ``processing_region`` chooses where the new project's memories are
         read by a model: ``"eu"`` (gpt-oss-120b on Scaleway, Paris) or

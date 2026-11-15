@@ -680,13 +680,19 @@ class AccountDeleteReceipt:
 
 @dataclass
 class AgentInitResult:
-    """What ``Korely.init_agent()`` answers: a new hobby key and what it buys.
+    """What ``Korely.init_agent()`` answers: a new key, when it ends, and what
+    the account may do.
 
     ``api_key`` is shown this once and never again, so save it (``korely
     init`` writes it to ~/.korely/config.json). It is left out of ``repr()``:
     printing the result, or a traceback that shows it, does not put the key in
-    a log. ``quotas`` is the hobby allowance (``writes_per_month``,
-    ``queries_per_month``, ``agents``, the monthly AI budget)."""
+    a log. ``expires_at`` is when the key stops working and ``note`` says, in
+    the server's words, how long the key lasts, the trial's limits until the
+    account is adopted, and how to adopt it (both from Korely Agent 1.0.10,
+    None from an older server). ``quotas`` is the free plan's monthly
+    allowance (``writes_per_month``, ``queries_per_month``, ``agents``, the
+    monthly AI budget): with a ``note``, it applies once the account is
+    adopted, and until then the trial's limits do."""
     api_key: Optional[str] = field(default=None, repr=False)
     tier: Optional[str] = None
     region: Optional[str] = None
@@ -694,6 +700,10 @@ class AgentInitResult:
     processing_region: Optional[str] = None
     scopes: List[str] = field(default_factory=list)
     quotas: dict = field(default_factory=dict)
+    # When the key stops working (ISO 8601, with its time zone), and the
+    # trial in words. None from a server older than Korely Agent 1.0.10.
+    expires_at: Optional[str] = None
+    note: Optional[str] = None
     # The Terms of Service and the Privacy Policy that creating the account
     # accepts. None from a server older than Korely Agent 0.1.27.
     terms_url: Optional[str] = None

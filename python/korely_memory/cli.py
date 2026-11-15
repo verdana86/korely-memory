@@ -19,6 +19,7 @@ import dataclasses
 import json
 import os
 import sys
+import textwrap
 from pathlib import Path
 from typing import Any, List, Optional
 
@@ -345,7 +346,7 @@ def cmd_delete_account(k: Korely, a) -> int:
     forgot = cfg.get("api_key") == k.api_key
     if forgot:
         cfg.pop("api_key", None)
-        cfg.pop("tier", None)
+        _forget_what_was_said_of_the_key(cfg)
         _save_config(cfg)
     if a.json:
         _emit_json(r)  # {"deleted": true, "removed": {...}}, the API's shape
@@ -775,8 +776,25 @@ def cmd_batch_status(k: Korely, a) -> int:
     return 0
 
 
+def _forget_what_was_said_of_the_key(slot: dict) -> None:
+    """A profile keeps, next to its key, what the server said of that key when
+    it was saved: its plan (`tier`) and when it stops working (`expires_at`,
+    from `init --agent`). Another key in the slot, or none, makes them the old
+    key's: every place that changes the key calls this, so none keeps one."""
+    for said in ("tier", "expires_at"):
+        slot.pop(said, None)
+
+
+def _print_wrapped(label: str, words: str) -> None:
+    """A sentence of the server under a label, wrapped at the width of the
+    other lines. An address is never cut: a broken URL is not one any more."""
+    print(textwrap.fill(words, width=78, initial_indent=label,
+                        subsequent_indent=" " * len(label),
+                        break_long_words=False, break_on_hyphens=False))
+
+
 def _init_key(args) -> int:
-    """Self-serve signup: mint a hobby key with no Firebase, save it locally.
+    """Self-serve signup: mint a key with no Firebase, save it locally.
 
     The one command that runs WITHOUT a key: it is how you get one. Calls
     POST /v1/agents/init (Korely.init_agent), writes the key to
@@ -838,7 +856,7 @@ def _init_key(args) -> int:
         cfg = _load_config()
         slot = _profile_slot(cfg, profile)
         if slot.get("api_key") != given:
-            slot.pop("tier", None)  # the plan of the key this one replaces
+            _forget_what_was_said_of_the_key(slot)  # the key this one replaces
         slot["api_key"] = given
         slot["base_url"] = base
         ids = _put_identity(slot, args)
@@ -882,11 +900,17 @@ def _init_key(args) -> int:
         return 1
     cfg = _load_config()
     slot = _profile_slot(cfg, profile)
-    slot.pop("tier", None)  # the plan of a key replaced with --force
+    _forget_what_was_said_of_the_key(slot)  # a key replaced with --force
     slot["api_key"] = key
     slot["base_url"] = base
     if result.tier:
         slot["tier"] = result.tier
+    if result.expires_at:
+        # When the key stops working, as the 201 said (Korely Agent 1.0.10):
+        # the file is where the key is, and the end travels with it. Adopting
+        # the account moves the end (GET /admin/keys says the new one, and
+        # every answer's Korely-Key-Expires-At header, which the hooks read).
+        slot["expires_at"] = result.expires_at
     ids = _put_identity(slot, args)
     path = _save_config(cfg)
 
@@ -894,13 +918,27 @@ def _init_key(args) -> int:
         _emit_json(dict(dataclasses.asdict(result), **ids))
         return 0
 
+    # What the 201 says, and only that (pre-tester check, 15 Nov 2026): this
+    # said "a free hobby key" and the monthly quotas, and never that the key
+    # ends in 7 days nor the trial's 40 writes, which the server sent in
+    # `expires_at` and `note`. The numbers stay the server's: none is written
+    # here, so none goes stale when the Cloud changes them.
     q = result.quotas or {}
-    print(f"You're set: a free hobby key was minted and saved to {path} (chmod 600).")
+    print(f"You're set: a key was minted and saved to {path} (chmod 600).")
     print(f"  key     {_mask(key)}")
     print(f"  tier    {result.tier}    region {result.region}{_processing(result)}")
+    if result.expires_at:
+        print(f"  expires {_utc_moment(result.expires_at)} UTC")
+    if result.note:
+        _print_wrapped("  note    ", result.note)
     if q:
+        # The 201's `quotas` are the free plan's monthly numbers, which apply
+        # once the account is adopted; until then the trial's, in `note`
+        # (the server's description of the field). A server older than
+        # 1.0.10 sends no note: it had no trial, and the numbers held at once.
+        once = ", once the account is adopted" if result.note else ""
         print(f"  quotas  {q.get('writes_per_month')} writes / "
-              f"{q.get('queries_per_month')} queries per month · {q.get('agents')} agents")
+              f"{q.get('queries_per_month')} queries per month · {q.get('agents')} agents{once}")
     # Creating the account accepts the Terms and the Privacy Policy (the
     # founder's decision of 11 Oct 2026): the server says which, from 0.1.27.
     if result.terms_url and result.privacy_url:
@@ -1240,7 +1278,7 @@ def cmd_keys(k: Korely, a) -> int:
             # Straight into a profile, never on the screen nor in the
             # terminal's scrollback.
             slot = _profile_slot(cfg, a.save_as)
-            slot.pop("tier", None)
+            _forget_what_was_said_of_the_key(slot)
             slot["api_key"] = secret
             slot["base_url"] = k.base_url
             path = _save_config(cfg)
@@ -1331,7 +1369,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="save this key instead of signing up (self-hosted: the "
                          "key your own dashboard minted)")
     sp.add_argument("--agent", action="store_true",
-                    help="agent self-signup (default; mints an anonymous hobby account)")
+                    help="agent self-signup (default): an account with no login and its key, "
+                         "on trial until adopted; it prints when the key ends")
     sp.add_argument("--agent-caller", help="who is signing up, e.g. 'claude-code'")
     sp.add_argument("--base-url", help="API base URL (default https://api.korely.ai)")
     sp.add_argument("--processing-region", choices=["eu", "global"],
