@@ -167,6 +167,12 @@ def config_path() -> str:
     return os.path.join(home, "config.json")
 
 
+def _profile_name(profile: Optional[str] = None) -> str:
+    """The profile a read of the config file goes to: the one named, else
+    KORELY_PROFILE, else "default" (the file's top level)."""
+    return profile or os.environ.get("KORELY_PROFILE") or "default"
+
+
 def profile_config(profile: Optional[str] = None) -> dict:
     """The saved settings of one profile: the file's top level for the default
     profile, its `profiles[<name>]` for a named one (`korely init --profile`),
@@ -180,8 +186,8 @@ def profile_config(profile: Optional[str] = None) -> dict:
         return {}
     if not isinstance(data, dict):
         return {}
-    name = profile or os.environ.get("KORELY_PROFILE") or None
-    if not name or name == "default":
+    name = _profile_name(profile)
+    if name == "default":
         return data
     named = (data.get("profiles") or {}).get(name)
     return named if isinstance(named, dict) else {}
@@ -430,6 +436,12 @@ class Korely:
     #: 500) leaves the value as it was: one client sends one key.
     key_expires_at: Optional[str] = None
 
+    #: The profile of the config file whose saved key this client sends
+    #: ("default" for the file's top level); None for a key given as
+    #: ``api_key`` or by KORELY_API_KEY, which ``korely init`` does not write.
+    #: Set by the constructor, in the order it reads the key.
+    _key_profile: Optional[str] = None
+
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -462,6 +474,8 @@ class Korely:
                               f"`korely init --api-key <key> --profile {profile}`.")
         env = {} if profile else os.environ
         self.api_key = api_key or env.get("KORELY_API_KEY") or _key_from_config(profile)
+        self._key_profile = (None if api_key or env.get("KORELY_API_KEY")
+                             else _profile_name(profile))
         if not self.api_key:
             raise KorelyError(
                 "No API key. Pass api_key='kor_live_...', set KORELY_API_KEY, "

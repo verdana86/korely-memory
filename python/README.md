@@ -525,8 +525,8 @@ A hook never breaks the assistant: a failure is a line in
 `~/.korely/hook.log`, without the text of the session. A read that fails (a
 timeout, a key that ended, no key) is also one line in what the assistant is
 handed, in the place of that memory: `Korely memory of user_id repo:<name>
-was not read (<the error>): this session starts without it`, with what looks
-like a key in the error masked. The other reads still go. Turns that could not
+was not read (<the error>): it is missing from this context`, with what
+looks like a key in the error masked. The other reads still go. Turns that could not
 be sent stay in the buffer and go with the next send; after the fifth failed
 send they are dropped, with a line in `hook.log` (`gave up on ...`).
 
@@ -536,9 +536,15 @@ when the key ends (the `Korely-Key-Expires-At` header, kept by the client as
 `Korely.key_expires_at`), and when that is 14 days away or less, the window of
 the server's `key.expiring` webhook, the context the hooks hand the assistant
 (at the start and on the first prompt) ends with one line: when the key ends
-and the command that saves a new one (`korely init --api-key <new key>
---force`, with `--profile <name>` for a profile's key). An older server does
-not say, and the hook adds nothing.
+and how to put a new one where the hooks read this one. For a key saved by
+`korely init`, the command is `korely init --api-key <new key> --force` with
+the profile the key was read from (`--profile <name>`, the one of
+`KORELY_PROFILE` included) and `--base-url <server>` for a server other than
+`https://api.korely.ai`; for a key from `KORELY_API_KEY`, the line says to
+change that variable, which `korely init` does not write. On the Cloud it adds
+that a key `korely init --agent` made, whose account nobody has signed in to,
+needs no new key: signing in to the dashboard with it lifts its end. An older
+server does not say, and the hook adds nothing.
 
 | Tool | Files (this repository) | With `--global` (every repository) | Notes |
 |---|---|---|---|

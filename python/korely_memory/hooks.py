@@ -566,26 +566,42 @@ def _not_read(what: str, error: BaseException) -> str:
     hook.log knew. The error's kind and words, masked as a session's text
     is (`redact`) and kept to REASON_CHARS on one line."""
     reason = " ".join(_clip(redact(f"{type(error).__name__}: {error}"), REASON_CHARS).split())
-    return (f"Korely memory of {what} was not read ({reason}): this session starts without "
-            f"it. {_shown(_home() / 'hook.log')} has the line.")
+    # Said of this context, not of the session: on the first prompt the
+    # start's blocks may already be there.
+    return (f"Korely memory of {what} was not read ({reason}): it is missing from this "
+            f"context. {_shown(_home() / 'hook.log')} has the line.")
 
 
 def _moment(value: Any) -> Optional[datetime]:
-    """An ISO 8601 moment as an aware datetime (no offset: UTC), or None."""
+    """An ISO 8601 moment in UTC (no offset: UTC), or None, also for one
+    that UTC cannot hold: `0001-01-01T00:30:00+01:00` is a year 0, and its
+    OverflowError, raised after the reads, took the blocks already read
+    out of the hook's answer."""
     if not isinstance(value, str) or not value.strip():
         return None
     try:
         at = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
-    except ValueError:
+        return (at if at.tzinfo is not None else at.replace(tzinfo=timezone.utc)) \
+            .astimezone(timezone.utc)
+    except (ValueError, OverflowError):
         return None
-    return at if at.tzinfo is not None else at.replace(tzinfo=timezone.utc)
 
 
-def _key_ends(client: Any, whose: str, profile: Optional[str]) -> str:
+def _key_ends(client: Any, whose: str) -> str:
     """One line when the key `client` sends ends within KEY_WARN_DAYS, as
     the server's last answer said (`Korely.key_expires_at`); "" for a key
     that never ends, one further off, a server that does not say, and an
-    end that cannot be read."""
+    end that cannot be read.
+
+    What to do names where the client found the key (`Korely._key_profile`):
+    a profile's saved key is replaced by `korely init --force` with that
+    profile, KORELY_PROFILE's included, which `korely init` does not read;
+    a key from KORELY_API_KEY (the hooks pass none as an argument) by the
+    variable, which `korely init` does not write. A `korely init --force`
+    of the other profile would have replaced a key that does not end, lost
+    for good, and left this one in place. On the Cloud, the key of an
+    account `korely init --agent` made and nobody adopted lasts 7 days, and
+    signing in to the dashboard with it lifts that end: no new key."""
     ends = _moment(getattr(client, "key_expires_at", None))
     if ends is None:
         return ""
@@ -594,11 +610,29 @@ def _key_ends(client: Any, whose: str, profile: Optional[str]) -> str:
         return ""
     days = left.days
     when = "in less than a day" if days < 1 else f"in {days} day{'' if days == 1 else 's'}"
-    save = "korely init --api-key <new key> --force" + (f" --profile {profile}" if profile else "")
-    return (f"The Korely key {whose} ends on "
-            f"{ends.astimezone(timezone.utc):%Y-%m-%d %H:%M} UTC ({when}): after that Korely "
-            f"refuses its reads and writes (401). Make a new key in the Korely dashboard and "
-            f"save it with `{save}`.")
+    from .client import _REGIONS, _is_ours as _the_service
+
+    server = str(getattr(client, "base_url", "") or "")
+    saved = getattr(client, "_key_profile", None)
+    if saved is None:
+        how = ("put it in KORELY_API_KEY, where these hooks read this one (`korely init` "
+               "does not change that variable)")
+    else:
+        # `korely init --api-key` saves the server of --base-url, else of
+        # KORELY_BASE_URL, else the Cloud's: any other server is named, or
+        # init refuses a key of one's own server (`_refuse_a_mismatched_pair`).
+        # Of an address only a user:password is masked: `redact` would also
+        # take a long host name for a key, and the command would save that.
+        named = _URL_CREDENTIALS.sub(r"\1[redacted]@", server)
+        how = ("save it with `korely init --api-key <new key> --force"
+               + ("" if server == _REGIONS["eu"] else f" --base-url {named}")
+               + ("" if saved == "default" else f" --profile {saved}") + "`")
+    trial = (" A key `korely init --agent` made, whose account nobody has signed in to yet, "
+             "needs no new key: signing in to the Korely dashboard with it lifts that end."
+             if _the_service(server) else "")
+    return (f"The Korely key {whose} ends on {ends:%Y-%m-%d %H:%M} UTC ({when}): after that "
+            f"Korely refuses its reads and writes (401). Make a new key in the Korely "
+            f"dashboard and {how}.{trial}")
 
 
 def _context_text(client_factory: Callable[..., Any], scope: str, repo: str, query: str,
@@ -643,7 +677,7 @@ def _context_text(client_factory: Callable[..., Any], scope: str, repo: str, que
         except Exception as e:  # noqa: BLE001 - the other blocks still go
             _log(f"{what}: {type(e).__name__}: {e}")
             blocks.append(_not_read(what, e))
-    blocks += [_key_ends(c, "these hooks use" if p is None else f"of the profile {p}", p)
+    blocks += [_key_ends(c, "these hooks use" if p is None else f"of the profile {p}")
                for p, c in made.items()]
     return "\n\n".join(b for b in blocks if b)
 

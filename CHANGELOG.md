@@ -10,8 +10,10 @@ and a batch `timestamp` is refused there with a 422.
 
 ## Unreleased
 
-Nothing to change in code written for Python 0.2.0 or npm 0.2.0: every
-addition is sent only when asked for.
+Code written for Python 0.2.0 or npm 0.2.0 needs no change: every addition
+is sent only when asked for. One change for scripts: `korely init --tool
+<tool> --no-mcp`, and `--remove --no-mcp`, no longer remove a `korely` MCP
+server (the last entry of Python below).
 
 ### Python
 
@@ -33,9 +35,9 @@ addition is sent only when asked for.
   left its memory out and said nothing to the assistant, as if the memory
   were empty; only `~/.korely/hook.log` knew. In its place the context now
   has one line, `Korely memory of user_id repo:<name> was not read (<the
-  error>): this session starts without it`, with what looks like a key in
-  the error masked; the other reads still go, and the line in `hook.log`
-  stays. When every read fails, the assistant is now handed these lines
+  error>): it is missing from this context`, with what looks like a key in
+  the error masked, on one line of at most 300 characters; the other reads
+  still go, and the line in `hook.log` stays. When every read fails, the assistant is now handed these lines
   where it was handed nothing.
 - `Korely.key_expires_at`: when the key the client sends ends, as Korely
   1.0.23 and later say on every answer to a key that expires
@@ -44,9 +46,15 @@ addition is sent only when asked for.
   the value.
 - `korely hook` warns before the key ends: when its end is 14 days away or
   less (the window of the server's `key.expiring` webhook), the context it
-  hands the assistant ends with one line saying when, and the command that
-  saves a new key. Up to 0.2.0 the end reached a session as 401s in
-  `hook.log`.
+  hands the assistant ends with one line saying when, and how to put a new
+  key where the hooks read this one: `korely init --api-key <new key>
+  --force` with the profile it was read from (`--profile <name>`, the one of
+  `KORELY_PROFILE` included) and `--base-url` for a server other than
+  api.korely.ai, or, for a key from `KORELY_API_KEY`, that variable. On the
+  Cloud it adds that a key `korely init --agent` made needs no new key:
+  signing in to the dashboard with it lifts its end. Up to 0.2.0 the end
+  reached a session as 401s in `hook.log`. An end the hook cannot read
+  adds nothing and takes nothing out.
 - `korely init --tool <tool> --no-mcp` touches no MCP setting. Up to 0.2.0
   it removed a server named `korely` (`claude mcp remove`, or the entry in
   `.cursor/mcp.json` and `.codex/config.toml`) and added none, so a hooks-only
