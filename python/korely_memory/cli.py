@@ -208,6 +208,18 @@ def _utc_moment(value: Optional[str]) -> str:
     return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _key_end(value: str) -> str:
+    """When a key stops working, read as the hooks' warning reads it
+    (`hooks._moment`): its UTC time followed by "UTC", or the server's text
+    as it came when it is not a moment this Python can read (an offset
+    written `+0100` before Python 3.11), so "UTC" is never said of a time
+    that was not converted."""
+    from .hooks import _moment
+
+    at = _moment(value)
+    return f"{at:%Y-%m-%d %H:%M:%S} UTC" if at else str(value)
+
+
 def _snippet(text: Optional[str], width: int = 80) -> str:
     """A memory on one line of a listing: whitespace folded, cut at `width`."""
     one = " ".join((text or "").split())
@@ -249,15 +261,25 @@ def cmd_auth(k: Korely, a) -> int:
     # GET /v1/ping (2026-10-06): no scope, no rate limit, no quota. It was
     # GET /v1/users, which needs memories:read, so a write-only key failed
     # the check it was meant to pass, and every check spent a query.
+    #
+    # The key's end is the one the server says now, on the answer's
+    # Korely-Key-Expires-At header (`Korely.key_expires_at`, Korely 1.0.23
+    # and later): the `expires_at` `init --agent` saved is the end given at
+    # signup, and adopting the account moves it. No header, no line: a key
+    # that never ends and an older server look the same.
     p = k.ping()
+    ends = k.key_expires_at
     if a.json:
         _emit_json({"authenticated": bool(p.ok), "key": _mask(k.api_key),
                     "base_url": k.base_url, "tier": p.tier, "region": p.region,
                     **({"processing_region": p.processing_region} if p.processing_region else {}),
-                    "scopes": p.scopes})
+                    "scopes": p.scopes,
+                    **({"key_expires_at": ends} if ends else {})})
     else:
         print(f"Authenticated  key {_mask(k.api_key)}  base {k.base_url}")
         print(f"tier {p.tier}  region {p.region}{_processing(p)}  scopes {', '.join(p.scopes) or '(none)'}")
+        if ends:
+            print(f"key ends {_key_end(ends)}")
     return 0
 
 
@@ -343,10 +365,18 @@ def cmd_delete_account(k: Korely, a) -> int:
     # none, or another, nothing is sent but GET /admin/whoami, and the error
     # names the id. The key leaves the file only on the server's `deleted`.
     r = k._delete_account(a.confirm, typed_as="re-run it with --confirm {}")
-    forgot = cfg.get("api_key") == k.api_key
+    # Every place of the file that holds the dead key: the top level and any
+    # profile (`--profile`, KORELY_PROFILE, or a key saved twice). Only the
+    # top level was looked at, so a profile kept a key that answers 401.
+    profiles = cfg.get("profiles")
+    slots = [cfg] + [s for s in (profiles.values() if isinstance(profiles, dict) else ())
+                     if isinstance(s, dict)]
+    holding = [s for s in slots if s.get("api_key") == k.api_key]
+    for slot in holding:
+        slot.pop("api_key", None)
+        _forget_what_was_said_of_the_key(slot)
+    forgot = bool(holding)
     if forgot:
-        cfg.pop("api_key", None)
-        _forget_what_was_said_of_the_key(cfg)
         _save_config(cfg)
     if a.json:
         _emit_json(r)  # {"deleted": true, "removed": {...}}, the API's shape
@@ -908,8 +938,9 @@ def _init_key(args) -> int:
     if result.expires_at:
         # When the key stops working, as the 201 said (Korely Agent 1.0.10):
         # the file is where the key is, and the end travels with it. Adopting
-        # the account moves the end (GET /admin/keys says the new one, and
-        # every answer's Korely-Key-Expires-At header, which the hooks read).
+        # the account moves the end, and this stays the one given at signup:
+        # `korely auth` prints the current one, from the header every answer
+        # carries (Korely-Key-Expires-At, which the hooks read too).
         slot["expires_at"] = result.expires_at
     ids = _put_identity(slot, args)
     path = _save_config(cfg)
@@ -918,9 +949,9 @@ def _init_key(args) -> int:
         _emit_json(dict(dataclasses.asdict(result), **ids))
         return 0
 
-    # What the 201 says, and only that (pre-tester check, 15 Nov 2026): this
-    # said "a free hobby key" and the monthly quotas, and never that the key
-    # ends in 7 days nor the trial's 40 writes, which the server sent in
+    # What the 201 says, and only that (15 Nov 2026): this said "a free
+    # hobby key" and the monthly quotas, and never that the key ends in 7
+    # days nor the trial's 40 writes, which the server sent in
     # `expires_at` and `note`. The numbers stay the server's: none is written
     # here, so none goes stale when the Cloud changes them.
     q = result.quotas or {}
@@ -928,7 +959,7 @@ def _init_key(args) -> int:
     print(f"  key     {_mask(key)}")
     print(f"  tier    {result.tier}    region {result.region}{_processing(result)}")
     if result.expires_at:
-        print(f"  expires {_utc_moment(result.expires_at)} UTC")
+        print(f"  expires {_key_end(result.expires_at)}")
     if result.note:
         _print_wrapped("  note    ", result.note)
     if q:

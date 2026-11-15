@@ -2275,7 +2275,7 @@ class SigningUpWithoutAKey(unittest.TestCase):
     def test_the_key_s_end_and_the_trial_are_kept(self):
         """The 201 of Korely Agent 1.0.10 and later: when the key stops working
         (`expires_at`) and the trial in words (`note`). Dropped by the model,
-        `korely init --agent` could say neither (pre-tester check, 15 Nov)."""
+        `korely init --agent` could say neither (15 Nov 2026)."""
         answer = dict(self._MINTED, expires_at="2026-11-22T18:00:00Z",
                       note="This key is valid for 7 days (expires_at).")
         with self._answering(body=answer):

@@ -551,7 +551,11 @@ class InitSignsUpThroughTheSdk(_CleanEnv):
                                "base_url": "https://api.korely.ai", "tier": "hobby"})
         self.assertIn("kor_live_…cdef", out.getvalue())
         self.assertNotIn("0123456789abcdef0123", out.getvalue())
-        self.assertIn("2000 writes / 10000 queries per month", out.getvalue())
+        # The whole line: a server that sends no note (before 1.0.10) had no
+        # trial, so its quotas held at once, with nothing after them.
+        self.assertIn("  quotas  2000 writes / 10000 queries per month · 2 agents",
+                      out.getvalue().splitlines())
+        self.assertNotIn("expires", out.getvalue())
         self.assertNotIn("Terms", out.getvalue(), "a server older than 0.1.27 names none")
 
     def test_it_says_what_creating_the_account_accepts(self):
@@ -588,7 +592,7 @@ class InitSignsUpThroughTheSdk(_CleanEnv):
                         "with this key to adopt the account."))
 
     def test_it_says_when_the_key_ends_and_the_trial_in_the_servers_words(self):
-        """15 Nov 2026 (pre-tester check): `init --agent` said "a free hobby
+        """15 Nov 2026: `init --agent` said "a free hobby
         key" and the monthly quotas, and never that the key ends in 7 days nor
         the 40 writes of the trial, which the 201 carried."""
         import json as _json
@@ -604,6 +608,17 @@ class InitSignsUpThroughTheSdk(_CleanEnv):
                       printed)
         cfg = _json.loads(open(os.path.join(self.cfg_dir, "config.json"), encoding="utf-8").read())
         self.assertEqual(cfg["expires_at"], "2026-11-22T19:00:00+01:00")
+
+    def test_an_end_that_is_not_read_as_a_moment_is_not_called_utc(self):
+        """An end this Python cannot read as ISO (an offset written `+0100`
+        before Python 3.11, or this RFC 2822 date on any) came out as the
+        server wrote it, followed by "UTC": an hour off. It is said only of a
+        time converted to UTC."""
+        unread = "Sun, 22 Nov 2026 17:39:45 +0100"
+        rc, printed, _ = self._signup(dict(self._TRIAL, expires_at=unread))
+        self.assertEqual(rc, 0)
+        self.assertIn(f"  expires {unread}", printed.splitlines())
+        self.assertNotIn("UTC", printed)
 
     def test_with_json_the_end_and_the_note_are_in_the_answer(self):
         import json as _json
@@ -725,6 +740,19 @@ class InitDoesNotLoseASavedKey(_CleanEnv):
         self.assertEqual(rc, 0)
         self.assertNotIn("expires_at", self._config(), "a server that sends no end")
 
+    def test_the_same_key_saved_again_keeps_its_tier_and_its_end(self):
+        """What was said of a key stays while the key does: only another key
+        (or none) makes it the old key's."""
+        import json as _json
+
+        kept = dict(self._OLD, expires_at="2026-11-22T18:00:00Z")
+        with open(os.path.join(self.cfg_dir, "config.json"), "w", encoding="utf-8") as fh:
+            _json.dump(kept, fh)
+        rc, _, calls = self._init(["init", "--api-key", self._OLD["api_key"]])
+        self.assertEqual(rc, 0)
+        self.assertEqual(calls, [])
+        self.assertEqual(self._config(), kept)
+
     def test_saving_another_key_is_refused_too(self):
         rc, err, _ = self._init(["init", "--api-key", "kor_self_mine", "--base-url",
                                  "https://mine.example"])
@@ -803,6 +831,56 @@ class AuthSpendsNothing(unittest.TestCase):
             rc = cli.main(["auth", "--api-key", "kor_live_test"])
         self.assertEqual(rc, 1)
         self.assertIn("[invalid_key]", err.getvalue())
+
+
+class AuthSaysWhenTheKeyEnds(_CleanEnv):
+    """No command said when a key ends after `init --agent`, and the end it
+    saved goes stale when the account is adopted. `korely auth` prints the
+    one the server says now, on its Korely-Key-Expires-At header: a real
+    server in this process and the real client, for the header to travel."""
+
+    KEY = "kor_self_AAAAAAAAauthkeyendBBBBBBBBB"
+    _PING = {"ok": True, "tier": "hobby", "region": "eu-hel1", "scopes": ["admin"]}
+
+    def _auth(self, headers, *extra):
+        from test_client import _Server
+
+        os.environ.update({"no_proxy": "*", "NO_PROXY": "*"})
+        server = _Server(lambda m, p: (200, dict(headers), dict(self._PING)))
+        self.addCleanup(server.close)
+        out = io.StringIO()
+        with redirect_stdout(out), redirect_stderr(io.StringIO()):
+            rc = cli.main(["auth", "--api-key", self.KEY, "--base-url", server.url, *extra])
+        self.assertEqual(rc, 0)
+        self.assertEqual(server.seen[0][:2], ("GET", "/v1/ping"))
+        return out.getvalue()
+
+    def test_it_prints_the_end_the_server_says_now(self):
+        import json as _json
+
+        ends = {"Korely-Key-Expires-At": "2027-11-22T18:00:00+01:00"}
+        self.assertIn("key ends 2027-11-22 17:00:00 UTC", self._auth(ends).splitlines())
+        data = _json.loads(self._auth(ends, "--json"))
+        self.assertEqual(data["key_expires_at"], "2027-11-22T18:00:00+01:00")
+
+    def test_no_header_no_line(self):
+        """A key that never ends and a server before 1.0.23 send none: the
+        command does not tell them apart, nor make an end up."""
+        import json as _json
+
+        self.assertNotIn("key ends", self._auth({}))
+        self.assertNotIn("key_expires_at", _json.loads(self._auth({}, "--json")))
+
+    def test_the_saved_end_is_not_the_one_printed(self):
+        """The end `init --agent` saved is the signup's: adopting the account
+        moves it, and the server's answer is the one that holds."""
+        import json as _json
+
+        with open(os.path.join(self.cfg_dir, "config.json"), "w", encoding="utf-8") as fh:
+            _json.dump({"api_key": self.KEY, "expires_at": "2026-11-22T18:00:00Z"}, fh)
+        printed = self._auth({"Korely-Key-Expires-At": "2027-11-15T09:00:00Z"})
+        self.assertIn("key ends 2027-11-15 09:00:00 UTC", printed.splitlines())
+        self.assertNotIn("2026-11-22", printed)
 
 
 class SearchTakesTheApiDefault(unittest.TestCase):
@@ -1379,6 +1457,27 @@ class DeleteAccountForgetsTheDeadKey(_CleanEnv, _RunsCommands):
                          ("DELETE", "/v1/account", {"confirm": self._ACCOUNT}))
         self.assertIn("removed: 12 memories, 30 facts, 1 keys", out)
         self.assertEqual(self._config(), {"base_url": "https://api.korely.ai"})
+
+    def test_the_dead_key_leaves_every_profile_that_holds_it(self):
+        """Only the file's top level was compared: a key saved with
+        `--profile` stayed in its profile after its account was deleted, with
+        its end, and every command of that profile got a 401."""
+        import json as _json
+
+        with open(os.path.join(self.cfg_dir, "config.json"), "w", encoding="utf-8") as fh:
+            _json.dump({"api_key": "kor_live_another_key", "base_url": "https://api.korely.ai",
+                        "profiles": {
+                            "work": {"api_key": "kor_live_test", "base_url": "https://api.korely.ai",
+                                     "tier": "hobby", "expires_at": "2026-11-22T18:00:00Z"},
+                            "home": {"api_key": "kor_live_kept", "tier": "pro"}}}, fh)
+        rec = self._whoami().queue(200, {"deleted": True, "removed": {}})
+        rc, out = self._run(rec, ["delete-account", "--confirm", self._ACCOUNT])
+        self.assertEqual(rc, 0)
+        self.assertIn("and the key from", out)
+        self.assertEqual(self._config(), {
+            "api_key": "kor_live_another_key", "base_url": "https://api.korely.ai",
+            "profiles": {"work": {"base_url": "https://api.korely.ai"},
+                         "home": {"api_key": "kor_live_kept", "tier": "pro"}}})
 
     def test_a_different_saved_key_is_left_alone(self):
         self._save("kor_live_another_key")
