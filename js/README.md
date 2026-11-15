@@ -209,8 +209,10 @@ and with `require`, from Node 18. `korely` is the command of the Python
 package (`pip install korely-memory`); this package has none. An argument
 comes first, then the environment, then that file. A browser or an edge
 runtime has no such file. With no key from any of them it throws
-`KorelyError` "No API key", which says how to make one from here:
-`Korely.initAgent()`.
+`KorelyError` "No API key", which says to make a key once, by hand (a cURL
+of `POST /v1/agents/init`, which it gives, or `Korely.initAgent()` run once:
+each call makes a new account), then to set `KORELY_API_KEY`, and names the
+config file it read.
 
 ### Your own server (Self-hosted)
 

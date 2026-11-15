@@ -73,11 +73,22 @@ server (the last entry of Python below).
   numbers that apply once the account is adopted; it saves the end next to
   the key in `~/.korely/config.json` (`expires_at`, as the server wrote it).
   Adopting the account moves the end, and the saved one stays the end given
-  at signup: `GET /admin/keys` says the new one. A key replaced in a profile
+  at signup: `korely auth` says the current one (below). An end that this
+  Python cannot read as a moment is printed as the server wrote it, without
+  "UTC". A key replaced in a profile
   (`init --force`, `init --api-key`, `keys create --save-as`, or taken out
   by `delete-account`) no longer leaves its end behind, as its tier did not.
   `AgentInitResult` gains `expires_at` and `note` (None from a server older
   than Korely Agent 1.0.10), and `--json` prints them.
+- `korely auth` prints when the key ends (`key ends <UTC moment> UTC`, and
+  `key_expires_at` with `--json`), as the server says it now on the answer's
+  `Korely-Key-Expires-At` header (Korely 1.0.23 and later). Up to 0.2.0 no
+  command showed a key's end. No header, no line: a key that never ends and
+  an older server are not told apart.
+- `korely delete-account` removes the dead key from every profile of the
+  config file that holds it. Up to 0.2.0 it compared only the file's top
+  level, so a key saved with `--profile` stayed in its profile and every
+  command of that profile was answered 401.
 
 ### npm
 
@@ -87,9 +98,12 @@ server (the last entry of Python below).
   (`search: unknown option types.`).
 - The "No API key" error says what a Node user does. Up to 0.2.0 it said to
   run `korely init`, a command this package does not have (it comes with
-  the Python package). Now it names `Korely.initAgent()`, the call of this
-  package that makes a key on Korely Cloud, the dashboard of a Self-hosted
-  install, and that a key `korely init` saved is read on Node.
+  the Python package). Now it says to make a key once, by hand, with the
+  README's cURL (or `Korely.initAgent()` run once, since each call makes a
+  new account), then to set `KORELY_API_KEY`; that a Self-hosted install
+  makes its keys in its dashboard; and that a key `korely init` saved is
+  read on Node, naming the file read (`$KORELY_CONFIG_HOME/config.json` when
+  that variable is set), and no file where none is read (a browser).
 - `AgentInitResult` types `expires_at` and `note`, which the server sends
   since Korely Agent 1.0.10: when the key stops working, and the trial's
   limits until the account is adopted.

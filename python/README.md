@@ -92,8 +92,10 @@ working (`expires_at`) and, in `note`, the trial's limits until the account is
 adopted and how to adopt it; `quotas` are the monthly numbers once adopted
 (`expires_at` and `note` are None from a server older than Korely Agent
 1.0.10). It is what `korely init --agent` calls, which prints the end and the
-note and saves the end next to the key in `~/.korely/config.json` (adopting
-the account moves it: `GET /admin/keys` says the new one). Cloud only: a
+note and saves the end next to the key in `~/.korely/config.json`. Adopting
+the account moves the end and the saved one stays the signup's: `korely auth`
+prints the current one, as the server says it on every answer
+(`Korely-Key-Expires-At`, Korely 1.0.23 and later). Cloud only: a
 Self-hosted install mints its keys in its own dashboard.
 
 `delete_account(confirm="<account id>")` deletes the account of the key, for
@@ -316,7 +318,7 @@ same refusal.
 | Command | Call |
 |---|---|
 | `korely init [--agent] [--processing-region eu\|global] [--api-key KEY] [--force] [--user-id U] [--agent-id A]` | `POST /v1/agents/init`, or save a key you have; `--processing-region eu` reads the new account's memories in Europe (Global, the default, otherwise); `--force` to replace a saved one; `--user-id`/`--agent-id` save whose memory your writes are (with a key already saved, only that) |
-| `korely auth` / `korely ping` | `GET /v1/ping` |
+| `korely auth` / `korely ping` | `GET /v1/ping`; `auth` also prints when the key ends (`key ends <UTC moment> UTC`, `key_expires_at` with `--json`), when the server says it (Korely 1.0.23 and later; no line for a key that never ends) |
 | `korely add TEXT` / `korely update ID TEXT` | `POST /v1/memories` / `PATCH /v1/memories/:id` (`-` or a pipe reads stdin) |
 | `korely search QUERY [--types memories,facts] [--full-text]` | `POST /v1/memories/search`; `--types` searches the facts too (or `facts` alone) and prints each hit's type; `--full-text` prints the whole text, not its first 280 characters (Korely 1.0.13 and later) |
 | `korely context QUERY` | `GET /v1/context` |
@@ -356,8 +358,9 @@ JSON document in the API's shape, streamed, so a long trail never sits in
 memory. `--offset` resumes an export that stopped (pass the same `--until`).
 
 `korely delete-account --confirm <account id>` closes the account of an `init
---agent` key and removes that key from `~/.korely/config.json`, so the next
-`korely init` can save a new one. Without `--confirm`, or with another id,
+--agent` key and removes that key from `~/.korely/config.json`, from the top
+level and from every profile that holds it, so the next `korely init` can save
+a new one. Without `--confirm`, or with another id,
 nothing is deleted and the error names the id to type (`korely
 delete-account` alone shows it); `--yes` is no longer taken. The key leaves
 the file only when the server answers `deleted: true`. Against a server older
