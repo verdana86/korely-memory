@@ -367,11 +367,12 @@ class KeyEnds(Base):
 
         self.server = _Server(answer)
         self.addCleanup(self.server.close)
-        env = mock.patch.dict(os.environ, {"no_proxy": "*", "NO_PROXY": "*"})
-        env.start()
-        self.addCleanup(env.stop)
+        # Base's patch of the environment puts it all back at tearDown. A
+        # second patch started here would be stopped after it, and put back
+        # this test's KORELY_CONFIG_HOME for every test after.
+        os.environ.update({"no_proxy": "*", "NO_PROXY": "*"})
         for name in ("KORELY_API_KEY", "KORELY_BASE_URL", "KORELY_PROFILE"):
-            os.environ.pop(name, None)  # restored by the patch above
+            os.environ.pop(name, None)
         self.config = Path(os.environ["KORELY_CONFIG_HOME"]) / "config.json"
         self.config.parent.mkdir(parents=True, exist_ok=True)
         self._save({"api_key": self.DEFAULT, "base_url": self.server.url,
