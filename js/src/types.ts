@@ -358,7 +358,7 @@ export interface PingResponse {
   scopes: string[];
 }
 
-/** What `Korely.initAgent()` answers: a new hobby key and what it buys. */
+/** What `Korely.initAgent()` answers: a new key, when it ends, and what the account may do. */
 export interface AgentInitResult {
   /** The key, shown this once and never again: save it. */
   api_key: string;
@@ -367,7 +367,16 @@ export interface AgentInitResult {
   /** Where the new project's memories are read by a model. */
   processing_region?: "eu" | "global";
   scopes: string[];
-  /** The hobby allowance: writes_per_month, queries_per_month, agents, the monthly AI budget. */
+  /** When the key stops working (ISO 8601, with its time zone). Absent from a
+   *  server older than Korely Agent 1.0.10. */
+  expires_at?: string;
+  /** The same in the server's words: how long the key lasts, the trial's
+   *  limits until the account is adopted, and how to adopt it. Absent from a
+   *  server older than Korely Agent 1.0.10. */
+  note?: string;
+  /** The free plan's monthly allowance: writes_per_month, queries_per_month,
+   *  agents, the monthly AI budget. With a `note`, it applies once the account
+   *  is adopted; until then the trial's limits do. */
   quotas: Record<string, unknown>;
   /** The Terms of Service that creating the account accepts. Absent from a
    *  server older than Korely Agent 0.1.27. */

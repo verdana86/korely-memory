@@ -56,6 +56,15 @@ test("requires an api key", () => {
     delete process.env.KORELY_API_KEY;
     process.env.KORELY_CONFIG_HOME = "/nonexistent-korely-config-home";
     assert.throws(() => new Korely({ fetch: async () => ({}) }), KorelyError);
+    // What a Node user does (pre-tester check, 15 Nov 2026): the npm package
+    // has no `korely` command, so the message does not send them to one; it
+    // names the call of this package that makes a key.
+    assert.throws(() => new Korely({ fetch: async () => ({}) }), (e) => {
+      assert.match(e.message, /Korely\.initAgent\(/);
+      assert.doesNotMatch(e.message, /run `korely init`/);
+      assert.match(e.message, /Python package/);
+      return true;
+    });
   } finally {
     for (const v of ["KORELY_API_KEY", "KORELY_CONFIG_HOME"]) {
       if (saved[v] === undefined) delete process.env[v]; else process.env[v] = saved[v];
@@ -1254,7 +1263,7 @@ test("new Korely() reads what `korely init` saved, as the Python client does (20
     assert.equal(new Korely({ apiKey: "kor_self_arg", fetch: fakeFetch([]) }).apiKey, "kor_self_arg");
     rmSync(join(dir, "config.json"));
     delete process.env.KORELY_BASE_URL;
-    assert.throws(() => new Korely({ fetch: fakeFetch([]) }), /korely init/);
+    assert.throws(() => new Korely({ fetch: fakeFetch([]) }), /No API key/);
   } finally {
     for (const v of ["KORELY_API_KEY", "KORELY_BASE_URL", "KORELY_CONFIG_HOME"]) {
       if (saved[v] === undefined) delete process.env[v]; else process.env[v] = saved[v];

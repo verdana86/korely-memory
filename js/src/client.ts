@@ -660,9 +660,16 @@ export class Korely {
     const saved = opts.apiKey && (opts.baseUrl || envBase) ? {} : savedConfig();
     const key = opts.apiKey ?? envKey ?? text(saved.api_key);
     if (!key) {
+      // What a Node user does (pre-tester check, 15 Nov 2026): this package
+      // has no `korely` command (the Python package has it), so the message
+      // names the call of this package that makes a key, and says the file
+      // is read only as the Python command's.
       throw new KorelyError(
-        "No API key. Pass { apiKey: 'kor_live_...' }, set KORELY_API_KEY, " +
-          "or run `korely init`, which saves one to ~/.korely/config.json.",
+        "No API key. Pass { apiKey: 'kor_live_...' } or set KORELY_API_KEY. " +
+          "No key yet: `const { api_key } = await Korely.initAgent('my-app')` makes one on " +
+          "Korely Cloud (shown once: save it); a Self-hosted install makes its keys in its " +
+          "dashboard. On Node a key saved by `korely init`, the command of the Python " +
+          "package (pip install korely-memory), in ~/.korely/config.json is read too.",
       );
     }
     this.apiKey = key;
@@ -695,13 +702,16 @@ export class Korely {
   }
 
   /**
-   * POST /v1/agents/init, with no key: sign up for a free hobby key.
+   * POST /v1/agents/init, with no key: sign up for a key that costs nothing.
    *
    * The one call that runs without a key, because it is how one is obtained,
    * so it is static: `await Korely.initAgent("my-app")`, then
    * `new Korely({ apiKey: result.api_key })`. `agentCaller` is a free-form
    * label of who signed up, kept for your reference. The answer carries the
-   * key, shown once (save it), its `tier`, `region`, `scopes` and `quotas`.
+   * key, shown once (save it), when it stops working (`expires_at`), the
+   * trial in words (`note`: its limits until the account is adopted, and how
+   * to adopt it), its `tier`, `region`, `scopes` and `quotas` (the monthly
+   * numbers once adopted).
    * The account it creates has no login: the key is the account, and
    * `deleteAccount({ confirm: "<the account's id>" })` closes it.
    *
