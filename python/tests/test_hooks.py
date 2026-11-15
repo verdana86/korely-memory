@@ -264,7 +264,9 @@ class NotRead(Base):
     ended), and only hook.log knew."""
 
     def test_a_read_that_fails_says_so_where_the_memory_would_be(self):
-        key = _random_key(40)
+        # A fixed key of the masked shape: a random one is of letters alone
+        # now and then, which the masking declares it does not catch.
+        key = "kQ7vR2mX9pL4sT8wN3bY6cF1hJ5dG0aZx4Ve"
 
         class Down(FakeClient):
             def get_context(self, query, user_id=None, token_budget=800):
@@ -486,6 +488,50 @@ class Installing(Base):
     def test_removing_what_was_never_installed_creates_nothing(self):
         hooks.install("cursor", self.repo, remove=True, base="/opt/bin/korely")
         self.assertFalse((self.repo / ".cursor").exists())
+
+    def test_no_mcp_touches_no_mcp_setting(self):
+        """`--no-mcp` (hooks only) ran `claude mcp remove ... korely` and
+        rewrote .cursor/mcp.json and .codex/config.toml without `korely`: a
+        server the developer had added by hand under that name was deleted."""
+        calls = []
+        run = lambda cmd, **kw: calls.append(cmd) or mock.Mock(returncode=0)  # noqa: E731
+        cursor = self.repo / ".cursor" / "mcp.json"
+        codex = self.repo / ".codex" / "config.toml"
+        cursor.parent.mkdir()
+        codex.parent.mkdir()
+        mine = '{"mcpServers": {"korely": {"url": "https://api.korely.ai/agent/mcp"}}}\n'
+        toml = '[mcp_servers.korely]\nurl = "https://api.korely.ai/agent/mcp"\n'
+        cursor.write_text(mine)
+        codex.write_text(toml)
+        for tool in ("claude-code", "cursor", "codex"):
+            for remove in (False, True):
+                with self.subTest(tool=tool, remove=remove):
+                    report = hooks.install(tool, self.repo, base="/opt/bin/korely", run=run,
+                                           mcp=False, remove=remove, also_read=["private"])
+                    self.assertEqual(calls, [])  # no `claude mcp` at all
+                    self.assertEqual(cursor.read_text(), mine)
+                    self.assertEqual(codex.read_text(), toml)
+                    self.assertIn("MCP settings not touched (--no-mcp): a korely server "
+                                  "already there stays as it is", report)
+        # the hooks went in and out all the same
+        self.assertNotIn("hooks", json.loads((self.repo / ".cursor" / "hooks.json").read_text()))
+        exclude = (self.repo / ".git" / "info" / "exclude").read_text()
+        self.assertIn(".cursor/hooks.json", exclude)
+        self.assertNotIn(".cursor/mcp.json", exclude)  # not ours to keep out of git
+
+    def test_no_mcp_installs_next_to_a_committed_mcp_file(self):
+        """The file `--no-mcp` does not write is not its to judge: a committed
+        .cursor/mcp.json stopped a hooks-only install."""
+        f = self.repo / ".cursor" / "mcp.json"
+        f.parent.mkdir()
+        f.write_text('{"mcpServers": {}}\n')
+        subprocess.run(["git", "-C", str(self.repo), "add", "."], check=True)
+        with self.assertRaises(hooks.InstallError):
+            hooks.install("cursor", self.repo, base="/opt/bin/korely")
+        hooks.install("cursor", self.repo, base="/opt/bin/korely", mcp=False)
+        self.assertIn("sessionStart",
+                      json.loads((self.repo / ".cursor" / "hooks.json").read_text())["hooks"])
+        self.assertEqual(f.read_text(), '{"mcpServers": {}}\n')
 
     def test_codex_everywhere(self):
         with mock.patch.object(Path, "home", return_value=self.tmp / "home"):

@@ -931,12 +931,23 @@ def install(tool: str, project: Path, *, everywhere: bool = False, remove: bool 
     """Write (or with `remove`, take out) this tool's korely hooks and MCP
     server. `also_read`: profiles the session start also reads, each with an
     MCP server of its own, `korely-<profile>`. Returns one line per change,
-    for the report."""
+    for the report.
+
+    `mcp=False` (`--no-mcp`, hooks only) touches no MCP setting, with
+    `remove` too: it neither reads, writes nor removes a server, and the MCP
+    file is not its to judge (committed or not) nor to keep out of git. It
+    removed a server named `korely` and added none, so a hooks-only install
+    deleted the server a developer had added by hand under that name (the
+    remote one of the docs). Supermemory's Claude Code plugin registers its
+    hooks and ships its MCP declaration inside the plugin, and documents no
+    step that edits the servers the developer configured
+    (github.com/supermemoryai/claude-supermemory, read 15 Nov 2026)."""
     base = base or korely_command()
     files = hook_files(tool, project, everywhere)
+    ours = files if mcp else {"hooks": files["hooks"]}
     report: List[str] = []
     if not everywhere:
-        for path in files.values():
+        for path in ours.values():
             if path.exists() and _tracked(path, project):
                 raise InstallError(
                     f"{path} is committed to the repository: korely does not add personal "
@@ -951,11 +962,14 @@ def install(tool: str, project: Path, *, everywhere: bool = False, remove: bool 
 
     servers = [("korely", _mcp_command(base, scope, also_read_user=also_read_user))]
     servers += [(f"korely-{p}", _mcp_command(base, None, profile=p)) for p in also_read]
-    for name, command in servers:
-        _install_server(tool, files, project, name, None if (remove or not mcp) else command,
+    if not mcp:
+        report.append("MCP settings not touched (--no-mcp): a korely server already there "
+                      "stays as it is")
+    for name, command in servers if mcp else ():
+        _install_server(tool, files, project, name, None if remove else command,
                         everywhere=everywhere, remove=remove, run=run, report=report)
     if not everywhere and not remove:
-        for p in files.values():
+        for p in ours.values():
             if p.exists():
                 done = _keep_out_of_git(p, project)
                 if done:

@@ -47,6 +47,15 @@ addition is sent only when asked for.
   hands the assistant ends with one line saying when, and the command that
   saves a new key. Up to 0.2.0 the end reached a session as 401s in
   `hook.log`.
+- `korely init --tool <tool> --no-mcp` touches no MCP setting. Up to 0.2.0
+  it removed a server named `korely` (`claude mcp remove`, or the entry in
+  `.cursor/mcp.json` and `.codex/config.toml`) and added none, so a hooks-only
+  install deleted a `korely` server added by hand, such as the remote one.
+  Now that server stays, and the report says `MCP settings not touched
+  (--no-mcp)`. With `--remove --no-mcp` the hooks are taken out and the MCP
+  server stays: to take out the server an earlier `korely init --tool` added,
+  run `--remove` without `--no-mcp`. A committed MCP file no longer stops a
+  `--no-mcp` install, and it is not added to `.git/info/exclude`.
 
 ### npm
 

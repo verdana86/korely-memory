@@ -549,8 +549,12 @@ not say, and the hook adds nothing.
 A personal file in a repository is added to `.git/info/exclude`; a file the
 repository already commits is left alone (use `--global`). It also adds the
 `korely-mcp` server with the same scope, for searches and writes the
-assistant decides on (`--no-mcp` to skip it). `--user-id <id>` puts
-everything in one memory instead; `--remove` takes it all out again.
+assistant decides on, under the name `korely`, replacing a server of that
+name. `--no-mcp` installs the hooks only and touches no MCP setting: a
+`korely` server you added yourself (the remote one, say) stays as it is,
+and so does one an earlier `korely init --tool` added (`--remove` without
+`--no-mcp` takes that out). `--user-id <id>` puts everything in one memory
+instead; `--remove` takes it all out again (with `--no-mcp`, the hooks only).
 
 Five answers to a memory is about eight writes for a day of forty exchanges.
 

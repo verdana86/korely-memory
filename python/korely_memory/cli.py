@@ -1365,9 +1365,11 @@ def build_parser() -> argparse.ArgumentParser:
                          "person is called by: the store never merges two names of a person "
                          "by itself")
     sp.add_argument("--no-mcp", action="store_true",
-                    help="with --tool: hooks only, no korely MCP server")
+                    help="with --tool: hooks only; no MCP setting is touched, so a korely "
+                         "server already there (one you added) stays as it is")
     sp.add_argument("--remove", action="store_true",
-                    help="with --tool: take korely's hooks and MCP server out again")
+                    help="with --tool: take korely's hooks and MCP server out again "
+                         "(with --no-mcp, the hooks only)")
     sp.add_argument("--also-read-user", action="append", default=[], metavar="USER_ID",
                     help="with --tool: the session start also reads this user_id of the same "
                          "project (a memory across repositories, e.g. your own); sessions are "
