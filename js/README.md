@@ -115,7 +115,7 @@ Every method maps to one REST endpoint.
 | `batch(memories)` | `POST /v1/batch` | Bulk import, for migrations. Each item takes `user_id` or `agent_id` and `timestamp`, as `add()` does. |
 | `batchStatus(jobId)` | `GET /v1/batch/:id` | Poll an import job. |
 | `ping()` | `GET /v1/ping` | Check a key without spending anything (no scope, rate limit or quota): its `tier`, `region` and `scopes`. Both products. |
-| `Korely.initAgent(agentCaller?, opts?)` | `POST /v1/agents/init` | Cloud only. Static, no key needed: sign up for a free hobby key (shown once, save it), then `new Korely({ apiKey: result.api_key })`. `opts` takes `baseUrl`, `region`, `timeoutMs`, `fetch`. |
+| `Korely.initAgent(agentCaller?, opts?)` | `POST /v1/agents/init` | Cloud only. Static, no key needed: sign up for a key that costs nothing (shown once, save it), then `new Korely({ apiKey: result.api_key })`. The answer says when the key stops working (`expires_at`) and, in `note`, the trial's limits until the account is adopted and how to adopt it; `quotas` are the monthly numbers once adopted. `opts` takes `baseUrl`, `region`, `timeoutMs`, `fetch`. |
 | `deleteAccount({ confirm: "<account id>" })` | `DELETE /v1/account` | Cloud only. Delete the key's account for good, every key, memory and fact; for an account `korely init --agent` made, which nobody signs in to. One with a login rejects with `ConflictError` (`account_has_login`). `confirm` is the account's id, typed (`tenant_id` of `GET /admin/whoami`): the DELETE is sent only when it is a UUID equal, spaces trimmed, to the id `GET /admin/whoami` gives the key. Missing, `true`, `"true"` or another id: nothing is sent but that GET, and it rejects with `KorelyError` `confirmation_required`, whose message names the id to type. Only the answer `deleted: true` is a deletion; any other rejects. A server older than 1.0.23 takes only `?confirm=true`: the client does not fall back to it, deletes nothing and rejects with `APIError` `server_too_old` (upgrade the server, or use korely-memory 0.1.18). A key that may not read `GET /admin/whoami` (403, a key without the `admin` scope) deletes nothing: with no id typed it rejects with that `confirmation_required`, whose message says whoami could not be read; with the id typed, with the whoami's refusal, `NamespaceForbiddenError` (an `APIError`, `status` 403, `code` `forbidden`). The Self-hosted, which has no such route, stops at that 403 for a key without the `admin` scope, else answers 404 (405 where it serves its dashboard). |
 | `audit(opts?)` | `GET /v1/audit` | The trail of the key's project, newest first: `user_id`, `action`, `since` / `until` (ISO text or `Date`), `limit` up to 1000. Ids, never content. Each event's `api_key_id` names the key that made the call (Korely 1.0.23); `action` is `forget` for a memory forgotten with its text kept, `erase` for one gone for good, `fact_invalidate` for a fact closed (a forget was filed as `erase` before 1.0.23). Both products; needs `memories:read`, costs no quota. |
 | `iterAudit(opts?)` | `GET /v1/audit`, every page | `for await (const e of korely.iterAudit({ user_id }))`: an export, `page_size` events per request, `until` pinned when it starts. |
@@ -205,8 +205,12 @@ default. A memory written to a Global project is read by Google's model.
 In Node, `new Korely()` with no key and no `KORELY_API_KEY` reads what
 `korely init` saved (the key and the server, in `~/.korely/config.json`, or
 `$KORELY_CONFIG_HOME/config.json`), as the Python client does, with `import`
-and with `require`, from Node 18. An argument comes first, then the
-environment, then that file. A browser or an edge runtime has no such file.
+and with `require`, from Node 18. `korely` is the command of the Python
+package (`pip install korely-memory`); this package has none. An argument
+comes first, then the environment, then that file. A browser or an edge
+runtime has no such file. With no key from any of them it throws
+`KorelyError` "No API key", which says how to make one from here:
+`Korely.initAgent()`.
 
 ### Your own server (Self-hosted)
 

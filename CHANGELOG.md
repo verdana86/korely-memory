@@ -64,6 +64,20 @@ server (the last entry of Python below).
   server stays: to take out the server an earlier `korely init --tool` added,
   run `--remove` without `--no-mcp`. A committed MCP file no longer stops a
   `--no-mcp` install, and it is not added to `.git/info/exclude`.
+- `korely init --agent` says what the server answered about the key. Up to
+  0.2.0 it printed "a free hobby key was minted" and the monthly quotas, and
+  never that the key ends (7 days after it is made, on Korely Cloud) nor the
+  trial's limits (40 writes in all, until the account is adopted), which the
+  201 carries in `expires_at` and `note`. Now it prints the end (`expires
+  <UTC moment> UTC`), the server's `note` whole, and the quotas as the
+  numbers that apply once the account is adopted; it saves the end next to
+  the key in `~/.korely/config.json` (`expires_at`, as the server wrote it).
+  Adopting the account moves the end, and the saved one stays the end given
+  at signup: `GET /admin/keys` says the new one. A key replaced in a profile
+  (`init --force`, `init --api-key`, `keys create --save-as`, or taken out
+  by `delete-account`) no longer leaves its end behind, as its tier did not.
+  `AgentInitResult` gains `expires_at` and `note` (None from a server older
+  than Korely Agent 1.0.10), and `--json` prints them.
 
 ### npm
 
@@ -71,6 +85,14 @@ server (the last entry of Python below).
   `"memories" | "facts"`), and `SearchHit` gains `type`, `content` and
   `fact`, as in Python. Up to 0.2.0 `search()` refused both options
   (`search: unknown option types.`).
+- The "No API key" error says what a Node user does. Up to 0.2.0 it said to
+  run `korely init`, a command this package does not have (it comes with
+  the Python package). Now it names `Korely.initAgent()`, the call of this
+  package that makes a key on Korely Cloud, the dashboard of a Self-hosted
+  install, and that a key `korely init` saved is read on Node.
+- `AgentInitResult` types `expires_at` and `note`, which the server sends
+  since Korely Agent 1.0.10: when the key stops working, and the trial's
+  limits until the account is adopted.
 
 ## Python 0.2.0, npm 0.2.0 (2026-11-14)
 

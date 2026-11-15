@@ -107,7 +107,7 @@ For LangGraph, the optional `pip install 'korely-memory[langgraph]'` adds a stor
 
 ## Get a key
 
-The hobby tier is free and needs no signup form:
+A key costs nothing and needs no signup form:
 
 ```bash
 curl -X POST https://api.korely.ai/v1/agents/init \
@@ -115,11 +115,11 @@ curl -X POST https://api.korely.ai/v1/agents/init \
   -d '{"agent_caller": "your-name-here"}'
 ```
 
-The response carries a `kor_live_` key. Set it as `KORELY_API_KEY` and the SDK, the CLI, and the REST API all authenticate with it. From code, `Korely.init_agent()` (Python) and `Korely.initAgent()` (JS) make the same call.
+The response carries a `kor_live_` key, when it stops working (`expires_at`) and, in `note`, the trial's limits until the account is adopted (by signing in to the dashboard with the key) and how to adopt it; `quotas` are the monthly numbers once adopted. Set the key as `KORELY_API_KEY` and the SDK, the CLI, and the REST API all authenticate with it. From code, `Korely.init_agent()` (Python) and `Korely.initAgent()` (JS) make the same call.
 
 The account behind that key has no login: the key is the account. Keep it, because it is also the only way to delete the account: `korely delete-account` names the account's id, and `korely delete-account --confirm <that id>` deletes it (`delete_account(confirm="<id>")` in Python, `deleteAccount({ confirm: "<id>" })` in JS).
 
-Or let the CLI do it for you. `korely init` saves the key to `~/.korely/config.json`, and the SDK reads it from there when `KORELY_API_KEY` is not set, so this is enough to get going:
+Or let the CLI do it for you. `korely init --agent` prints when the key ends and the server's note on the trial, saves the key and its end to `~/.korely/config.json`, and the SDK reads it from there when `KORELY_API_KEY` is not set, so this is enough to get going:
 
 ```bash
 pip install korely-memory

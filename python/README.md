@@ -85,10 +85,16 @@ Every method wraps exactly one REST endpoint.
 quota) and answers its `tier`, `region` and `scopes`, on the Cloud and on the
 Self-hosted alike.
 
-`Korely.init_agent("my-app")` signs up for a free hobby key with no key, so
-it is a class method: the answer carries the key once (`repr()` leaves it
-out), then `Korely(api_key=result.api_key)`. It is what `korely init --agent`
-calls. Cloud only: a Self-hosted install mints its keys in its own dashboard.
+`Korely.init_agent("my-app")` signs up for a key that costs nothing, with no
+key, so it is a class method: the answer carries the key once (`repr()` leaves
+it out), then `Korely(api_key=result.api_key)`. It also says when the key stops
+working (`expires_at`) and, in `note`, the trial's limits until the account is
+adopted and how to adopt it; `quotas` are the monthly numbers once adopted
+(`expires_at` and `note` are None from a server older than Korely Agent
+1.0.10). It is what `korely init --agent` calls, which prints the end and the
+note and saves the end next to the key in `~/.korely/config.json` (adopting
+the account moves it: `GET /admin/keys` says the new one). Cloud only: a
+Self-hosted install mints its keys in its own dashboard.
 
 `delete_account(confirm="<account id>")` deletes the account of the key, for
 good, with every key, memory and fact of it. It is for an account `korely init
