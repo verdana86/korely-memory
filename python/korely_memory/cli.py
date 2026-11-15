@@ -20,7 +20,7 @@ import json
 import os
 import sys
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 from . import __version__
 from ._files import read_config, write_private
@@ -439,10 +439,22 @@ def cmd_events(k: Korely, a) -> int:
     return 0
 
 
+def _kinds(text: Optional[str]) -> Optional[List[str]]:
+    """`--types memories,facts` as the list the API takes: split on commas,
+    each part stripped, as the server reads the one text of its MCP tool
+    (`korely_search`'s `types`). The server judges the kinds: a kind it does
+    not know is its 422, with its message."""
+    if text is None:
+        return None
+    return [part.strip() for part in text.split(",")]
+
+
 def cmd_search(k: Korely, a) -> int:
+    full_text = getattr(a, "full_text", False)
     hits = k.search(a.query, run_id=getattr(a, 'run_id', None), user_id=a.user_id, agent_id=a.agent_id,
                     limit=a.limit, min_score=getattr(a, 'min_score', None),
-                    exclude_sessions=getattr(a, "exclude_sessions", False))
+                    exclude_sessions=getattr(a, "exclude_sessions", False),
+                    types=_kinds(getattr(a, "types", None)), full_text=full_text)
     if a.json:
         # The API's own shape (GET /v1/memories/search answers {"results": [...]}),
         # so `jq '.results[0].snippet'` from the docs works (2026-09-29: it was a
@@ -454,8 +466,11 @@ def cmd_search(k: Korely, a) -> int:
         return 0
     for h in hits:
         score = f"{h.score:.3f}" if isinstance(h.score, (int, float)) else "n/a"
-        print(f"[{score}] {h.snippet or ''}".rstrip())
-        print(f"        {h.id}")
+        # The whole text when it was asked for, its lines under the first
+        # one's indent; else the first 280 characters, as before.
+        text = h.content if full_text and h.content is not None else (h.snippet or "")
+        print(f"[{score}] {text}".rstrip().replace("\n", "\n        "))
+        print(f"        {h.id}" + (f"  {h.type}" if h.type else ""))
     return 0
 
 
@@ -1413,6 +1428,13 @@ def build_parser() -> argparse.ArgumentParser:
                     help="leave out hits scored below this, 0 to 1 (0.20 measured on LongMemEval)")
     sp.add_argument("--exclude-sessions", action="store_true",
                     help="leave out the work sessions and what only they stated")
+    sp.add_argument("--types", metavar="KINDS",
+                    help="what to search, comma-separated: memories (the server's default), "
+                         "facts, or memories,facts; each hit then says its type "
+                         "(Korely 1.0.13+)")
+    sp.add_argument("--full-text", action="store_true",
+                    help="print each hit's whole text, not its first 280 characters; "
+                         "--json carries it as content (Korely 1.0.13+)")
     sp.set_defaults(func=cmd_search)
 
     sp = sub.add_parser("context", parents=both,

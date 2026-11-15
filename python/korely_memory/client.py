@@ -993,9 +993,12 @@ class Korely:
                metadata: Optional[dict] = None,
                limit: Optional[int] = None,
                min_score: Optional[float] = None,
-               exclude_sessions: bool = False) -> List[SearchHit]:
+               exclude_sessions: bool = False,
+               types: Optional[List[str]] = None,
+               full_text: bool = False) -> List[SearchHit]:
         """POST /v1/memories/search: semantic search over raw memories, ranked
-        by score (vector similarity to the query).
+        by score (vector similarity to the query); with ``types``, over the
+        facts too, or the facts only.
 
         ``run_id`` scopes to one session and ``metadata`` filters on what you
         stored at write time (keys ANDed, compared as strings). Both mirror the
@@ -1011,11 +1014,29 @@ class Korely:
 
         ``exclude_sessions=True`` leaves out the work sessions (memories
         written with ``kind="session"``, what a coding assistant's hooks save)
-        and the facts only they state. Korely Agent after 0.1.41."""
+        and the facts only they state. Korely Agent after 0.1.41.
+
+        ``types`` names what to search, each kind once: ``["memories"]`` (what
+        the server searches when it is not sent), ``["facts"]``, the facts
+        true now, or both, each kind ranked by its own score and the two
+        rankings merged by rank (a fact's score and a memory's are not to be
+        compared). With it every result says its ``type``, and a fact's
+        carries ``fact``. ``run_id``, ``metadata`` and ``min_score`` narrow
+        the memories only: with ``"facts"`` in ``types`` the server answers
+        422.
+
+        ``full_text=True`` also returns each result's whole text as
+        ``content``; ``snippet`` stays its first 280 characters. A memory can
+        hold 16,000 characters, so a page of whole memories can be large.
+
+        ``types`` and ``full_text`` are sent only when given: Korely 1.0.13
+        and later take them, an older server answers 422."""
         body = self._call("POST", "/v1/memories/search", json_body=_clean({
             "query": query, "user_id": user_id, "agent_id": agent_id,
             "run_id": run_id, "metadata": metadata, "limit": limit,
             "min_score": min_score, "exclude_sessions": exclude_sessions or None,
+            "types": types,
+            "full_text": full_text or None,
         }))
         return [SearchHit.from_dict(h) for h in body.get("results", [])]
 

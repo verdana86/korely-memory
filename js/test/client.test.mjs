@@ -413,6 +413,33 @@ test("search and getAll take the filters the API takes", async () => {
   assert.deepEqual([...page].map((m) => m.id), ["m1", "m2"]);
 });
 
+test("search takes the server's types and full_text, and sends neither unasked", async () => {
+  // Korely 1.0.13 searches the facts too and returns the whole text; the SDK
+  // refused both options, so a hit was always 280 characters of a memory.
+  const fact = { id: "fct_1", subject: "Maria", predicate: "lives_in", object: "Turin" };
+  const { k, f } = client([
+    { status: 200, body: { results: [
+      { id: "mem_1", score: 0.81, snippet: "x".repeat(280), type: "memory", content: "x".repeat(900) },
+      { id: "fct_1", score: 0.77, snippet: "Maria · lives_in · Turin", type: "fact",
+        content: "Maria · lives_in · Turin", fact },
+    ] } },
+    { status: 200, body: { results: [] } },
+  ]);
+  const hits = await k.search("where does Maria live", {
+    user_id: "maria", types: ["memories", "facts"], full_text: true,
+  });
+  const sent = JSON.parse(f.calls[0].init.body);
+  assert.deepEqual(sent.types, ["memories", "facts"]);
+  assert.equal(sent.full_text, true);
+  assert.deepEqual(hits.map((h) => h.type), ["memory", "fact"]);
+  assert.equal(hits[0].content.length, 900);
+  assert.equal(hits[1].fact.object, "Turin");
+  await k.search("where does Maria live");
+  const plain = JSON.parse(f.calls[1].init.body);
+  assert.equal("types" in plain, false, "an older server answers 422 to it");
+  assert.equal("full_text" in plain, false);
+});
+
 test("events() reads GET /v1/events", async () => {
   // The Python SDK had it; the Node one did not, and the docs told Node
   // users to call the endpoint by hand.

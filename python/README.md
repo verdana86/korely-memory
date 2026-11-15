@@ -53,7 +53,7 @@ Every method wraps exactly one REST endpoint.
 | Method | Endpoint |
 |---|---|
 | `add(content, *, agent_id=, user_id=, run_id=, metadata=, timestamp=)` | `POST /v1/memories` |
-| `search(query, *, user_id=, agent_id=, run_id=, metadata=, limit=, min_score=)` | `POST /v1/memories/search`; `min_score` (0 to 1) leaves out hits scored below it |
+| `search(query, *, user_id=, agent_id=, run_id=, metadata=, limit=, min_score=, types=, full_text=)` | `POST /v1/memories/search`; `min_score` (0 to 1) leaves out hits scored below it; `types=["memories", "facts"]` searches the facts true now too (`["facts"]` them only), and each hit says its `type`, a fact's with its `fact`; `full_text=True` adds the whole text as `content` (`snippet` is its first 280 characters). Korely 1.0.13 and later; sent only when given |
 | `get_all(*, user_id=, agent_id=, run_id=, limit=, offset=)` | `GET /v1/memories` |
 | `get(memory_id)` | `GET /v1/memories/:id` |
 | `update(memory_id, *, content, expected_updated_at=)` | `PATCH /v1/memories/:id` |
@@ -307,7 +307,7 @@ same refusal.
 | `korely init [--agent] [--processing-region eu\|global] [--api-key KEY] [--force] [--user-id U] [--agent-id A]` | `POST /v1/agents/init`, or save a key you have; `--processing-region eu` reads the new account's memories in Europe (Global, the default, otherwise); `--force` to replace a saved one; `--user-id`/`--agent-id` save whose memory your writes are (with a key already saved, only that) |
 | `korely auth` / `korely ping` | `GET /v1/ping` |
 | `korely add TEXT` / `korely update ID TEXT` | `POST /v1/memories` / `PATCH /v1/memories/:id` (`-` or a pipe reads stdin) |
-| `korely search QUERY` | `POST /v1/memories/search` |
+| `korely search QUERY [--types memories,facts] [--full-text]` | `POST /v1/memories/search`; `--types` searches the facts too (or `facts` alone) and prints each hit's type; `--full-text` prints the whole text, not its first 280 characters (Korely 1.0.13 and later) |
 | `korely context QUERY` | `GET /v1/context` |
 | `korely list [--limit] [--offset]` | `GET /v1/memories` |
 | `korely get ID` / `korely history ID` | `GET /v1/memories/:id` / `.../history` |

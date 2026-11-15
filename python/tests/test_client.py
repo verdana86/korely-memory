@@ -107,6 +107,34 @@ class TestMemories(unittest.TestCase):
         _client(rec).search("northwind pricing")
         self.assertNotIn("min_score", rec.last["json"])
 
+    def test_search_takes_the_servers_types_and_full_text(self):
+        """Korely 1.0.13 searches the facts too (`types`) and returns the
+        whole text (`full_text`); the SDK sent neither and dropped `type`,
+        `content` and `fact`, so a hit was always 280 characters of a memory."""
+        fact = {"id": "fct_1", "subject": "Maria", "predicate": "lives_in", "object": "Turin",
+                "valid_from": "2026-03-01T00:00:00+00:00"}
+        rec = _Recorder().queue(200, {"results": [
+            {"id": "mem_1", "score": 0.81, "snippet": "x" * 280, "user_id": "maria",
+             "agent_id": None, "metadata": {}, "type": "memory", "content": "x" * 900},
+            {"id": "fct_1", "score": 0.77, "snippet": "Maria · lives_in · Turin",
+             "user_id": "maria", "agent_id": None, "metadata": {}, "type": "fact",
+             "content": "Maria · lives_in · Turin", "fact": fact},
+        ]}).queue(200, {"results": [{"id": "mem_2", "score": 0.5, "snippet": "s"}]})
+        hits = _client(rec).search("where does Maria live", user_id="maria",
+                                   types=["memories", "facts"], full_text=True)
+        self.assertEqual(rec.last["json"]["types"], ["memories", "facts"])
+        self.assertIs(rec.last["json"]["full_text"], True)
+        self.assertEqual([h.type for h in hits], ["memory", "fact"])
+        self.assertEqual(len(hits[0].content), 900)
+        self.assertIsNone(hits[0].fact)
+        self.assertEqual(hits[1].fact.object, "Turin")
+        self.assertEqual(hits[1].fact.valid_from, "2026-03-01T00:00:00+00:00")
+        # Not given, not sent: a server older than 1.0.13 answers 422 to either.
+        plain = _client(rec).search("where does Maria live")
+        self.assertNotIn("types", rec.last["json"])
+        self.assertNotIn("full_text", rec.last["json"])
+        self.assertEqual((plain[0].type, plain[0].content, plain[0].fact), (None, None, None))
+
     def test_get_all_page_is_iterable_with_total(self):
         rec = _Recorder().queue(200, {"memories": [{"id": "m1"}, {"id": "m2"}], "total": 218})
         page = _client(rec).get_all(user_id="u")

@@ -95,7 +95,7 @@ Every method maps to one REST endpoint.
 | Method | Endpoint | |
 |---|---|---|
 | `add(content, opts?)` | `POST /v1/memories` | Write. `content` is a string or a list of chat messages. `opts.user_id` or `opts.agent_id` says whose memory it is (Korely 1.0.19 and later refuse neither). `opts.timestamp` (ISO) backfills the past: facts inherit it as `valid_from`. |
-| `search(query, opts?)` | `POST /v1/memories/search` | Semantic search over memories; filter by `user_id`, `agent_id`, `run_id`, `metadata`; `min_score` (0 to 1) leaves out hits scored below it. |
+| `search(query, opts?)` | `POST /v1/memories/search` | Semantic search over memories; filter by `user_id`, `agent_id`, `run_id`, `metadata`; `min_score` (0 to 1) leaves out hits scored below it. `types: ["memories", "facts"]` searches the facts true now too (`["facts"]` them only), and each hit says its `type`, a fact's with its `fact`; `full_text: true` adds the whole text as `content` (`snippet` is its first 280 characters). Korely 1.0.13 and later; sent only when given. |
 | `getAll(opts?)` | `GET /v1/memories` | List a scope, newest first. The page is iterable; `limit` up to 200. |
 | `get(id)` | `GET /v1/memories/:id` | One memory, with its facts. |
 | `update(id, { content })` | `PATCH /v1/memories/:id` | Re-runs extraction. |

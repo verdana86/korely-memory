@@ -428,6 +428,46 @@ class TestLaConformitaDel29Set(unittest.TestCase):
         self.assertEqual(rc, 0)
         self.assertEqual(_json.loads(out.getvalue())["results"][0]["snippet"], "on the Pro plan")
 
+    def test_search_takes_types_and_full_text(self):
+        """`korely search` had no way to ask Korely 1.0.13's search for the
+        facts or for the whole text: every hit was 280 characters of a memory."""
+        import json as _json
+        whole = "We moved the release to Thursdays.\nThe reason: QA on Wednesday. " + "x" * 400
+        results = {"results": [
+            {"id": "mem_1", "score": 0.9, "snippet": whole[:280], "user_id": "c",
+             "agent_id": None, "metadata": {}, "type": "memory", "content": whole},
+            {"id": "fct_1", "score": 0.8, "snippet": "team · releases_on · Thursday",
+             "user_id": "c", "agent_id": None, "metadata": {}, "type": "fact",
+             "content": "team · releases_on · Thursday",
+             "fact": {"id": "fct_1", "subject": "team", "predicate": "releases_on",
+                      "object": "Thursday"}},
+        ]}
+        rec = _Recorder().queue(200, results).queue(200, results)
+        out = io.StringIO()
+        with redirect_stdout(out):
+            rc = cli.cmd_search(_client(rec), _args(
+                ["search", "release day", "--types", "memories, facts", "--full-text", "--json"]))
+        self.assertEqual(rc, 0)
+        self.assertEqual(rec.last["json"]["types"], ["memories", "facts"])
+        self.assertIs(rec.last["json"]["full_text"], True)
+        data = _json.loads(out.getvalue())["results"]
+        self.assertEqual(data[0]["content"], whole)
+        self.assertEqual([r["type"] for r in data], ["memory", "fact"])
+        self.assertEqual(data[1]["fact"]["object"], "Thursday")
+        text = io.StringIO()
+        with redirect_stdout(text):
+            cli.cmd_search(_client(rec), _args(["search", "release day", "--types",
+                                                "memories,facts", "--full-text"]))
+        printed = text.getvalue()
+        self.assertIn("x" * 400, printed)  # the whole text, past the 280 of the snippet
+        self.assertIn("\n        The reason: QA on Wednesday.", printed)
+        self.assertIn("        fct_1  fact", printed)
+        plain = _Recorder().queue(200, {"results": []})
+        with redirect_stdout(io.StringIO()):
+            cli.cmd_search(_client(plain), _args(["search", "release day"]))
+        self.assertNotIn("types", plain.last["json"])
+        self.assertNotIn("full_text", plain.last["json"])
+
     def test_an_error_with_json_is_an_object_with_a_code(self):
         import json as _json
         from unittest import mock

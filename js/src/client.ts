@@ -110,7 +110,8 @@ const CLIENT_KEYS = keysOf<KorelyOptions>()("apiKey", "region", "baseUrl", "time
 const INIT_KEYS = keysOf<InitAgentOptions>()("region", "baseUrl", "timeoutMs", "fetch", "processingRegion");
 const ADD_KEYS = keysOf<AddOptions>()("agent_id", "user_id", "run_id", "metadata", "timestamp", "kind");
 const SEARCH_KEYS = keysOf<SearchOptions>()(
-  "user_id", "agent_id", "run_id", "metadata", "limit", "min_score", "exclude_sessions");
+  "user_id", "agent_id", "run_id", "metadata", "limit", "min_score", "exclude_sessions",
+  "types", "full_text");
 const LIST_KEYS = keysOf<ListOptions>()("user_id", "agent_id", "run_id", "limit", "offset", "exclude_sessions");
 const NAME_KEYS = keysOf<DeclareNameOptions>()("user_id", "agent_id");
 const UPDATE_KEYS = keysOf<UpdateOptions>()("content", "expected_updated_at");
@@ -994,9 +995,11 @@ export class Korely {
 
   /**
    * POST /v1/memories/search: semantic search over raw memories, ranked by
-   * score (vector similarity to the query). `run_id` scopes to one session,
-   * `metadata` filters on what you stored at write time. `limit` defaults to
-   * the server default (15), max 50.
+   * score (vector similarity to the query); with `types`, over the facts too,
+   * or the facts only. `run_id` scopes to one session, `metadata` filters on
+   * what you stored at write time. `limit` defaults to the server default
+   * (15), max 50. `full_text: true` adds each result's whole text as
+   * `content`.
    */
   async search(query: string, opts: SearchOptions = {}): Promise<SearchHit[]> {
     checkOptions("search", opts, SEARCH_KEYS);
@@ -1011,6 +1014,9 @@ export class Korely {
         min_score: opts.min_score,
         // Sent only when true: an older server does not know the field.
         exclude_sessions: opts.exclude_sessions ? true : undefined,
+        // Sent only when given, as `min_score`: Korely 1.0.13 and later.
+        types: opts.types,
+        full_text: opts.full_text ? true : undefined,
       },
     });
     return (body.results ?? []) as SearchHit[];

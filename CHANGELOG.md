@@ -8,6 +8,34 @@ The server side of the entries marked "API" shipped on 2026-09-28. Against an
 older server these clients keep working: the old field names are still read,
 and a batch `timestamp` is refused there with a 422.
 
+## Unreleased
+
+Nothing to change in code written for Python 0.2.0 or npm 0.2.0: every
+addition is sent only when asked for.
+
+### Python
+
+- `search()` takes `types` and `full_text`, the two fields Korely 1.0.13
+  added to `POST /v1/memories/search`: `types=["memories", "facts"]` searches
+  the facts true now next to the memories (`["facts"]` them only), and
+  `full_text=True` returns each result's whole text. `SearchHit` gains
+  `type` (`"memory"` or `"fact"`), `content` (the whole text) and `fact`
+  (the fact as `get_facts()` shows it, in a fact's result), None when the
+  search did not ask. Up to 0.2.0 the SDK sent neither and dropped the
+  three fields, so a hit was always the first 280 characters of a memory.
+  Both are sent only when given: an older server answers 422 to them.
+- `korely search` takes `--types memories,facts` (or `facts`) and
+  `--full-text`: the text output prints each hit's type next to its id and
+  the whole text in place of the snippet, and `--json` carries `type`,
+  `content` and `fact` (null when not asked).
+
+### npm
+
+- `search()` takes `types` and `full_text` (the new type `SearchKind` is
+  `"memories" | "facts"`), and `SearchHit` gains `type`, `content` and
+  `fact`, as in Python. Up to 0.2.0 `search()` refused both options
+  (`search: unknown option types.`).
+
 ## Python 0.2.0, npm 0.2.0 (2026-11-14)
 
 Minor releases, after Python 0.1.29 and npm 0.1.18, because two changes break

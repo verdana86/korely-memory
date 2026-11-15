@@ -105,16 +105,29 @@ class Memory:
 
 @dataclass
 class SearchHit:
+    """One result of ``search()``. ``snippet`` is the first 280 characters of
+    the text. The last three are sent by Korely 1.0.13 and later, and only
+    when the search asks for what they say: ``type`` (``"memory"`` or
+    ``"fact"``) when it names ``types``; ``content``, the whole text (a
+    memory's as stored, a fact's line), with ``full_text=True``; ``fact``,
+    the fact as ``get_facts()`` shows it, in a fact's result. None
+    otherwise."""
     id: Optional[str] = None
     score: Optional[float] = None
     snippet: Optional[str] = None
     user_id: Optional[str] = None
     agent_id: Optional[str] = None
     metadata: dict = field(default_factory=dict)
+    type: Optional[str] = None
+    content: Optional[str] = None
+    fact: Optional[Fact] = None
 
     @classmethod
     def from_dict(cls, d: dict) -> "SearchHit":
-        return cls(**_take(cls, d))
+        obj = cls(**_take(cls, d))
+        if isinstance(obj.fact, dict):
+            obj.fact = Fact.from_dict(obj.fact)
+        return obj
 
 
 @dataclass

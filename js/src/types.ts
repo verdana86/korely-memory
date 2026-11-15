@@ -81,13 +81,26 @@ export interface Memory {
   kind?: "note" | "session";
 }
 
+/** What `search()` may search, each once in `types`: the memories, or the
+ *  facts true now (Korely 1.0.13 and later). */
+export type SearchKind = "memories" | "facts";
+
 export interface SearchHit {
   id?: string;
   score?: number;
+  /** The first 280 characters of the text. */
   snippet?: string;
   user_id?: string;
   agent_id?: string;
   metadata?: Record<string, unknown>;
+  /** "memory" or "fact": in every result when the search names `types`
+   *  (Korely 1.0.13 and later), absent otherwise. */
+  type?: "memory" | "fact" | string;
+  /** The whole text (a memory's as stored, a fact's line): only with
+   *  `full_text: true` (Korely 1.0.13 and later). */
+  content?: string;
+  /** A fact's result: the fact as `getFacts()` shows it. Absent for a memory. */
+  fact?: Fact;
 }
 
 /** Iterable like the Python SDK's MemoryPage: `for (const m of page)` works,
@@ -498,6 +511,22 @@ export interface SearchOptions {
   min_score?: number;
   /** Leave out the work sessions (`kind: "session"`) and what only they stated (Korely Agent 0.1.42). */
   exclude_sessions?: boolean;
+  /**
+   * What to search, each kind once: `["memories"]` (what the server searches
+   * when it is not sent), `["facts"]`, the facts true now, or both, each kind
+   * ranked by its own score and the rankings merged by rank (a fact's score
+   * and a memory's are not to be compared). Every result then says its
+   * `type`, and a fact's carries `fact`. `run_id`, `metadata` and `min_score`
+   * narrow the memories only: with `"facts"` the server answers 422. Sent
+   * only when given: Korely 1.0.13 and later; an older server answers 422.
+   */
+  types?: SearchKind[];
+  /**
+   * Also return each result's whole text as `content`; `snippet` stays its
+   * first 280 characters. A memory can hold 16,000 characters. Sent only
+   * when true: Korely 1.0.13 and later; an older server answers 422.
+   */
+  full_text?: boolean;
 }
 
 export interface ListOptions {
