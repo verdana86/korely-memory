@@ -549,6 +549,40 @@ class TestAsyncClient(unittest.TestCase):
                     self.assertTrue(inspect.iscoroutinefunction(fn),
                                     f"{name} should be async")
 
+    def test_every_mirrored_method_takes_every_argument_of_the_sync_one(self):
+        """Read from the two signatures, so a parameter added to a `Korely`
+        method reaches its `AsyncKorely` mirror or this fails (the
+        `idempotency_key` of `batch()` did not: the mirror took `memories`
+        alone)."""
+        import inspect
+        from korely_memory import AsyncKorely
+
+        kinds = (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
+        for name, fn in inspect.getmembers(AsyncKorely, inspect.isfunction):
+            if name.startswith("_"):
+                continue
+            mine = inspect.signature(fn).parameters
+            takes_any_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD
+                                    for p in mine.values())
+            for p in list(inspect.signature(getattr(Korely, name)).parameters.values())[1:]:
+                with self.subTest(method=name, parameter=p.name):
+                    if p.kind in kinds:
+                        self.assertIn(p.kind, {q.kind for q in mine.values()})
+                    else:
+                        self.assertTrue(p.name in mine or takes_any_keyword,
+                                        f"AsyncKorely.{name} does not take {p.name}")
+
+    def test_batch_sends_the_idempotency_key_from_async_too(self):
+        import asyncio
+        from korely_memory import AsyncKorely
+
+        rec = _Recorder()
+        rec.queue(202, {"job_id": "j1", "status": "queued", "total": 1})
+        korely = AsyncKorely()
+        korely._sync._send = rec
+        asyncio.run(korely.batch([{"content": "x"}], idempotency_key="k-1"))
+        self.assertEqual(rec.calls[0]["headers"], {"Idempotency-Key": '"k-1"'})
+
     def test_calls_reach_the_transport_and_run_concurrently(self):
         import asyncio
         from korely_memory import AsyncKorely

@@ -135,8 +135,8 @@ class AsyncKorely:
     async def correct_fact(self, fact_id: str, **kw) -> Fact:
         return await self._run(lambda: self._sync.correct_fact(fact_id, **kw))
 
-    async def batch(self, memories: "List[BatchMemory | dict]") -> BatchJob:
-        return await self._run(self._sync.batch, memories)
+    async def batch(self, memories: "List[BatchMemory | dict]", **kw) -> BatchJob:
+        return await self._run(lambda: self._sync.batch(memories, **kw))
 
     # ── read ──────────────────────────────────────────────────────────────
     async def search(self, query: str, **kw) -> List[SearchHit]:

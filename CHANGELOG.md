@@ -16,9 +16,9 @@ scripts: `korely init --tool <tool> --no-mcp`, and `--remove --no-mcp`, no
 longer remove a `korely` MCP server (in Python below).
 
 Also in both: **a write can carry an Idempotency-Key**. `add(...,
-idempotency_key=...)` and `batch(..., idempotency_key=...)` in Python,
-`add(content, { idempotency_key })` and `batch(memories, { idempotency_key })`
-in npm. Sent again with the same key, the write is made once (Korely 1.0.27
+idempotency_key=...)` and `batch(..., idempotency_key=...)` in Python (on
+`AsyncKorely` too), `add(content, { idempotency_key })` and `batch(memories,
+{ idempotency_key })` in npm. Sent again with the same key, the write is made once (Korely 1.0.27
 and later; an older server ignores the header). One new key per write, the
 same one only to send that write again. Without one, nothing changes: no
 header is sent. The clients still never retry by themselves, so they make no
