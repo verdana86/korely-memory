@@ -551,9 +551,10 @@ the profile the key was read from (`--profile <name>`, the one of
 `KORELY_PROFILE` included) and `--base-url <server>` for a server other than
 `https://api.korely.ai`; for a key from `KORELY_API_KEY`, the line says to
 change that variable, which `korely init` does not write. On the Cloud it adds
-that a key `korely init --agent` made, whose account nobody has signed in to,
-needs no new key: signing in to the dashboard with it lifts its end. An older
-server does not say, and the hook adds nothing.
+that a key `korely init --agent` made, not yet connected to a dashboard login,
+needs no new key: signing in with a login of your own and pasting the key on
+the Account page ("Bring in a key made without a login") lifts its end. An
+older server does not say, and the hook adds nothing.
 
 | Tool | Files (this repository) | With `--global` (every repository) | Notes |
 |---|---|---|---|

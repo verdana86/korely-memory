@@ -66,8 +66,9 @@ http.client, which raised a bare `ValueError`).
   `KORELY_PROFILE` included) and `--base-url` for a server other than
   api.korely.ai, or, for a key from `KORELY_API_KEY`, that variable. On the
   Cloud it adds that a key `korely init --agent` made needs no new key:
-  signing in to the dashboard with it lifts its end. Up to 0.2.0 the end
-  reached a session as 401s in `hook.log`. An end the hook cannot read
+  connecting it to a dashboard login (sign in with a login of your own, paste
+  the key on the Account page) lifts its end. Up to 0.2.0 the end reached a
+  session as 401s in `hook.log`. An end the hook cannot read
   adds nothing and takes nothing out.
 - `korely init --tool <tool> --no-mcp` touches no MCP setting. Up to 0.2.0
   it removed a server named `korely` (`claude mcp remove`, or the entry in

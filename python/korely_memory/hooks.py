@@ -616,8 +616,9 @@ def _key_ends(client: Any, whose: str) -> str:
     variable, which `korely init` does not write. A `korely init --force`
     of the other profile would have replaced a key that does not end, lost
     for good, and left this one in place. On the Cloud, the key of an
-    account `korely init --agent` made and nobody adopted lasts 7 days, and
-    signing in to the dashboard with it lifts that end: no new key."""
+    account `korely init --agent` made lasts 7 days until it is connected to
+    a dashboard login (a login of one's own, the key pasted on the Account
+    page), which lifts that end: no new key."""
     ends = _moment(getattr(client, "key_expires_at", None))
     if ends is None:
         return ""
@@ -643,8 +644,10 @@ def _key_ends(client: Any, whose: str) -> str:
         how = ("save it with `korely init --api-key <new key> --force"
                + ("" if server == _REGIONS["eu"] else f" --base-url {named}")
                + ("" if saved == "default" else f" --profile {saved}") + "`")
-    trial = (" A key `korely init --agent` made, whose account nobody has signed in to yet, "
-             "needs no new key: signing in to the Korely dashboard with it lifts that end."
+    trial = (" A key `korely init --agent` made, not yet connected to a dashboard login, "
+             "needs no new key: sign in to the Korely dashboard with a login of your own, "
+             "open the Account page and paste this key under \"Bring in a key made without "
+             "a login\"; that lifts its end."
              if _the_service(server) else "")
     return (f"The Korely key {whose} ends on {ends:%Y-%m-%d %H:%M} UTC ({when}): after that "
             f"Korely refuses its reads and writes (401). Make a new key in the Korely "

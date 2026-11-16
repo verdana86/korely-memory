@@ -531,9 +531,10 @@ class KeyEnds(Base):
         line = hooks._key_ends(Cloud(), "these hooks use")
         self.assertIn("(in 6 days)", line)
         self.assertIn("save it with `korely init --api-key <new key> --force`.", line)
-        self.assertIn("A key `korely init --agent` made, whose account nobody has signed in "
-                      "to yet, needs no new key: signing in to the Korely dashboard with it "
-                      "lifts that end.", line)
+        self.assertIn("A key `korely init --agent` made, not yet connected to a dashboard "
+                      "login, needs no new key: sign in to the Korely dashboard with a login "
+                      "of your own, open the Account page and paste this key under \"Bring in "
+                      "a key made without a login\"; that lifts its end.", line)
         Cloud.base_url = self.server.url  # one's own server: no such account
         self.assertNotIn("korely init --agent", hooks._key_ends(Cloud(), "these hooks use"))
 

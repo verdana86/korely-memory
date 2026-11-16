@@ -153,7 +153,7 @@ curl -X POST https://api.korely.ai/v1/agents/init \
   -d '{"agent_caller": "your-name-here"}'
 ```
 
-The response carries a `kor_live_` key, when it stops working (`expires_at`) and, in `note`, the trial's limits until the account is adopted (by signing in to the dashboard with the key) and how to adopt it; `quotas` are the monthly numbers once adopted. Set the key as `KORELY_API_KEY` and the SDK, the CLI, and the REST API all authenticate with it. From code, `Korely.init_agent()` (Python) and `Korely.initAgent()` (JS) make the same call.
+The response carries a `kor_live_` key, when it stops working (`expires_at`) and, in `note`, the trial's limits until the account is adopted (by signing in to the dashboard with a login of your own and pasting the key on the Account page) and how to adopt it; `quotas` are the monthly numbers once adopted. Set the key as `KORELY_API_KEY` and the SDK, the CLI, and the REST API all authenticate with it. From code, `Korely.init_agent()` (Python) and `Korely.initAgent()` (JS) make the same call.
 
 The account behind that key has no login: the key is the account. Keep it, because it is also the only way to delete the account: `korely delete-account` names the account's id, and `korely delete-account --confirm <that id>` deletes it (`delete_account(confirm="<id>")` in Python, `deleteAccount({ confirm: "<id>" })` in JS).
 
