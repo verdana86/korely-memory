@@ -94,6 +94,44 @@ page.events[0]   # MemoryEvent(memory_id='mem_...', status='ready', ...)
 
 Polling is the only signal: no webhook fires when extraction finishes. The webhook events are `memory.created`, `fact.invalidated` and `quota.warning`.
 
+## Retrying a write
+
+The clients never send a request again on their own: a call that times out
+(30 s by default) or fails raises, and what to do next is yours. A write that
+got no answer may still have been made: the server may finish it after your
+call gave up, and a proxy in front of it may hold it while the server restarts
+and send it on later (the one of Korely Cloud holds requests for some seconds
+during a restart). So **a caller that retries a write itself passes the
+same `idempotency_key` on every try**, and the server (Korely 1.0.27 and
+later) makes it once; an older server ignores it.
+
+```python
+import time, uuid
+from korely_memory import KorelyError
+
+key = uuid.uuid4().hex  # one key per write, the same on every try of it
+for attempt in range(3):
+    try:
+        korely.add("Ada prefers tea.", user_id="ada", idempotency_key=key)
+        break
+    except KorelyError:
+        if attempt == 2:
+            raise  # the last try failed: the write may or may not have been made
+        time.sleep(2 ** attempt)
+```
+
+```ts
+const key = crypto.randomUUID(); // one key per write, the same on every try of it
+await korely.add("Ada prefers tea.", { user_id: "ada", idempotency_key: key });
+```
+
+`batch()` takes `idempotency_key` too. A key is 1 to 255 printable ASCII
+characters; anything else raises (`KorelyError`) before a request is sent. The
+clients do not make a key for each call themselves: they never retry, so a key
+made per call would be a new one on your retry and protect nothing. The hooks
+of `korely init`, which do try a session again, keep one key per session they
+send.
+
 ## Install
 
 ```bash

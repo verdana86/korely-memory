@@ -108,7 +108,28 @@ export interface InitAgentOptions extends Pick<KorelyOptions, "region" | "baseUr
 // its type, and every method refuses a key that is not on its list.
 const CLIENT_KEYS = keysOf<KorelyOptions>()("apiKey", "region", "baseUrl", "timeoutMs", "fetch", "client");
 const INIT_KEYS = keysOf<InitAgentOptions>()("region", "baseUrl", "timeoutMs", "fetch", "processingRegion");
-const ADD_KEYS = keysOf<AddOptions>()("agent_id", "user_id", "run_id", "metadata", "timestamp", "kind");
+const ADD_KEYS = keysOf<AddOptions>()(
+  "agent_id", "user_id", "run_id", "metadata", "timestamp", "kind", "idempotency_key",
+);
+
+/**
+ * The Idempotency-Key header of a write, or none. Its value is a String of RFC
+ * 9651 (section 3.3.3), quoted, as draft-ietf-httpapi-idempotency-key-header-08
+ * section 2.1 has it: a backslash and a quote are escaped (section 4.1.6). The
+ * key is what the server takes in a quoted String (its
+ * `idempotency_key_invalid`): 1 to 255 characters, each printable ASCII, space
+ * to `~`. Anything else is refused here, before a request is sent, as a
+ * KorelyError like every other failure of a call.
+ */
+function idempotencyHeader(key: string | undefined): Record<string, string> | undefined {
+  if (key === undefined) return undefined;
+  if (typeof key !== "string" || !/^[\x20-\x7e]{1,255}$/.test(key)) {
+    throw new KorelyError(
+      "idempotency_key must be 1 to 255 printable ASCII characters (space to ~), one per write: a UUID will do.",
+    );
+  }
+  return { "Idempotency-Key": `"${key.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"` };
+}
 const SEARCH_KEYS = keysOf<SearchOptions>()(
   "user_id", "agent_id", "run_id", "metadata", "limit", "min_score", "exclude_sessions");
 const LIST_KEYS = keysOf<ListOptions>()("user_id", "agent_id", "run_id", "limit", "offset", "exclude_sessions");
@@ -401,7 +422,7 @@ async function exchange(
   t: Transport,
   method: string,
   path: string,
-  opts: { params?: Params; body?: unknown } = {},
+  opts: { params?: Params; body?: unknown; headers?: Record<string, string> } = {},
 ): Promise<any> {
   let url = t.baseUrl + path;
   if (opts.params) {
@@ -425,6 +446,7 @@ async function exchange(
     body = JSON.stringify(opts.body);
     headers["Content-Type"] = "application/json";
   }
+  Object.assign(headers, opts.headers);
 
   // The timer covers the whole exchange, body included. It used to be
   // cleared as soon as the headers arrived, so a server that sent headers
@@ -749,7 +771,7 @@ export class Korely {
   private request(
     method: string,
     path: string,
-    opts: { params?: Params; body?: unknown } = {},
+    opts: { params?: Params; body?: unknown; headers?: Record<string, string> } = {},
   ): Promise<any> {
     return exchange(
       { baseUrl: this.baseUrl, timeoutMs: this.timeoutMs, fetchImpl: this.fetchImpl, apiKey: this.apiKey,
@@ -989,6 +1011,7 @@ export class Korely {
         timestamp: opts.timestamp,
         kind: opts.kind,
       },
+      headers: idempotencyHeader(opts.idempotency_key),
     });
   }
 
@@ -1391,8 +1414,13 @@ export class Korely {
    * `too_many_batches` (TooManyBatchesError) while three batches are still
    * being imported. The Self-hosted meters nothing and refuses neither.
    */
-  async batch(memories: Array<BatchMemory | Record<string, unknown>>): Promise<BatchJob> {
-    return this.request("POST", "/v1/batch", { body: { memories } });
+  async batch(
+    memories: Array<BatchMemory | Record<string, unknown>>,
+    opts: { idempotency_key?: string } = {},
+  ): Promise<BatchJob> {
+    return this.request("POST", "/v1/batch", {
+      body: { memories }, headers: idempotencyHeader(opts.idempotency_key),
+    });
   }
 
   /** GET /v1/batch/:id: poll an import job. */

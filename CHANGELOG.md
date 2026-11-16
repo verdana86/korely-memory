@@ -8,6 +8,31 @@ The server side of the entries marked "API" shipped on 2026-09-28. Against an
 older server these clients keep working: the old field names are still read,
 and a batch `timestamp` is refused there with a 422.
 
+## Unreleased
+
+- **A write can carry an Idempotency-Key**: `add(..., idempotency_key=...)`
+  and `batch(..., idempotency_key=...)` in Python, `add(content, {
+  idempotency_key })` and `batch(memories, { idempotency_key })` in npm. Sent
+  again with the same key, the write is made once (Korely 1.0.27 and later;
+  an older server ignores the header). One new key per write, the same one
+  only to send that write again. Without one, nothing changes: no header is
+  sent. The clients still never retry by themselves, so they make no key per
+  call (a new key on each call would protect nothing): **a caller that retries
+  a write itself must pass the same `idempotency_key` on every try**. While
+  the API restarts, the proxy of Korely Cloud may hold a write for some
+  seconds. A key is 1 to 255 printable ASCII characters;
+  anything else raises `KorelyError` before a request is sent (a line break
+  reached Python's http.client, which raised a bare `ValueError`).
+- **The hooks' sessions are made once**: each outbox of `korely init`'s
+  hooks gets one key when it is written, and every attempt to send it sends
+  that key. The hooks wait 8 s and try an outbox up to five times; a proxy
+  that holds a write while the API restarts (the one of Korely Cloud may hold
+  it for some seconds) could deliver an attempt after the hook had given up
+  waiting for it, and the next attempt would then make the session a second
+  time. Now
+  the server answers what the first attempt made. An outbox written by an
+  earlier version gets its key at its next attempt.
+
 ## Python 0.2.0, npm 0.2.0 (2026-11-14)
 
 Minor releases, after Python 0.1.29 and npm 0.1.18, because two changes break

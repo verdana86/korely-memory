@@ -242,6 +242,49 @@ class SessionFlow(Base):
         self.assertEqual(hooks.flush(None, lambda tool=None: up), 1)  # what session-start runs
         self.assertIn("Developer: x", up.added[0][0])
 
+    def test_every_attempt_sends_the_outbox_s_one_key(self):
+        """The 8 s timeout can run out while a proxy holds the send through a
+        restart of the server, which then makes it: the next attempt must be
+        the same write, so the server answers what the first made."""
+        sent = []
+
+        class Timeout(FakeClient):
+            def add(self, content, **kw):
+                sent.append(kw.get("idempotency_key"))
+                raise TimeoutError("timed out")
+
+        self.hook("prompt", "claude-code", {"session_id": "k1", "prompt": "once"}, Timeout())
+        self.hook("pre-compact", "claude-code", {"session_id": "k1"}, Timeout())
+        self.assertEqual(hooks.flush("k1", lambda tool=None: Timeout()), 0)
+        self.assertEqual(hooks.flush(None, lambda tool=None: Timeout()), 0)
+        up = FakeClient()
+        self.assertEqual(hooks.flush(None, lambda tool=None: up), 1)
+        sent.append(up.added[0][1]["idempotency_key"])
+        self.assertEqual(len(sent), 3)
+        self.assertEqual(len(set(sent)), 1)
+        self.assertRegex(sent[0], r"^[0-9a-f]{32}$")
+
+    def test_each_outbox_has_its_own_key(self):
+        client = FakeClient()
+        for session in ("k2", "k3"):
+            self.hook("prompt", "claude-code", {"session_id": session, "prompt": "x"}, client)
+            hooks.flush(session, lambda tool=None: client)
+        keys = [kw["idempotency_key"] for _, kw in client.added]
+        self.assertEqual(len(keys), 2)
+        self.assertNotEqual(keys[0], keys[1])
+
+    def test_an_outbox_from_before_keys_gets_one_and_keeps_it(self):
+        self.hook("prompt", "claude-code", {"session_id": "k4", "prompt": "x"}, FakeClient())
+        box = hooks._claim(hooks._session_file("k4"))
+        old = json.loads(box.read_text())
+        del old["idempotency_key"]
+        box.write_text(json.dumps(old))
+        self.assertFalse(hooks.send_outbox(box, lambda tool=None: FakeClient(fail=True)))
+        kept = json.loads(box.read_text())["idempotency_key"]
+        up = FakeClient()
+        self.assertTrue(hooks.send_outbox(box, lambda tool=None: up))
+        self.assertEqual(up.added[0][1]["idempotency_key"], kept)
+
     def test_two_senders_never_send_the_same_turns(self):
         client = FakeClient()
         self.hook("prompt", "claude-code", {"session_id": "d1", "prompt": "once"}, client)

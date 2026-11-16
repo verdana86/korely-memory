@@ -34,6 +34,7 @@ import re
 import subprocess
 import sys
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
@@ -358,10 +359,22 @@ def _claim(path: Path) -> Optional[Path]:
         box = path.with_name(f"{path.stem}.out{int(time.time() * 1000)}.json")
         out = {k: state.get(k) for k in ("session", "tool", "scope", "repo")}
         out["turns"] = turns
+        out["idempotency_key"] = _new_key()
         _write(box, out)
         state["sent"] = len(state["turns"])
         _write(path, state)
         return box
+
+
+def _new_key() -> str:
+    """The Idempotency-Key of one outbox: every attempt to send it sends this
+    one, so a send whose answer never came (the 8 s timeout ran out while a
+    proxy held the request through a restart of the server, which then made
+    it) is made once when the next attempt sends it again: the server
+    answers what the first made (Korely Agent 1.0.27 and later; an older
+    one ignores the header). Stripe's SDKs do the same for their retries
+    (one key per request, the same on every retry)."""
+    return uuid.uuid4().hex
 
 
 def memory_text(box: Dict[str, Any]) -> str:
@@ -395,12 +408,15 @@ def send_outbox(box_path: Path, client_factory: Callable[[Optional[str]], Any]) 
     if not turns:
         work.unlink(missing_ok=True)
         return True
+    # An outbox written before outboxes had a key gets one now, kept in the
+    # box below if this attempt fails, so the attempts after it send it too.
+    box.setdefault("idempotency_key", _new_key())
     try:
         client = client_factory(box.get("tool"))
         _save_the_session(client, memory_text(box), user_id=box.get("scope"),
                           run_id=(box.get("session") or None) and str(box["session"])[:255],
                           metadata={"source": box.get("tool"), "repo": box.get("repo")},
-                          timestamp=turns[0]["at"])
+                          timestamp=turns[0]["at"], idempotency_key=box["idempotency_key"])
     except Exception as e:  # noqa: BLE001 - a hook must never raise
         attempts = int(box.get("attempts", 0)) + 1
         if attempts >= 5:
