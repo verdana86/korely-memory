@@ -52,7 +52,7 @@ Every method wraps exactly one REST endpoint.
 
 | Method | Endpoint |
 |---|---|
-| `add(content, *, agent_id=, user_id=, run_id=, metadata=, timestamp=)` | `POST /v1/memories` |
+| `add(content, *, agent_id=, user_id=, run_id=, metadata=, timestamp=, idempotency_key=)` | `POST /v1/memories`; with `idempotency_key=`, the same write sent again with the same key is made once (Korely 1.0.27 and later; an older server ignores it): one new key per write, the same one only to send that write again. The client never retries by itself |
 | `search(query, *, user_id=, agent_id=, run_id=, metadata=, limit=, min_score=, types=, full_text=)` | `POST /v1/memories/search`; `min_score` (0 to 1) leaves out hits scored below it; `types=["memories", "facts"]` searches the facts true now too (`["facts"]` them only), and each hit says its `type`, a fact's with its `fact`; `full_text=True` adds the whole text as `content` (`snippet` is its first 280 characters). Korely 1.0.13 and later; sent only when given |
 | `get_all(*, user_id=, agent_id=, run_id=, limit=, offset=)` | `GET /v1/memories` |
 | `get(memory_id)` | `GET /v1/memories/:id` |
@@ -70,7 +70,7 @@ Every method wraps exactly one REST endpoint.
 | `get_profile(*, user_id, agent_id=, as_of=, known_as_of=)` | `GET /v1/profile` |
 | `get_context(*, query, user_id=, agent_id=, token_budget=, known_as_of=)` | `GET /v1/context` |
 | `events(*, user_id=, status=, limit=)` | `GET /v1/events` |
-| `batch(memories)` | `POST /v1/batch` |
+| `batch(memories, *, idempotency_key=)` | `POST /v1/batch`; `idempotency_key=` as in `add()` |
 | `batch_status(job_id)` | `GET /v1/batch/:id` |
 | `ping()` | `GET /v1/ping` |
 | `delete_account(*, confirm="<account id>")` | `DELETE /v1/account` (Cloud only) |
