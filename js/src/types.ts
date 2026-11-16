@@ -485,6 +485,14 @@ export interface AddOptions {
    * field with a 422.
    */
   kind?: "note" | "session";
+  /**
+   * Send the same write again with the same key and it is made once (Korely
+   * Agent 1.0.27 and later; an older server ignores it). One new key per
+   * write, the same one only to send that write again: a write whose answer
+   * never came (a timeout, a 502 while the server restarted) may have been
+   * made, and without a key a resend makes it twice.
+   */
+  idempotency_key?: string;
 }
 
 /** What `declareName` declared: in `user_id`'s memory (`agent_id` the

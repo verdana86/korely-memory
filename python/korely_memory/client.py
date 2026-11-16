@@ -410,6 +410,24 @@ def _account_id(value: Any) -> Optional[str]:
         return None
 
 
+def _idempotency_header(key: Optional[str]) -> Optional[dict]:
+    """The Idempotency-Key header for a write, or none. Its value is a String
+    of RFC 9651 (section 3.3.3), quoted, as draft-ietf-httpapi-idempotency-
+    key-header-08 section 2.1 has it: a backslash and a quote are escaped
+    (section 4.1.6). The key is what the server takes in a quoted String
+    (its ``idempotency_key_invalid``): 1 to 255 characters, each printable
+    ASCII, space to ``~``. Anything else is refused here, before a request
+    is sent: a line break reached http.client, which raised a bare
+    ValueError, not the KorelyError every other failure of a call is."""
+    if key is None:
+        return None
+    if not (isinstance(key, str) and 1 <= len(key) <= 255
+            and all(" " <= c <= "~" for c in key)):
+        raise KorelyError("idempotency_key must be 1 to 255 printable ASCII characters "
+                          "(space to ~), one per write: a UUID will do.")
+    return {"Idempotency-Key": '"' + key.replace("\\", "\\\\").replace('"', '\\"') + '"'}
+
+
 def _retry_after_seconds(raw: Any) -> Optional[int]:
     """Retry-After in whole seconds, rounded up, or None if absent/unreadable."""
     if raw is None:
@@ -569,7 +587,8 @@ class Korely:
 
     # ── low-level transport (the one seam tests override) ──────────────────
     def _send(self, method: str, path: str, *, params: Optional[dict] = None,
-              json_body: Optional[Any] = None) -> "tuple[int, dict]":
+              json_body: Optional[Any] = None,
+              headers: Optional[dict] = None) -> "tuple[int, dict]":
         """One HTTP exchange. Returns (status, parsed body); a Retry-After
         header travels in the body under ``_retry_after``, which ``_raise``
         takes out again before the body reaches an exception.
@@ -588,6 +607,7 @@ class Korely:
             if qs:
                 url += "?" + qs
         data = json.dumps(json_body).encode("utf-8") if json_body is not None else None
+        extra_headers = headers
         headers = {
             "Accept": "application/json",
             "User-Agent": "korely-memory-python/" + __version__,
@@ -598,6 +618,7 @@ class Korely:
                                       or "korely-python/" + __version__)
         if data is not None:
             headers["Content-Type"] = "application/json"
+        headers.update(extra_headers or {})
         req = _urlrequest.Request(url, data=data, method=method, headers=headers)
         # No key only on the client init_agent() builds: that call is how a
         # key is obtained, and an empty `Bearer ` is not "no key" to a server.
@@ -674,12 +695,12 @@ class Korely:
             self.key_expires_at = ends
 
     def _call(self, method: str, path: str, *, params: Optional[dict] = None,
-              json_body: Optional[Any] = None) -> dict:
-        body = self._call_any(method, path, params=params, json_body=json_body)
+              json_body: Optional[Any] = None, headers: Optional[dict] = None) -> dict:
+        body = self._call_any(method, path, params=params, json_body=json_body, headers=headers)
         return body if isinstance(body, dict) else {}
 
     def _call_any(self, method: str, path: str, *, params: Optional[dict] = None,
-                  json_body: Optional[Any] = None) -> Any:
+                  json_body: Optional[Any] = None, headers: Optional[dict] = None) -> Any:
         """`_call` for an answer that may be a list (GET /admin/keys).
 
         Only a 2xx is an answer. A 3xx reaches here when urllib does not
@@ -688,7 +709,10 @@ class Korely:
         answered 307 by a proxy counted as a deleted account, and `korely
         delete-account` threw away the key of an account that still
         existed."""
-        status, body = self._send(method, path, params=params, json_body=json_body)
+        # A header of the call's own (the Idempotency-Key of a write) only when
+        # there is one: every other exchange is the one it always was.
+        extra = {"headers": headers} if headers else {}
+        status, body = self._send(method, path, params=params, json_body=json_body, **extra)
         if not 200 <= status < 300:
             self._raise(status, body if isinstance(body, dict) else {}, method=method)
         return body
@@ -991,7 +1015,8 @@ class Korely:
     def add(self, content: "str | list", *, agent_id: Optional[str] = None,
             user_id: Optional[str] = None, run_id: Optional[str] = None,
             metadata: Optional[dict] = None,
-            timestamp: Optional[str] = None, kind: Optional[str] = None) -> Memory:
+            timestamp: Optional[str] = None, kind: Optional[str] = None,
+            idempotency_key: Optional[str] = None) -> Memory:
         """POST /v1/memories: store a memory; returns it with extracted facts.
 
         ``content`` is a string, or a list of chat messages
@@ -1013,7 +1038,14 @@ class Korely:
 
         ``kind``: ``"note"`` (the server's default) or ``"session"``, the log
         of a work session, which a read can leave out (``exclude_sessions``).
-        Korely Agent after 0.1.41; an older server refuses it (422)."""
+        Korely Agent after 0.1.41; an older server refuses it (422).
+
+        ``idempotency_key``: send the same write again with the same key and
+        it is made once (Korely Agent 1.0.27 and later; an older server
+        ignores it). One new key per write, the same one only to send that
+        write again: a write whose answer never came (a timeout, a 502 while
+        the server restarted) may have been made, and without a key a resend
+        makes it twice."""
         text = _coerce_content(content)
         if not text.strip():
             raise KorelyError("content is empty: pass a non-blank string or messages with content.")
@@ -1021,7 +1053,7 @@ class Korely:
             "content": text, "agent_id": agent_id, "user_id": user_id,
             "run_id": run_id, "metadata": metadata, "timestamp": timestamp,
             "kind": kind,
-        }))
+        }), headers=_idempotency_header(idempotency_key))
         return Memory.from_dict(body)
 
     def search(self, query: str, *, user_id: Optional[str] = None,
@@ -1451,7 +1483,8 @@ class Korely:
         })))
 
     # ── batch ────────────────────────────────────────────────────────────────
-    def batch(self, memories: "List[BatchMemory | dict]") -> BatchJob:
+    def batch(self, memories: "List[BatchMemory | dict]", *,
+              idempotency_key: Optional[str] = None) -> BatchJob:
         """POST /v1/batch: bulk import, up to 500 memory objects, processed
         asynchronously. Each object is the body of one ``add()`` (see
         ``BatchMemory``): ``content`` and optionally ``user_id``,
@@ -1478,7 +1511,8 @@ class Korely:
         ``too_many_batches`` (TooManyBatchesError) while three batches are
         still being imported. The Self-hosted meters nothing and refuses
         neither."""
-        body = self._call("POST", "/v1/batch", json_body={"memories": list(memories)})
+        body = self._call("POST", "/v1/batch", json_body={"memories": list(memories)},
+                          headers=_idempotency_header(idempotency_key))
         return BatchJob.from_dict(body)
 
     def batch_status(self, job_id: str) -> BatchJob:

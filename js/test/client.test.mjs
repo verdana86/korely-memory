@@ -1416,3 +1416,39 @@ test("the package's own examples, run as written, name the user in every write (
     for (const w of writes) assert.ok(JSON.parse(w.init.body).user_id, `${file}: ${w.init.body}`);
   }
 });
+
+// A write whose answer never came may have been made (a timeout while a proxy
+// held it through a restart of the server, which then made it): sent again
+// without a key it is made twice, with the same `idempotency_key` once
+// (Korely Agent 1.0.27). The header as draft-ietf-httpapi-idempotency-key-
+// header-08 section 2.1 wants it, a quoted String of RFC 9651.
+test("add and batch send the Idempotency-Key they are given, and none without", async () => {
+  const { k, f } = client([
+    { status: 201, body: { id: "mem_1" } },
+    { status: 202, body: { job_id: "job_1" } },
+    { status: 201, body: { id: "mem_2" } },
+    { status: 201, body: { id: "mem_3" } },
+  ]);
+  await k.add("Ada prefers tea.", { user_id: "ada", idempotency_key: "3f2c9a" });
+  await k.batch([{ content: "x", user_id: "ada" }], { idempotency_key: "b-1" });
+  await k.add("Ada prefers tea.", { user_id: "ada" });
+  await k.add("x", { user_id: "ada", idempotency_key: 'a"b\\c' });
+  const sent = f.calls.map((c) => c.init.headers["Idempotency-Key"]);
+  assert.deepEqual(sent, ['"3f2c9a"', '"b-1"', undefined, '"a\\"b\\\\c"']);
+});
+
+test("a bad Idempotency-Key is a KorelyError and nothing is sent", async () => {
+  // 1 to 255 printable ASCII characters, what the server takes in a quoted
+  // String; anything else would reach fetch, which refuses a header with a
+  // line break with a TypeError of its own.
+  for (const bad of ["", "a".repeat(256), "a\nb", "a\rb", "café", "tab\there", 42]) {
+    const { k, f } = client([{ status: 201, body: { id: "mem_1" } }]);
+    await assert.rejects(k.add("x", { user_id: "ada", idempotency_key: bad }), KorelyError, String(bad));
+    await assert.rejects(k.batch([{ content: "x", user_id: "ada" }], { idempotency_key: bad }), KorelyError);
+    assert.equal(f.calls.length, 0, String(bad));
+  }
+  const { k, f } = client([{ status: 201, body: { id: "mem_1" } }, { status: 201, body: { id: "mem_2" } }]);
+  await k.add("x", { user_id: "ada", idempotency_key: "~".repeat(255) });
+  await k.add("x", { user_id: "ada", idempotency_key: " spaced key " });
+  assert.equal(f.calls.length, 2);
+});

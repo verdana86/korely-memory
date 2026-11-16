@@ -40,8 +40,9 @@ class _Recorder:
         self._responses.append((status, body))
         return self
 
-    def __call__(self, method, path, *, params=None, json_body=None):
-        self.calls.append({"method": method, "path": path, "params": params, "json": json_body})
+    def __call__(self, method, path, *, params=None, json_body=None, headers=None):
+        self.calls.append({"method": method, "path": path, "params": params, "json": json_body,
+                           "headers": headers})
         return self._responses.pop(0) if self._responses else (200, {})
 
     @property
@@ -2464,3 +2465,67 @@ class EventsAndForgetAreTyped(unittest.TestCase):
         self.assertIsInstance(ev, EventsResponse)
         self.assertIsInstance(fo, ForgetReceipt)
         self.assertEqual((ev.processing, fo.status), (1, "forgotten"))
+
+
+class AWriteCarriesItsIdempotencyKey(unittest.TestCase):
+    """A write whose answer never came may have been made (a timeout while a
+    proxy held it through a restart of the server, which then made it), and
+    sent again without a key it is made twice. With `idempotency_key` the
+    server makes it once (Korely Agent 1.0.27). On the wire, to a real server:
+    the header as draft-ietf-httpapi-idempotency-key-header-08 section 2.1
+    wants it, a quoted String of RFC 9651."""
+
+    def setUp(self):
+        from unittest import mock
+
+        patcher = mock.patch.dict(os.environ, {"no_proxy": "*", "NO_PROXY": "*"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        self.server = _Server(lambda method, path: (
+            201 if path == "/v1/memories" else 202, {},
+            {"id": "mem_1", "content": "x"} if path == "/v1/memories" else {"job_id": "job_1"}))
+        self.addCleanup(self.server.close)
+        self.k = Korely(api_key="kor_self_test", base_url=self.server.url)
+
+    def _key_sent(self):
+        return {k.lower(): v for k, v in self.server.seen[-1][2].items()}.get("idempotency-key")
+
+    def test_add_sends_the_key_it_is_given(self):
+        self.k.add("Ada prefers tea.", user_id="ada", idempotency_key="3f2c9a")
+        self.assertEqual(self._key_sent(), '"3f2c9a"')
+
+    def test_batch_sends_the_key_it_is_given(self):
+        self.k.batch([{"content": "x", "user_id": "ada"}], idempotency_key="b-1")
+        self.assertEqual(self._key_sent(), '"b-1"')
+
+    def test_no_key_no_header(self):
+        self.k.add("Ada prefers tea.", user_id="ada")
+        self.assertIsNone(self._key_sent())
+
+    def test_a_quote_or_a_backslash_is_escaped(self):
+        self.k.add("x", user_id="ada", idempotency_key='a"b\\c')
+        self.assertEqual(self._key_sent(), '"a\\"b\\\\c"')
+
+
+class ABadIdempotencyKeyIsRefusedBeforeTheCall(unittest.TestCase):
+    """1 to 255 printable ASCII characters, what the server takes in a quoted
+    String. A line break reached http.client, which raised a bare ValueError;
+    every other failure of a call is a KorelyError. Nothing is sent."""
+
+    def test_each_bad_key_is_a_korely_error_and_nothing_is_sent(self):
+        for bad in ("", "a" * 256, "a\nb", "a\rb", "café", "tab\there", 42):
+            rec = _Recorder().queue(201, {"id": "mem_1"})
+            k = _client(rec)
+            with self.assertRaises(KorelyError, msg=repr(bad)):
+                k.add("x", user_id="ada", idempotency_key=bad)
+            with self.assertRaises(KorelyError, msg=repr(bad)):
+                k.batch([{"content": "x", "user_id": "ada"}], idempotency_key=bad)
+            self.assertEqual(rec.calls, [], repr(bad))
+
+    def test_the_edges_are_taken(self):
+        rec = _Recorder()
+        k = _client(rec)
+        for good in ("a", "~" * 255, " spaced key ", "3f2c9a4e-0d1b-4c2a-9f7e-8b6d5c4a3b2a"):
+            rec.queue(201, {"id": "mem_1"})
+            k.add("x", user_id="ada", idempotency_key=good)
+        self.assertEqual(len(rec.calls), 4)
