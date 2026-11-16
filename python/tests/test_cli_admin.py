@@ -74,6 +74,10 @@ class TestKeys(_CleanEnv):
         self.assertIn("kor_live_SECRET", out)
 
     def test_save_as_keeps_the_secret_off_the_screen(self):
+        # A profile that held another key: its tier and its end are that key's.
+        with open(os.path.join(self.cfg_dir, "config.json"), "w", encoding="utf-8") as fh:
+            json.dump({"profiles": {"admin": {"api_key": "kor_live_OLD", "tier": "hobby",
+                                              "expires_at": "2026-11-22T18:00:00Z"}}}, fh)
         rec = _Recorder().queue(201, {"id": "k2", "name": "terminale", "masked": "kor_live_••••wxyz",
                                       "key": "kor_live_SECRET2"})
         rc, out, _ = _run(cli.cmd_keys, rec, ["keys", "create", "--name", "terminale",
@@ -82,6 +86,7 @@ class TestKeys(_CleanEnv):
         self.assertNotIn("SECRET2", out)
         cfg = json.loads(open(os.path.join(self.cfg_dir, "config.json")).read())
         self.assertEqual(cfg["profiles"]["admin"]["api_key"], "kor_live_SECRET2")
+        self.assertEqual(set(cfg["profiles"]["admin"]), {"api_key", "base_url"})
 
     def test_revoke_needs_yes(self):
         rec = _Recorder()

@@ -56,6 +56,21 @@ test("requires an api key", () => {
     delete process.env.KORELY_API_KEY;
     process.env.KORELY_CONFIG_HOME = "/nonexistent-korely-config-home";
     assert.throws(() => new Korely({ fetch: async () => ({}) }), KorelyError);
+    // What a Node user does (15 Nov 2026): the npm package has no `korely`
+    // command, so the message does not send them to one. A key is made once,
+    // as the README's cURL does: a call pasted at a program's start made a
+    // new account at every start. The file named is the one read.
+    assert.throws(() => new Korely({ fetch: async () => ({}) }), (e) => {
+      assert.doesNotMatch(e.message, /run `korely init`/);
+      assert.doesNotMatch(e.message, /await Korely\.initAgent/);
+      assert.match(e.message, /make one once/);
+      assert.match(e.message, /curl -X POST https:\/\/api\.korely\.ai\/v1\/agents\/init /);
+      assert.match(e.message, /then set KORELY_API_KEY/);
+      assert.match(e.message, /Python package/);
+      assert.match(e.message, /from \/nonexistent-korely-config-home\/config\.json\./);
+      assert.doesNotMatch(e.message, /~\/\.korely/);
+      return true;
+    });
   } finally {
     for (const v of ["KORELY_API_KEY", "KORELY_CONFIG_HOME"]) {
       if (saved[v] === undefined) delete process.env[v]; else process.env[v] = saved[v];
@@ -411,6 +426,33 @@ test("search and getAll take the filters the API takes", async () => {
   assert.match(f.calls[1].url, /run_id=r1/);
   assert.equal(page.total, 9);
   assert.deepEqual([...page].map((m) => m.id), ["m1", "m2"]);
+});
+
+test("search takes the server's types and full_text, and sends neither unasked", async () => {
+  // Korely 1.0.13 searches the facts too and returns the whole text; the SDK
+  // refused both options, so a hit was always 280 characters of a memory.
+  const fact = { id: "fct_1", subject: "Maria", predicate: "lives_in", object: "Turin" };
+  const { k, f } = client([
+    { status: 200, body: { results: [
+      { id: "mem_1", score: 0.81, snippet: "x".repeat(280), type: "memory", content: "x".repeat(900) },
+      { id: "fct_1", score: 0.77, snippet: "Maria · lives_in · Turin", type: "fact",
+        content: "Maria · lives_in · Turin", fact },
+    ] } },
+    { status: 200, body: { results: [] } },
+  ]);
+  const hits = await k.search("where does Maria live", {
+    user_id: "maria", types: ["memories", "facts"], full_text: true,
+  });
+  const sent = JSON.parse(f.calls[0].init.body);
+  assert.deepEqual(sent.types, ["memories", "facts"]);
+  assert.equal(sent.full_text, true);
+  assert.deepEqual(hits.map((h) => h.type), ["memory", "fact"]);
+  assert.equal(hits[0].content.length, 900);
+  assert.equal(hits[1].fact.object, "Turin");
+  await k.search("where does Maria live");
+  const plain = JSON.parse(f.calls[1].init.body);
+  assert.equal("types" in plain, false, "an older server answers 422 to it");
+  assert.equal("full_text" in plain, false);
 });
 
 test("events() reads GET /v1/events", async () => {
@@ -1227,7 +1269,7 @@ test("new Korely() reads what `korely init` saved, as the Python client does (20
     assert.equal(new Korely({ apiKey: "kor_self_arg", fetch: fakeFetch([]) }).apiKey, "kor_self_arg");
     rmSync(join(dir, "config.json"));
     delete process.env.KORELY_BASE_URL;
-    assert.throws(() => new Korely({ fetch: fakeFetch([]) }), /korely init/);
+    assert.throws(() => new Korely({ fetch: fakeFetch([]) }), /No API key/);
   } finally {
     for (const v of ["KORELY_API_KEY", "KORELY_BASE_URL", "KORELY_CONFIG_HOME"]) {
       if (saved[v] === undefined) delete process.env[v]; else process.env[v] = saved[v];

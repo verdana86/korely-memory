@@ -60,6 +60,9 @@ __version__ = "0.2.0"
 # dashboard: Europe (gpt-oss-120b on Scaleway, Paris) or Global (Gemini, by
 # Google), the default.
 _REGIONS = {"eu": "https://api.korely.ai"}
+# The header with which every answer to a key that expires says when
+# (Korely 1.0.23 and later).
+KEY_EXPIRES_HEADER = "Korely-Key-Expires-At"
 
 
 def _clean(d: dict) -> dict:
@@ -164,6 +167,12 @@ def config_path() -> str:
     return os.path.join(home, "config.json")
 
 
+def _profile_name(profile: Optional[str] = None) -> str:
+    """The profile a read of the config file goes to: the one named, else
+    KORELY_PROFILE, else "default" (the file's top level)."""
+    return profile or os.environ.get("KORELY_PROFILE") or "default"
+
+
 def profile_config(profile: Optional[str] = None) -> dict:
     """The saved settings of one profile: the file's top level for the default
     profile, its `profiles[<name>]` for a named one (`korely init --profile`),
@@ -177,8 +186,8 @@ def profile_config(profile: Optional[str] = None) -> dict:
         return {}
     if not isinstance(data, dict):
         return {}
-    name = profile or os.environ.get("KORELY_PROFILE") or None
-    if not name or name == "default":
+    name = _profile_name(profile)
+    if name == "default":
         return data
     named = (data.get("profiles") or {}).get(name)
     return named if isinstance(named, dict) else {}
@@ -418,6 +427,21 @@ class Korely:
     >>> korely.add("User prefers TypeScript", user_id="dana", agent_id="coding-assistant")
     """
 
+    #: When the key this client sends ends (ISO 8601, UTC, to the second), as
+    #: the last answer that said it: Korely 1.0.23 and later put
+    #: ``Korely-Key-Expires-At`` on every answer to a key that expires, so a
+    #: program can warn before its calls start being refused with 401. None
+    #: before the first answer, for a key that never ends (the header is not
+    #: sent) and from an older server. An answer without the header (a 401, a
+    #: 500) leaves the value as it was: one client sends one key.
+    key_expires_at: Optional[str] = None
+
+    #: The profile of the config file whose saved key this client sends
+    #: ("default" for the file's top level); None for a key given as
+    #: ``api_key`` or by KORELY_API_KEY, which ``korely init`` does not write.
+    #: Set by the constructor, in the order it reads the key.
+    _key_profile: Optional[str] = None
+
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -450,6 +474,8 @@ class Korely:
                               f"`korely init --api-key <key> --profile {profile}`.")
         env = {} if profile else os.environ
         self.api_key = api_key or env.get("KORELY_API_KEY") or _key_from_config(profile)
+        self._key_profile = (None if api_key or env.get("KORELY_API_KEY")
+                             else _profile_name(profile))
         if not self.api_key:
             raise KorelyError(
                 "No API key. Pass api_key='kor_live_...', set KORELY_API_KEY, "
@@ -488,16 +514,18 @@ class Korely:
                    processing_region: Optional[str] = None,
                    base_url: Optional[str] = None, timeout: float = 30.0,
                    ca_file: Optional[str] = None, verify: bool = True) -> AgentInitResult:
-        """POST /v1/agents/init, with no key: sign up for a free hobby key.
+        """POST /v1/agents/init, with no key: sign up for a key that costs nothing.
 
         The one call that runs without a key, because it is how one is
         obtained, so it is a class method: ``Korely.init_agent("my-app")``,
         then ``Korely(api_key=result.api_key)``. ``agent_caller`` is a
         free-form label of who signed up, kept for your reference. The answer
-        carries the key, shown once (save it), its ``tier``, ``region``,
-        ``scopes`` and ``quotas``. The account it creates has no login: the
-        key is the account, and ``delete_account(confirm="<the account's id>")``
-        closes it.
+        carries the key, shown once (save it), when it stops working
+        (``expires_at``), the trial in words (``note``: its limits until the
+        account is adopted, and how to adopt it), its ``tier``, ``region``,
+        ``scopes`` and ``quotas`` (the monthly numbers once adopted). The
+        account it creates has no login: the key is the account, and
+        ``delete_account(confirm="<the account's id>")`` closes it.
 
         ``processing_region`` chooses where the new project's memories are
         read by a model: ``"eu"`` (gpt-oss-120b on Scaleway, Paris) or
@@ -589,7 +617,9 @@ class Korely:
             with _open(req, timeout=self.timeout, **extra) as resp:
                 raw = resp.read()
                 status = getattr(resp, "status", resp.getcode())
+                self._note_the_key_end(getattr(resp, "headers", None))
         except _urlerror.HTTPError as e:
+            self._note_the_key_end(e.headers)
             try:
                 raw = e.read()
             except (OSError, _httpclient.HTTPException):
@@ -636,6 +666,12 @@ class Korely:
                 f"that is not JSON: {snippet!r}",
                 status=status,
             )
+
+    def _note_the_key_end(self, headers: Any) -> None:
+        """``key_expires_at`` from an answer's headers, when they say it."""
+        ends = headers.get(KEY_EXPIRES_HEADER) if headers is not None else None
+        if ends:
+            self.key_expires_at = ends
 
     def _call(self, method: str, path: str, *, params: Optional[dict] = None,
               json_body: Optional[Any] = None) -> dict:
@@ -993,9 +1029,12 @@ class Korely:
                metadata: Optional[dict] = None,
                limit: Optional[int] = None,
                min_score: Optional[float] = None,
-               exclude_sessions: bool = False) -> List[SearchHit]:
+               exclude_sessions: bool = False,
+               types: Optional[List[str]] = None,
+               full_text: bool = False) -> List[SearchHit]:
         """POST /v1/memories/search: semantic search over raw memories, ranked
-        by score (vector similarity to the query).
+        by score (vector similarity to the query); with ``types``, over the
+        facts too, or the facts only.
 
         ``run_id`` scopes to one session and ``metadata`` filters on what you
         stored at write time (keys ANDed, compared as strings). Both mirror the
@@ -1011,11 +1050,29 @@ class Korely:
 
         ``exclude_sessions=True`` leaves out the work sessions (memories
         written with ``kind="session"``, what a coding assistant's hooks save)
-        and the facts only they state. Korely Agent after 0.1.41."""
+        and the facts only they state. Korely Agent after 0.1.41.
+
+        ``types`` names what to search, each kind once: ``["memories"]`` (what
+        the server searches when it is not sent), ``["facts"]``, the facts
+        true now, or both, each kind ranked by its own score and the two
+        rankings merged by rank (a fact's score and a memory's are not to be
+        compared). With it every result says its ``type``, and a fact's
+        carries ``fact``. ``run_id``, ``metadata`` and ``min_score`` narrow
+        the memories only: with ``"facts"`` in ``types`` the server answers
+        422.
+
+        ``full_text=True`` also returns each result's whole text as
+        ``content``; ``snippet`` stays its first 280 characters. A memory can
+        hold 16,000 characters, so a page of whole memories can be large.
+
+        ``types`` and ``full_text`` are sent only when given: Korely 1.0.13
+        and later take them, an older server answers 422."""
         body = self._call("POST", "/v1/memories/search", json_body=_clean({
             "query": query, "user_id": user_id, "agent_id": agent_id,
             "run_id": run_id, "metadata": metadata, "limit": limit,
             "min_score": min_score, "exclude_sessions": exclude_sessions or None,
+            "types": types,
+            "full_text": full_text or None,
         }))
         return [SearchHit.from_dict(h) for h in body.get("results", [])]
 

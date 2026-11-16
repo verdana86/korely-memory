@@ -19,8 +19,9 @@ import dataclasses
 import json
 import os
 import sys
+import textwrap
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 from . import __version__
 from ._files import read_config, write_private
@@ -207,6 +208,18 @@ def _utc_moment(value: Optional[str]) -> str:
     return dt.strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _key_end(value: str) -> str:
+    """When a key stops working, read as the hooks' warning reads it
+    (`hooks._moment`): its UTC time followed by "UTC", or the server's text
+    as it came when it is not a moment this Python can read (an offset
+    written `+0100` before Python 3.11), so "UTC" is never said of a time
+    that was not converted."""
+    from .hooks import _moment
+
+    at = _moment(value)
+    return f"{at:%Y-%m-%d %H:%M:%S} UTC" if at else str(value)
+
+
 def _snippet(text: Optional[str], width: int = 80) -> str:
     """A memory on one line of a listing: whitespace folded, cut at `width`."""
     one = " ".join((text or "").split())
@@ -248,15 +261,25 @@ def cmd_auth(k: Korely, a) -> int:
     # GET /v1/ping (2026-10-06): no scope, no rate limit, no quota. It was
     # GET /v1/users, which needs memories:read, so a write-only key failed
     # the check it was meant to pass, and every check spent a query.
+    #
+    # The key's end is the one the server says now, on the answer's
+    # Korely-Key-Expires-At header (`Korely.key_expires_at`, Korely 1.0.23
+    # and later): the `expires_at` `init --agent` saved is the end given at
+    # signup, and adopting the account moves it. No header, no line: a key
+    # that never ends and an older server look the same.
     p = k.ping()
+    ends = k.key_expires_at
     if a.json:
         _emit_json({"authenticated": bool(p.ok), "key": _mask(k.api_key),
                     "base_url": k.base_url, "tier": p.tier, "region": p.region,
                     **({"processing_region": p.processing_region} if p.processing_region else {}),
-                    "scopes": p.scopes})
+                    "scopes": p.scopes,
+                    **({"key_expires_at": ends} if ends else {})})
     else:
         print(f"Authenticated  key {_mask(k.api_key)}  base {k.base_url}")
         print(f"tier {p.tier}  region {p.region}{_processing(p)}  scopes {', '.join(p.scopes) or '(none)'}")
+        if ends:
+            print(f"key ends {_key_end(ends)}")
     return 0
 
 
@@ -342,10 +365,18 @@ def cmd_delete_account(k: Korely, a) -> int:
     # none, or another, nothing is sent but GET /admin/whoami, and the error
     # names the id. The key leaves the file only on the server's `deleted`.
     r = k._delete_account(a.confirm, typed_as="re-run it with --confirm {}")
-    forgot = cfg.get("api_key") == k.api_key
+    # Every place of the file that holds the dead key: the top level and any
+    # profile (`--profile`, KORELY_PROFILE, or a key saved twice). Only the
+    # top level was looked at, so a profile kept a key that answers 401.
+    profiles = cfg.get("profiles")
+    slots = [cfg] + [s for s in (profiles.values() if isinstance(profiles, dict) else ())
+                     if isinstance(s, dict)]
+    holding = [s for s in slots if s.get("api_key") == k.api_key]
+    for slot in holding:
+        slot.pop("api_key", None)
+        _forget_what_was_said_of_the_key(slot)
+    forgot = bool(holding)
     if forgot:
-        cfg.pop("api_key", None)
-        cfg.pop("tier", None)
         _save_config(cfg)
     if a.json:
         _emit_json(r)  # {"deleted": true, "removed": {...}}, the API's shape
@@ -439,10 +470,22 @@ def cmd_events(k: Korely, a) -> int:
     return 0
 
 
+def _kinds(text: Optional[str]) -> Optional[List[str]]:
+    """`--types memories,facts` as the list the API takes: split on commas,
+    each part stripped, as the server reads the one text of its MCP tool
+    (`korely_search`'s `types`). The server judges the kinds: a kind it does
+    not know is its 422, with its message."""
+    if text is None:
+        return None
+    return [part.strip() for part in text.split(",")]
+
+
 def cmd_search(k: Korely, a) -> int:
+    full_text = getattr(a, "full_text", False)
     hits = k.search(a.query, run_id=getattr(a, 'run_id', None), user_id=a.user_id, agent_id=a.agent_id,
                     limit=a.limit, min_score=getattr(a, 'min_score', None),
-                    exclude_sessions=getattr(a, "exclude_sessions", False))
+                    exclude_sessions=getattr(a, "exclude_sessions", False),
+                    types=_kinds(getattr(a, "types", None)), full_text=full_text)
     if a.json:
         # The API's own shape (GET /v1/memories/search answers {"results": [...]}),
         # so `jq '.results[0].snippet'` from the docs works (2026-09-29: it was a
@@ -454,8 +497,11 @@ def cmd_search(k: Korely, a) -> int:
         return 0
     for h in hits:
         score = f"{h.score:.3f}" if isinstance(h.score, (int, float)) else "n/a"
-        print(f"[{score}] {h.snippet or ''}".rstrip())
-        print(f"        {h.id}")
+        # The whole text when it was asked for, its lines under the first
+        # one's indent; else the first 280 characters, as before.
+        text = h.content if full_text and h.content is not None else (h.snippet or "")
+        print(f"[{score}] {text}".rstrip().replace("\n", "\n        "))
+        print(f"        {h.id}" + (f"  {h.type}" if h.type else ""))
     return 0
 
 
@@ -760,8 +806,25 @@ def cmd_batch_status(k: Korely, a) -> int:
     return 0
 
 
+def _forget_what_was_said_of_the_key(slot: dict) -> None:
+    """A profile keeps, next to its key, what the server said of that key when
+    it was saved: its plan (`tier`) and when it stops working (`expires_at`,
+    from `init --agent`). Another key in the slot, or none, makes them the old
+    key's: every place that changes the key calls this, so none keeps one."""
+    for said in ("tier", "expires_at"):
+        slot.pop(said, None)
+
+
+def _print_wrapped(label: str, words: str) -> None:
+    """A sentence of the server under a label, wrapped at the width of the
+    other lines. An address is never cut: a broken URL is not one any more."""
+    print(textwrap.fill(words, width=78, initial_indent=label,
+                        subsequent_indent=" " * len(label),
+                        break_long_words=False, break_on_hyphens=False))
+
+
 def _init_key(args) -> int:
-    """Self-serve signup: mint a hobby key with no Firebase, save it locally.
+    """Self-serve signup: mint a key with no Firebase, save it locally.
 
     The one command that runs WITHOUT a key: it is how you get one. Calls
     POST /v1/agents/init (Korely.init_agent), writes the key to
@@ -823,7 +886,7 @@ def _init_key(args) -> int:
         cfg = _load_config()
         slot = _profile_slot(cfg, profile)
         if slot.get("api_key") != given:
-            slot.pop("tier", None)  # the plan of the key this one replaces
+            _forget_what_was_said_of_the_key(slot)  # the key this one replaces
         slot["api_key"] = given
         slot["base_url"] = base
         ids = _put_identity(slot, args)
@@ -867,11 +930,18 @@ def _init_key(args) -> int:
         return 1
     cfg = _load_config()
     slot = _profile_slot(cfg, profile)
-    slot.pop("tier", None)  # the plan of a key replaced with --force
+    _forget_what_was_said_of_the_key(slot)  # a key replaced with --force
     slot["api_key"] = key
     slot["base_url"] = base
     if result.tier:
         slot["tier"] = result.tier
+    if result.expires_at:
+        # When the key stops working, as the 201 said (Korely Agent 1.0.10):
+        # the file is where the key is, and the end travels with it. Adopting
+        # the account moves the end, and this stays the one given at signup:
+        # `korely auth` prints the current one, from the header every answer
+        # carries (Korely-Key-Expires-At, which the hooks read too).
+        slot["expires_at"] = result.expires_at
     ids = _put_identity(slot, args)
     path = _save_config(cfg)
 
@@ -879,13 +949,27 @@ def _init_key(args) -> int:
         _emit_json(dict(dataclasses.asdict(result), **ids))
         return 0
 
+    # What the 201 says, and only that (15 Nov 2026): this said "a free
+    # hobby key" and the monthly quotas, and never that the key ends in 7
+    # days nor the trial's 40 writes, which the server sent in
+    # `expires_at` and `note`. The numbers stay the server's: none is written
+    # here, so none goes stale when the Cloud changes them.
     q = result.quotas or {}
-    print(f"You're set: a free hobby key was minted and saved to {path} (chmod 600).")
+    print(f"You're set: a key was minted and saved to {path} (chmod 600).")
     print(f"  key     {_mask(key)}")
     print(f"  tier    {result.tier}    region {result.region}{_processing(result)}")
+    if result.expires_at:
+        print(f"  expires {_key_end(result.expires_at)}")
+    if result.note:
+        _print_wrapped("  note    ", result.note)
     if q:
+        # The 201's `quotas` are the free plan's monthly numbers, which apply
+        # once the account is adopted; until then the trial's, in `note`
+        # (the server's description of the field). A server older than
+        # 1.0.10 sends no note: it had no trial, and the numbers held at once.
+        once = ", once the account is adopted" if result.note else ""
         print(f"  quotas  {q.get('writes_per_month')} writes / "
-              f"{q.get('queries_per_month')} queries per month · {q.get('agents')} agents")
+              f"{q.get('queries_per_month')} queries per month · {q.get('agents')} agents{once}")
     # Creating the account accepts the Terms and the Privacy Policy (the
     # founder's decision of 11 Oct 2026): the server says which, from 0.1.27.
     if result.terms_url and result.privacy_url:
@@ -1225,7 +1309,7 @@ def cmd_keys(k: Korely, a) -> int:
             # Straight into a profile, never on the screen nor in the
             # terminal's scrollback.
             slot = _profile_slot(cfg, a.save_as)
-            slot.pop("tier", None)
+            _forget_what_was_said_of_the_key(slot)
             slot["api_key"] = secret
             slot["base_url"] = k.base_url
             path = _save_config(cfg)
@@ -1316,7 +1400,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="save this key instead of signing up (self-hosted: the "
                          "key your own dashboard minted)")
     sp.add_argument("--agent", action="store_true",
-                    help="agent self-signup (default; mints an anonymous hobby account)")
+                    help="agent self-signup (default): an account with no login and its key, "
+                         "on trial until adopted; it prints when the key ends")
     sp.add_argument("--agent-caller", help="who is signing up, e.g. 'claude-code'")
     sp.add_argument("--base-url", help="API base URL (default https://api.korely.ai)")
     sp.add_argument("--processing-region", choices=["eu", "global"],
@@ -1350,9 +1435,11 @@ def build_parser() -> argparse.ArgumentParser:
                          "person is called by: the store never merges two names of a person "
                          "by itself")
     sp.add_argument("--no-mcp", action="store_true",
-                    help="with --tool: hooks only, no korely MCP server")
+                    help="with --tool: hooks only; no MCP setting is touched, so a korely "
+                         "server already there (one you added) stays as it is")
     sp.add_argument("--remove", action="store_true",
-                    help="with --tool: take korely's hooks and MCP server out again")
+                    help="with --tool: take korely's hooks and MCP server out again "
+                         "(with --no-mcp, the hooks only)")
     sp.add_argument("--also-read-user", action="append", default=[], metavar="USER_ID",
                     help="with --tool: the session start also reads this user_id of the same "
                          "project (a memory across repositories, e.g. your own); sessions are "
@@ -1413,6 +1500,13 @@ def build_parser() -> argparse.ArgumentParser:
                     help="leave out hits scored below this, 0 to 1 (0.20 measured on LongMemEval)")
     sp.add_argument("--exclude-sessions", action="store_true",
                     help="leave out the work sessions and what only they stated")
+    sp.add_argument("--types", metavar="KINDS",
+                    help="what to search, comma-separated: memories (the server's default), "
+                         "facts, or memories,facts; each hit then says its type "
+                         "(Korely 1.0.13+)")
+    sp.add_argument("--full-text", action="store_true",
+                    help="print each hit's whole text, not its first 280 characters; "
+                         "--json carries it as content (Korely 1.0.13+)")
     sp.set_defaults(func=cmd_search)
 
     sp = sub.add_parser("context", parents=both,

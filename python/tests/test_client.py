@@ -107,6 +107,34 @@ class TestMemories(unittest.TestCase):
         _client(rec).search("northwind pricing")
         self.assertNotIn("min_score", rec.last["json"])
 
+    def test_search_takes_the_servers_types_and_full_text(self):
+        """Korely 1.0.13 searches the facts too (`types`) and returns the
+        whole text (`full_text`); the SDK sent neither and dropped `type`,
+        `content` and `fact`, so a hit was always 280 characters of a memory."""
+        fact = {"id": "fct_1", "subject": "Maria", "predicate": "lives_in", "object": "Turin",
+                "valid_from": "2026-03-01T00:00:00+00:00"}
+        rec = _Recorder().queue(200, {"results": [
+            {"id": "mem_1", "score": 0.81, "snippet": "x" * 280, "user_id": "maria",
+             "agent_id": None, "metadata": {}, "type": "memory", "content": "x" * 900},
+            {"id": "fct_1", "score": 0.77, "snippet": "Maria · lives_in · Turin",
+             "user_id": "maria", "agent_id": None, "metadata": {}, "type": "fact",
+             "content": "Maria · lives_in · Turin", "fact": fact},
+        ]}).queue(200, {"results": [{"id": "mem_2", "score": 0.5, "snippet": "s"}]})
+        hits = _client(rec).search("where does Maria live", user_id="maria",
+                                   types=["memories", "facts"], full_text=True)
+        self.assertEqual(rec.last["json"]["types"], ["memories", "facts"])
+        self.assertIs(rec.last["json"]["full_text"], True)
+        self.assertEqual([h.type for h in hits], ["memory", "fact"])
+        self.assertEqual(len(hits[0].content), 900)
+        self.assertIsNone(hits[0].fact)
+        self.assertEqual(hits[1].fact.object, "Turin")
+        self.assertEqual(hits[1].fact.valid_from, "2026-03-01T00:00:00+00:00")
+        # Not given, not sent: a server older than 1.0.13 answers 422 to either.
+        plain = _client(rec).search("where does Maria live")
+        self.assertNotIn("types", rec.last["json"])
+        self.assertNotIn("full_text", rec.last["json"])
+        self.assertEqual((plain[0].type, plain[0].content, plain[0].fact), (None, None, None))
+
     def test_get_all_page_is_iterable_with_total(self):
         rec = _Recorder().queue(200, {"memories": [{"id": "m1"}, {"id": "m2"}], "total": 218})
         page = _client(rec).get_all(user_id="u")
@@ -2242,6 +2270,17 @@ class SigningUpWithoutAKey(unittest.TestCase):
         self.assertIsInstance(r, AgentInitResult)
         self.assertEqual((r.api_key, r.tier, r.region), (self._MINTED["api_key"], "hobby", "eu-hel1"))
         self.assertEqual(r.quotas["agents"], 2)
+        self.assertEqual((r.expires_at, r.note), (None, None), "a server older than 1.0.10")
+
+    def test_the_key_s_end_and_the_trial_are_kept(self):
+        """The 201 of Korely Agent 1.0.10 and later: when the key stops working
+        (`expires_at`) and the trial in words (`note`). Dropped by the model,
+        `korely init --agent` could say neither (15 Nov 2026)."""
+        answer = dict(self._MINTED, expires_at="2026-11-22T18:00:00Z",
+                      note="This key is valid for 7 days (expires_at).")
+        with self._answering(body=answer):
+            r = Korely.init_agent("claude-code")
+        self.assertEqual((r.expires_at, r.note), (answer["expires_at"], answer["note"]))
 
     def test_the_processing_region_is_sent_only_when_chosen(self):
         """2026-10-07: where the new project's memories are read by a model."""

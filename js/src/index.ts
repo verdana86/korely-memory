@@ -32,6 +32,7 @@ export type {
   FactList,
   Memory,
   SearchHit,
+  SearchKind,
   MemoryPage,
   DeleteReceipt,
   BulkReceipt,

@@ -23,7 +23,11 @@ assistant wrote it: what Claude Code learnt on Monday, Codex reads on Tuesday.
 A user_id costs nothing against the agent cap, which counts `agent_id`s.
 
 A hook never breaks the assistant: every failure is a line in
-~/.korely/hook.log (never the text of the session) and an exit code 0.
+~/.korely/hook.log (never the text of the session) and an exit code 0. A
+read that fails is also one line in what the assistant is handed, in the
+place of the memory it could not read, and a key that ends within
+KEY_WARN_DAYS is one line too: an empty memory is never how either reaches
+the session.
 """
 from __future__ import annotations
 
@@ -34,7 +38,7 @@ import re
 import subprocess
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
@@ -73,6 +77,14 @@ NETWORK_TIMEOUT = 8.0
 # lost. A read with less than MIN_READ left is not begun.
 MIN_READ = 1.0
 _monotonic = time.monotonic
+# How long before the key ends the context says so: the server's own horizon
+# for the `key.expiring` webhook (14 days), so an agent with no webhook, which
+# is most of them, hears it when one would. Korely 1.0.23 and later say the
+# end on every answer (Korely.key_expires_at); after it every call is a 401.
+KEY_WARN_DAYS = 14
+# The words of a failed read the context keeps, start and end: enough for
+# the kind and the server's code, never a page of an HTML error.
+REASON_CHARS = 300
 
 
 # ── where things live ────────────────────────────────────────────────────────
@@ -540,6 +552,89 @@ def _block(client: Any, query: str, budget: int, user_id: Optional[str], heading
     return f"{heading}\n\n{body}"
 
 
+def _shown(path: Path) -> str:
+    """A path as the developer would type it: the home folder as `~`."""
+    home, text = str(Path.home()), str(path)
+    return "~" + text[len(home):] if text == home or text.startswith(home + os.sep) else text
+
+
+def _not_read(what: str, error: BaseException) -> str:
+    """The line in the place of a block that could not be read. Left out, a
+    read that failed (a timeout, a 401 of a key that ended, no key at all)
+    handed the assistant nothing, as an empty memory does: it went on
+    without knowing that the memory was there and unread, and only
+    hook.log knew. The error's kind and words, masked as a session's text
+    is (`redact`) and kept to REASON_CHARS on one line."""
+    reason = " ".join(_clip(redact(f"{type(error).__name__}: {error}"), REASON_CHARS).split())
+    # Said of this context, not of the session: on the first prompt the
+    # start's blocks may already be there.
+    return (f"Korely memory of {what} was not read ({reason}): it is missing from this "
+            f"context. {_shown(_home() / 'hook.log')} has the line.")
+
+
+def _moment(value: Any) -> Optional[datetime]:
+    """An ISO 8601 moment in UTC (no offset: UTC), or None, also for one
+    that UTC cannot hold: `0001-01-01T00:30:00+01:00` is a year 0, and its
+    OverflowError, raised after the reads, took the blocks already read
+    out of the hook's answer."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        at = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+        return (at if at.tzinfo is not None else at.replace(tzinfo=timezone.utc)) \
+            .astimezone(timezone.utc)
+    except (ValueError, OverflowError):
+        return None
+
+
+def _key_ends(client: Any, whose: str) -> str:
+    """One line when the key `client` sends ends within KEY_WARN_DAYS, as
+    the server's last answer said (`Korely.key_expires_at`); "" for a key
+    that never ends, one further off, a server that does not say, and an
+    end that cannot be read.
+
+    What to do names where the client found the key (`Korely._key_profile`):
+    a profile's saved key is replaced by `korely init --force` with that
+    profile, KORELY_PROFILE's included, which `korely init` does not read;
+    a key from KORELY_API_KEY (the hooks pass none as an argument) by the
+    variable, which `korely init` does not write. A `korely init --force`
+    of the other profile would have replaced a key that does not end, lost
+    for good, and left this one in place. On the Cloud, the key of an
+    account `korely init --agent` made and nobody adopted lasts 7 days, and
+    signing in to the dashboard with it lifts that end: no new key."""
+    ends = _moment(getattr(client, "key_expires_at", None))
+    if ends is None:
+        return ""
+    left = ends - datetime.now(timezone.utc)
+    if left > timedelta(days=KEY_WARN_DAYS):
+        return ""
+    days = left.days
+    when = "in less than a day" if days < 1 else f"in {days} day{'' if days == 1 else 's'}"
+    from .client import _REGIONS, _is_ours as _the_service
+
+    server = str(getattr(client, "base_url", "") or "")
+    saved = getattr(client, "_key_profile", None)
+    if saved is None:
+        how = ("put it in KORELY_API_KEY, where these hooks read this one (`korely init` "
+               "does not change that variable)")
+    else:
+        # `korely init --api-key` saves the server of --base-url, else of
+        # KORELY_BASE_URL, else the Cloud's: any other server is named, or
+        # init refuses a key of one's own server (`_refuse_a_mismatched_pair`).
+        # Of an address only a user:password is masked: `redact` would also
+        # take a long host name for a key, and the command would save that.
+        named = _URL_CREDENTIALS.sub(r"\1[redacted]@", server)
+        how = ("save it with `korely init --api-key <new key> --force"
+               + ("" if server == _REGIONS["eu"] else f" --base-url {named}")
+               + ("" if saved == "default" else f" --profile {saved}") + "`")
+    trial = (" A key `korely init --agent` made, whose account nobody has signed in to yet, "
+             "needs no new key: signing in to the Korely dashboard with it lifts that end."
+             if _the_service(server) else "")
+    return (f"The Korely key {whose} ends on {ends:%Y-%m-%d %H:%M} UTC ({when}): after that "
+            f"Korely refuses its reads and writes (401). Make a new key in the Korely "
+            f"dashboard and {how}.{trial}")
+
+
 def _context_text(client_factory: Callable[..., Any], scope: str, repo: str, query: str,
                   budget: int, also_read: Sequence[str] = (),
                   also_read_user: Sequence[str] = ()) -> str:
@@ -547,27 +642,32 @@ def _context_text(client_factory: Callable[..., Any], scope: str, repo: str, que
     same project (a memory that spans repositories, e.g. `founder`), then the
     whole project of each profile in `also_read` (a private project next to
     the shared one), each block under its own heading. A block that cannot be
-    read, the repository's included, is a line in hook.log and is left out,
-    never the rest: the session starts with every block that could be read.
-    The reads share NETWORK_TIMEOUT seconds; one with less than MIN_READ left
-    is not begun (see `_block` for a reply that keeps arriving slowly)."""
+    read, the repository's included, is a line in hook.log and, in its place,
+    a line that says so (`_not_read`), never the end of the rest: the
+    session starts with every block that could be read. Last, one line for
+    each key that ends within KEY_WARN_DAYS (`_key_ends`). The reads share
+    NETWORK_TIMEOUT seconds; one with less than MIN_READ left is not begun
+    (see `_block` for a reply that keeps arriving slowly)."""
     deadline = _monotonic() + NETWORK_TIMEOUT
-    made: Dict[str, Any] = {}
+    made: Dict[Optional[str], Any] = {}
 
-    def main() -> Any:
-        # Made once, for the repository and the user_ids: a factory that
-        # fails fails each of them, and the profiles still go.
-        if "client" not in made:
-            made["client"] = client_factory()
-        return made["client"]
+    def client_of(profile: Optional[str]) -> Callable[[], Any]:
+        # Made once per profile (None the default one, for the repository
+        # and the user_ids): a factory that fails fails each read of that
+        # profile, and the others still go.
+        def get() -> Any:
+            if profile not in made:
+                made[profile] = client_factory(profile) if profile else client_factory()
+            return made[profile]
+        return get
 
-    reads = [(f"user_id {scope}", main, budget, scope,
+    reads = [(f"user_id {scope}", client_of(None), budget, scope,
               f"Korely memory of the repository {repo} (user_id {scope}), what earlier "
               f"sessions stored, whichever assistant they ran in:")]
-    reads += [(f"user_id {user}", main, EXTRA_BUDGET, user,
+    reads += [(f"user_id {user}", client_of(None), EXTRA_BUDGET, user,
                f"Korely memory of user_id {user} (across repositories):")
               for user in also_read_user if user != scope]
-    reads += [(f"profile {name}", lambda name=name: client_factory(name), EXTRA_BUDGET, None,
+    reads += [(f"profile {name}", client_of(name), EXTRA_BUDGET, None,
                f"Korely memory of the profile {name} (its whole project):")
               for name in also_read]
     blocks = []
@@ -576,6 +676,9 @@ def _context_text(client_factory: Callable[..., Any], scope: str, repo: str, que
             blocks.append(_block(client(), query, size, user_id, heading, deadline))
         except Exception as e:  # noqa: BLE001 - the other blocks still go
             _log(f"{what}: {type(e).__name__}: {e}")
+            blocks.append(_not_read(what, e))
+    blocks += [_key_ends(c, "these hooks use" if p is None else f"of the profile {p}")
+               for p, c in made.items()]
     return "\n\n".join(b for b in blocks if b)
 
 
@@ -862,12 +965,23 @@ def install(tool: str, project: Path, *, everywhere: bool = False, remove: bool 
     """Write (or with `remove`, take out) this tool's korely hooks and MCP
     server. `also_read`: profiles the session start also reads, each with an
     MCP server of its own, `korely-<profile>`. Returns one line per change,
-    for the report."""
+    for the report.
+
+    `mcp=False` (`--no-mcp`, hooks only) touches no MCP setting, with
+    `remove` too: it neither reads, writes nor removes a server, and the MCP
+    file is not its to judge (committed or not) nor to keep out of git. It
+    removed a server named `korely` and added none, so a hooks-only install
+    deleted the server a developer had added by hand under that name (the
+    remote one of the docs). Supermemory's Claude Code plugin registers its
+    hooks and ships its MCP declaration inside the plugin, and documents no
+    step that edits the servers the developer configured
+    (github.com/supermemoryai/claude-supermemory, read 15 Nov 2026)."""
     base = base or korely_command()
     files = hook_files(tool, project, everywhere)
+    ours = files if mcp else {"hooks": files["hooks"]}
     report: List[str] = []
     if not everywhere:
-        for path in files.values():
+        for path in ours.values():
             if path.exists() and _tracked(path, project):
                 raise InstallError(
                     f"{path} is committed to the repository: korely does not add personal "
@@ -882,11 +996,14 @@ def install(tool: str, project: Path, *, everywhere: bool = False, remove: bool 
 
     servers = [("korely", _mcp_command(base, scope, also_read_user=also_read_user))]
     servers += [(f"korely-{p}", _mcp_command(base, None, profile=p)) for p in also_read]
-    for name, command in servers:
-        _install_server(tool, files, project, name, None if (remove or not mcp) else command,
+    if not mcp:
+        report.append("MCP settings not touched (--no-mcp): a korely server already there "
+                      "stays as it is")
+    for name, command in servers if mcp else ():
+        _install_server(tool, files, project, name, None if remove else command,
                         everywhere=everywhere, remove=remove, run=run, report=report)
     if not everywhere and not remove:
-        for p in files.values():
+        for p in ours.values():
             if p.exists():
                 done = _keep_out_of_git(p, project)
                 if done:

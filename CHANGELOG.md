@@ -8,6 +8,106 @@ The server side of the entries marked "API" shipped on 2026-09-28. Against an
 older server these clients keep working: the old field names are still read,
 and a batch `timestamp` is refused there with a 422.
 
+## Unreleased
+
+Code written for Python 0.2.0 or npm 0.2.0 needs no change: every addition
+is sent only when asked for. One change for scripts: `korely init --tool
+<tool> --no-mcp`, and `--remove --no-mcp`, no longer remove a `korely` MCP
+server (the last entry of Python below).
+
+### Python
+
+- `search()` takes `types` and `full_text`, the two fields Korely 1.0.13
+  added to `POST /v1/memories/search`: `types=["memories", "facts"]` searches
+  the facts true now next to the memories (`["facts"]` them only), and
+  `full_text=True` returns each result's whole text. `SearchHit` gains
+  `type` (`"memory"` or `"fact"`), `content` (the whole text) and `fact`
+  (the fact as `get_facts()` shows it, in a fact's result), None when the
+  search did not ask. Up to 0.2.0 the SDK sent neither and dropped the
+  three fields, so a hit was always the first 280 characters of a memory.
+  Both are sent only when given: an older server answers 422 to them.
+- `korely search` takes `--types memories,facts` (or `facts`) and
+  `--full-text`: the text output prints each hit's type next to its id and
+  the whole text in place of the snippet, and `--json` carries `type`,
+  `content` and `fact` (null when not asked).
+- `korely hook` says when a read failed. A read of the session start or of
+  the first prompt that failed (a timeout, a 401 of a key that ended, no key)
+  left its memory out and said nothing to the assistant, as if the memory
+  were empty; only `~/.korely/hook.log` knew. In its place the context now
+  has one line, `Korely memory of user_id repo:<name> was not read (<the
+  error>): it is missing from this context`, with what looks like a key in
+  the error masked, on one line of at most 300 characters; the other reads
+  still go, and the line in `hook.log` stays. When every read fails, the assistant is now handed these lines
+  where it was handed nothing.
+- `Korely.key_expires_at`: when the key the client sends ends, as Korely
+  1.0.23 and later say on every answer to a key that expires
+  (`Korely-Key-Expires-At`). None before the first answer, for a key that
+  never ends and from an older server; an answer without the header keeps
+  the value.
+- `korely hook` warns before the key ends: when its end is 14 days away or
+  less (the window of the server's `key.expiring` webhook), the context it
+  hands the assistant ends with one line saying when, and how to put a new
+  key where the hooks read this one: `korely init --api-key <new key>
+  --force` with the profile it was read from (`--profile <name>`, the one of
+  `KORELY_PROFILE` included) and `--base-url` for a server other than
+  api.korely.ai, or, for a key from `KORELY_API_KEY`, that variable. On the
+  Cloud it adds that a key `korely init --agent` made needs no new key:
+  signing in to the dashboard with it lifts its end. Up to 0.2.0 the end
+  reached a session as 401s in `hook.log`. An end the hook cannot read
+  adds nothing and takes nothing out.
+- `korely init --tool <tool> --no-mcp` touches no MCP setting. Up to 0.2.0
+  it removed a server named `korely` (`claude mcp remove`, or the entry in
+  `.cursor/mcp.json` and `.codex/config.toml`) and added none, so a hooks-only
+  install deleted a `korely` server added by hand, such as the remote one.
+  Now that server stays, and the report says `MCP settings not touched
+  (--no-mcp)`. With `--remove --no-mcp` the hooks are taken out and the MCP
+  server stays: to take out the server an earlier `korely init --tool` added,
+  run `--remove` without `--no-mcp`. A committed MCP file no longer stops a
+  `--no-mcp` install, and it is not added to `.git/info/exclude`.
+- `korely init --agent` says what the server answered about the key. Up to
+  0.2.0 it printed "a free hobby key was minted" and the monthly quotas, and
+  never that the key ends (7 days after it is made, on Korely Cloud) nor the
+  trial's limits (40 writes in all, until the account is adopted), which the
+  201 carries in `expires_at` and `note`. Now it prints the end (`expires
+  <UTC moment> UTC`), the server's `note` whole, and the quotas as the
+  numbers that apply once the account is adopted; it saves the end next to
+  the key in `~/.korely/config.json` (`expires_at`, as the server wrote it).
+  Adopting the account moves the end, and the saved one stays the end given
+  at signup: `korely auth` says the current one (below). An end that this
+  Python cannot read as a moment is printed as the server wrote it, without
+  "UTC". A key replaced in a profile
+  (`init --force`, `init --api-key`, `keys create --save-as`, or taken out
+  by `delete-account`) no longer leaves its end behind, as its tier did not.
+  `AgentInitResult` gains `expires_at` and `note` (None from a server older
+  than Korely Agent 1.0.10), and `--json` prints them.
+- `korely auth` prints when the key ends (`key ends <UTC moment> UTC`, and
+  `key_expires_at` with `--json`), as the server says it now on the answer's
+  `Korely-Key-Expires-At` header (Korely 1.0.23 and later). Up to 0.2.0 no
+  command showed a key's end. No header, no line: a key that never ends and
+  an older server are not told apart.
+- `korely delete-account` removes the dead key from every profile of the
+  config file that holds it. Up to 0.2.0 it compared only the file's top
+  level, so a key saved with `--profile` stayed in its profile and every
+  command of that profile was answered 401.
+
+### npm
+
+- `search()` takes `types` and `full_text` (the new type `SearchKind` is
+  `"memories" | "facts"`), and `SearchHit` gains `type`, `content` and
+  `fact`, as in Python. Up to 0.2.0 `search()` refused both options
+  (`search: unknown option types.`).
+- The "No API key" error says what a Node user does. Up to 0.2.0 it said to
+  run `korely init`, a command this package does not have (it comes with
+  the Python package). Now it says to make a key once, by hand, with the
+  README's cURL (or `Korely.initAgent()` run once, since each call makes a
+  new account), then to set `KORELY_API_KEY`; that a Self-hosted install
+  makes its keys in its dashboard; and that a key `korely init` saved is
+  read on Node, naming the file read (`$KORELY_CONFIG_HOME/config.json` when
+  that variable is set), and no file where none is read (a browser).
+- `AgentInitResult` types `expires_at` and `note`, which the server sends
+  since Korely Agent 1.0.10: when the key stops working, and the trial's
+  limits until the account is adopted.
+
 ## Python 0.2.0, npm 0.2.0 (2026-11-14)
 
 Minor releases, after Python 0.1.29 and npm 0.1.18, because two changes break

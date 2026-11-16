@@ -53,7 +53,7 @@ Every method wraps exactly one REST endpoint.
 | Method | Endpoint |
 |---|---|
 | `add(content, *, agent_id=, user_id=, run_id=, metadata=, timestamp=)` | `POST /v1/memories` |
-| `search(query, *, user_id=, agent_id=, run_id=, metadata=, limit=, min_score=)` | `POST /v1/memories/search`; `min_score` (0 to 1) leaves out hits scored below it |
+| `search(query, *, user_id=, agent_id=, run_id=, metadata=, limit=, min_score=, types=, full_text=)` | `POST /v1/memories/search`; `min_score` (0 to 1) leaves out hits scored below it; `types=["memories", "facts"]` searches the facts true now too (`["facts"]` them only), and each hit says its `type`, a fact's with its `fact`; `full_text=True` adds the whole text as `content` (`snippet` is its first 280 characters). Korely 1.0.13 and later; sent only when given |
 | `get_all(*, user_id=, agent_id=, run_id=, limit=, offset=)` | `GET /v1/memories` |
 | `get(memory_id)` | `GET /v1/memories/:id` |
 | `update(memory_id, *, content, expected_updated_at=)` | `PATCH /v1/memories/:id` |
@@ -85,10 +85,18 @@ Every method wraps exactly one REST endpoint.
 quota) and answers its `tier`, `region` and `scopes`, on the Cloud and on the
 Self-hosted alike.
 
-`Korely.init_agent("my-app")` signs up for a free hobby key with no key, so
-it is a class method: the answer carries the key once (`repr()` leaves it
-out), then `Korely(api_key=result.api_key)`. It is what `korely init --agent`
-calls. Cloud only: a Self-hosted install mints its keys in its own dashboard.
+`Korely.init_agent("my-app")` signs up for a key that costs nothing, with no
+key, so it is a class method: the answer carries the key once (`repr()` leaves
+it out), then `Korely(api_key=result.api_key)`. It also says when the key stops
+working (`expires_at`) and, in `note`, the trial's limits until the account is
+adopted and how to adopt it; `quotas` are the monthly numbers once adopted
+(`expires_at` and `note` are None from a server older than Korely Agent
+1.0.10). It is what `korely init --agent` calls, which prints the end and the
+note and saves the end next to the key in `~/.korely/config.json`. Adopting
+the account moves the end and the saved one stays the signup's: `korely auth`
+prints the current one, as the server says it on every answer
+(`Korely-Key-Expires-At`, Korely 1.0.23 and later). Cloud only: a
+Self-hosted install mints its keys in its own dashboard.
 
 `delete_account(confirm="<account id>")` deletes the account of the key, for
 good, with every key, memory and fact of it. It is for an account `korely init
@@ -278,6 +286,11 @@ header, or None when it sent none. A rate limit sends it, and so does
 daily model budget is spent (until 00:00 UTC). The SDK does not retry on its
 own.
 
+A key that expires ends with a 401 like any wrong key. To see it coming:
+Korely 1.0.23 and later say on every answer to such a key when it ends, and
+the client keeps it as `korely.key_expires_at` (ISO 8601, UTC; None before the
+first answer, for a key that never ends and from an older server).
+
 ## CLI
 
 `pip install korely-memory` also installs `korely`, one command per API call,
@@ -305,9 +318,9 @@ same refusal.
 | Command | Call |
 |---|---|
 | `korely init [--agent] [--processing-region eu\|global] [--api-key KEY] [--force] [--user-id U] [--agent-id A]` | `POST /v1/agents/init`, or save a key you have; `--processing-region eu` reads the new account's memories in Europe (Global, the default, otherwise); `--force` to replace a saved one; `--user-id`/`--agent-id` save whose memory your writes are (with a key already saved, only that) |
-| `korely auth` / `korely ping` | `GET /v1/ping` |
+| `korely auth` / `korely ping` | `GET /v1/ping`; `auth` also prints when the key ends (`key ends <UTC moment> UTC`, `key_expires_at` with `--json`), when the server says it (Korely 1.0.23 and later; no line for a key that never ends) |
 | `korely add TEXT` / `korely update ID TEXT` | `POST /v1/memories` / `PATCH /v1/memories/:id` (`-` or a pipe reads stdin) |
-| `korely search QUERY` | `POST /v1/memories/search` |
+| `korely search QUERY [--types memories,facts] [--full-text]` | `POST /v1/memories/search`; `--types` searches the facts too (or `facts` alone) and prints each hit's type; `--full-text` prints the whole text, not its first 280 characters (Korely 1.0.13 and later) |
 | `korely context QUERY` | `GET /v1/context` |
 | `korely list [--limit] [--offset]` | `GET /v1/memories` |
 | `korely get ID` / `korely history ID` | `GET /v1/memories/:id` / `.../history` |
@@ -345,8 +358,9 @@ JSON document in the API's shape, streamed, so a long trail never sits in
 memory. `--offset` resumes an export that stopped (pass the same `--until`).
 
 `korely delete-account --confirm <account id>` closes the account of an `init
---agent` key and removes that key from `~/.korely/config.json`, so the next
-`korely init` can save a new one. Without `--confirm`, or with another id,
+--agent` key and removes that key from `~/.korely/config.json`, from the top
+level and from every profile that holds it, so the next `korely init` can save
+a new one. Without `--confirm`, or with another id,
 nothing is deleted and the error names the id to type (`korely
 delete-account` alone shows it); `--yes` is no longer taken. The key leaves
 the file only when the server answers `deleted: true`. Against a server older
@@ -517,9 +531,29 @@ key is told by its shape alone, with no list of vendors:
   session.
 
 A hook never breaks the assistant: a failure is a line in
-`~/.korely/hook.log`, without the text of the session. Turns that could not
+`~/.korely/hook.log`, without the text of the session. A read that fails (a
+timeout, a key that ended, no key) is also one line in what the assistant is
+handed, in the place of that memory: `Korely memory of user_id repo:<name>
+was not read (<the error>): it is missing from this context`, with what
+looks like a key in the error masked. The other reads still go. Turns that could not
 be sent stay in the buffer and go with the next send; after the fifth failed
 send they are dropped, with a line in `hook.log` (`gave up on ...`).
+
+A key that expires ends without warning in a session: after its last day
+every read and write is a 401. Korely 1.0.23 and later say on every answer
+when the key ends (the `Korely-Key-Expires-At` header, kept by the client as
+`Korely.key_expires_at`), and when that is 14 days away or less, the window of
+the server's `key.expiring` webhook, the context the hooks hand the assistant
+(at the start and on the first prompt) ends with one line: when the key ends
+and how to put a new one where the hooks read this one. For a key saved by
+`korely init`, the command is `korely init --api-key <new key> --force` with
+the profile the key was read from (`--profile <name>`, the one of
+`KORELY_PROFILE` included) and `--base-url <server>` for a server other than
+`https://api.korely.ai`; for a key from `KORELY_API_KEY`, the line says to
+change that variable, which `korely init` does not write. On the Cloud it adds
+that a key `korely init --agent` made, whose account nobody has signed in to,
+needs no new key: signing in to the dashboard with it lifts its end. An older
+server does not say, and the hook adds nothing.
 
 | Tool | Files (this repository) | With `--global` (every repository) | Notes |
 |---|---|---|---|
@@ -530,8 +564,12 @@ send they are dropped, with a line in `hook.log` (`gave up on ...`).
 A personal file in a repository is added to `.git/info/exclude`; a file the
 repository already commits is left alone (use `--global`). It also adds the
 `korely-mcp` server with the same scope, for searches and writes the
-assistant decides on (`--no-mcp` to skip it). `--user-id <id>` puts
-everything in one memory instead; `--remove` takes it all out again.
+assistant decides on, under the name `korely`, replacing a server of that
+name. `--no-mcp` installs the hooks only and touches no MCP setting: a
+`korely` server you added yourself (the remote one, say) stays as it is,
+and so does one an earlier `korely init --tool` added (`--remove` without
+`--no-mcp` takes that out). `--user-id <id>` puts everything in one memory
+instead; `--remove` takes it all out again (with `--no-mcp`, the hooks only).
 
 Five answers to a memory is about eight writes for a day of forty exchanges.
 

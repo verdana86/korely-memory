@@ -253,7 +253,286 @@ class SessionFlow(Base):
     def test_a_hook_never_raises_and_never_blocks(self):
         out = self.hook("session-start", "claude-code", {"session_id": "s4"},
                         FakeClient(fail=True))
-        self.assertEqual(out, "")
+        # It answers, and what it answers says the read failed (NotRead below).
+        self.assertIn("was not read", json.loads(out)["hookSpecificOutput"]["additionalContext"])
+
+
+class NotRead(Base):
+    """Every read failing handed the assistant nothing, as an empty memory
+    does: the session went on without knowing that a memory was there and
+    unread (a timeout at startup, a key that ended), and only hook.log
+    knew."""
+
+    def test_a_read_that_fails_says_so_where_the_memory_would_be(self):
+        # A fixed key of the masked shape: a random one is of letters alone
+        # now and then, which the masking declares it does not catch.
+        key = "kQ7vR2mX9pL4sT8wN3bY6cF1hJ5dG0aZx4Ve"
+
+        class Down(FakeClient):
+            def get_context(self, query, user_id=None, token_budget=800):
+                raise RuntimeError(f"read operation timed out (token {key})")
+
+        for tool, event, data in (
+                ("claude-code", "session-start", {"session_id": "n1"}),
+                ("claude-code", "prompt", {"session_id": "n2", "prompt": "fix login"}),
+                ("cursor", "session-start", {"session_id": "n3"})):
+            with self.subTest(tool=tool, event=event):
+                out = json.loads(self.hook(event, tool, data, Down()))
+                text = (out["additional_context"] if tool == "cursor"
+                        else out["hookSpecificOutput"]["additionalContext"])
+                self.assertIn("Korely memory of user_id repo:shop-api was not read "
+                              "(RuntimeError: read operation timed out", text)
+                self.assertIn("it is missing from this context", text)
+                self.assertNotIn("this session starts", text)  # the prompt's is not the start
+                self.assertIn("hook.log has the line", text)
+                self.assertNotIn(key, text)  # masked as a session's text is
+        log = (Path(os.environ["KORELY_CONFIG_HOME"]) / "hook.log").read_text()
+        self.assertIn("user_id repo:shop-api: RuntimeError: read operation timed out", log)
+
+    def test_only_the_block_that_failed_is_replaced(self):
+        shared = FakeClient("- shared fact")
+
+        def factory(profile=None):
+            if profile:
+                raise RuntimeError("no such profile")
+            return shared
+
+        out = json.loads(hooks.run_hook(
+            "session-start", "claude-code", {"session_id": "n4", "cwd": str(self.repo)},
+            client_factory=factory, background=self.background.append, also_read=["gone"]))
+        text = out["hookSpecificOutput"]["additionalContext"]
+        self.assertIn("shared fact", text)
+        self.assertNotIn("repo:shop-api was not read", text)
+        self.assertIn("Korely memory of profile gone was not read (RuntimeError: no such "
+                      "profile)", text)
+        self.assertLess(text.index("shared fact"), text.index("profile gone was not read"))
+
+    def _line(self, error):
+        class Down(FakeClient):
+            def get_context(self, query, user_id=None, token_budget=800):
+                raise error
+
+        text = json.loads(self.hook("session-start", "claude-code", {"session_id": "n6"},
+                                    Down()))["hookSpecificOutput"]["additionalContext"]
+        return text[text.index("Korely memory of"):]
+
+    def test_the_reason_is_one_line(self):
+        line = self._line(RuntimeError("HTTP 502\nBad Gateway\r\n\tupstream closed"))
+        self.assertIn("(RuntimeError: HTTP 502 Bad Gateway upstream closed)", line)
+        self.assertNotIn("\n", line)
+
+    def test_a_long_reason_is_cut_to_its_start_and_end(self):
+        line = self._line(RuntimeError("first words " + "x" * 5000 + " last words"))
+        reason = line[line.index("(") + 1:line.index("): it is missing")]
+        self.assertLessEqual(len(reason), hooks.REASON_CHARS)
+        self.assertTrue(reason.startswith("RuntimeError: first words"))
+        self.assertTrue(reason.endswith("last words"))
+        self.assertIn(" [...] ", reason)
+
+    def test_an_empty_memory_still_adds_nothing(self):
+        self.assertEqual(self.hook("session-start", "claude-code", {"session_id": "n5"},
+                                   FakeClient("")), "")
+
+
+class KeyEnds(Base):
+    """Korely 1.0.23 says on every answer when the key ends
+    (Korely-Key-Expires-At); the hook never read it, so a key's end reached
+    the session as a 401 in hook.log. A real server in this process, and the
+    hook's own client with its key where `korely init` saves it or in
+    KORELY_API_KEY: the header has to travel the whole way, and the command
+    the line gives has to replace the key that ends, not another."""
+
+    # Fixed keys of the self-hosted shape (they go to 127.0.0.1).
+    DEFAULT = "kor_self_DDDDDDDDdefaultprofileAAAA"
+    WORK = "kor_self_WWWWWWWWworkprofileBBBBBBB"
+    ENV = "kor_self_EEEEEEEEfromtheenvCCCCCCCC"
+    NEW = "kor_self_NNNNNNNNthenewkeyDDDDDDDDD"
+
+    def setUp(self):
+        super().setUp()
+        from datetime import datetime, timedelta, timezone
+
+        from test_client import _Server
+
+        self.ending = {}  # key -> days left; a key not here never ends
+
+        def answer(method, path):
+            key = self.server.seen[-1][2].get("Authorization", "")[len("Bearer "):]
+            headers = {}
+            if key in self.ending:
+                at = datetime.now(timezone.utc) + timedelta(days=self.ending[key])
+                headers["Korely-Key-Expires-At"] = at.isoformat(timespec="seconds")
+            return 200, headers, {"context": "## Known facts\n- The team ships on Fridays",
+                                  "tokens": 9, "sources": ["fct_1"]}
+
+        self.server = _Server(answer)
+        self.addCleanup(self.server.close)
+        # Base's patch of the environment puts it all back at tearDown. A
+        # second patch started here would be stopped after it, and put back
+        # this test's KORELY_CONFIG_HOME for every test after.
+        os.environ.update({"no_proxy": "*", "NO_PROXY": "*"})
+        for name in ("KORELY_API_KEY", "KORELY_BASE_URL", "KORELY_PROFILE"):
+            os.environ.pop(name, None)
+        self.config = Path(os.environ["KORELY_CONFIG_HOME"]) / "config.json"
+        self.config.parent.mkdir(parents=True, exist_ok=True)
+        self._save({"api_key": self.DEFAULT, "base_url": self.server.url,
+                    "profiles": {"work": {"api_key": self.WORK, "base_url": self.server.url}}})
+
+    def _save(self, cfg):
+        self.config.write_text(json.dumps(cfg))
+
+    def _saved(self):
+        return json.loads(self.config.read_text())
+
+    def _start(self, also_read=()):
+        """The session start's context, read with the hooks' own client."""
+        out = hooks.run_hook("session-start", "claude-code",
+                             {"session_id": "k1", "cwd": str(self.repo)},
+                             background=self.background.append, also_read=also_read)
+        return json.loads(out)["hookSpecificOutput"]["additionalContext"]
+
+    def _follow(self, text):
+        """Run the line's command as written, the new key in its place."""
+        import contextlib
+        import io
+
+        from korely_memory import cli
+
+        line = next(x for x in text.split("\n") if "The Korely key" in x)
+        command = line.split("`")[1].replace("<new key>", self.NEW)
+        self.assertTrue(command.startswith("korely init "), command)
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(cli.main(command.split()[1:]), 0, command)
+
+    def test_a_key_that_ends_within_two_weeks_is_one_line(self):
+        self.ending[self.DEFAULT] = 3.5
+        text = self._start()
+        self.assertIn("ships on Fridays", text)
+        self.assertIn("The Korely key these hooks use ends on ", text)
+        self.assertIn("UTC (in 3 days): after that Korely refuses its reads and writes (401)",
+                      text)
+        self.assertIn(f"`korely init --api-key <new key> --force --base-url {self.server.url}`",
+                      text)
+        self.assertEqual(text.count("The Korely key"), 1)  # one key, read twice or not
+        self._follow(text)
+        self.assertEqual(self._saved()["api_key"], self.NEW)
+        self.assertNotIn("Korely key", self._start())
+
+    def test_the_key_of_korely_profile_is_the_one_replaced(self):
+        """With KORELY_PROFILE=work the hooks send the work key, and the line
+        said `korely init --api-key <new key> --force`, which writes the
+        default profile: the default key was replaced, lost for good, and the
+        work key that ends stayed."""
+        self.ending[self.WORK] = 2.5
+        with mock.patch.dict(os.environ, {"KORELY_PROFILE": "work"}):
+            text = self._start()
+            self.assertIn("--force --base-url ", text)
+            self.assertIn(" --profile work`", text)
+            self._follow(text)
+            saved = self._saved()
+            self.assertEqual(saved["api_key"], self.DEFAULT)  # the key that does not end
+            self.assertEqual(saved["profiles"]["work"]["api_key"], self.NEW)
+            self.assertNotIn("Korely key", self._start())
+
+    def test_a_key_from_korely_api_key_is_changed_in_the_variable(self):
+        self.ending[self.ENV] = 2.5
+        with mock.patch.dict(os.environ, {"KORELY_API_KEY": self.ENV,
+                                          "KORELY_BASE_URL": self.server.url}):
+            text = self._start()
+        self.assertEqual(self.server.seen[-1][2]["Authorization"], "Bearer " + self.ENV)
+        self.assertIn("Make a new key in the Korely dashboard and put it in KORELY_API_KEY, "
+                      "where these hooks read this one", text)
+        self.assertNotIn("korely init --api-key", text)  # it would replace a saved key
+
+    def test_a_profile_key_names_its_profile(self):
+        self.ending[self.WORK] = 0.2
+        text = self._start(also_read=["work"])
+        self.assertIn("The Korely key of the profile work ends on ", text)
+        self.assertIn("(in less than a day)", text)
+        self.assertIn(f"`korely init --api-key <new key> --force --base-url {self.server.url} "
+                      f"--profile work`", text)
+        self.assertNotIn("The Korely key these hooks use", text)
+
+    def test_a_key_further_off_or_without_an_end_adds_nothing(self):
+        for ends in (hooks.KEY_WARN_DAYS + 1, None):
+            with self.subTest(ends=ends):
+                self.ending.clear()
+                if ends is not None:
+                    self.ending[self.DEFAULT] = ends
+                text = self._start()
+                self.assertIn("ships on Fridays", text)
+                self.assertNotIn("Korely key", text)
+
+    def test_an_end_that_cannot_be_read_never_costs_the_memory(self):
+        """`0001-01-01T00:30:00+01:00` is a year 0 in UTC: its OverflowError,
+        raised after the reads, made the hook answer nothing at all."""
+        client = FakeClient("- The team ships on Fridays")
+        for ends in ("0001-01-01T00:30:00+01:00", "9999-12-31T23:30:00-01:00", "garbage", ""):
+            with self.subTest(ends=ends):
+                client.key_expires_at = ends
+                text = json.loads(self.hook("session-start", "claude-code",
+                                            {"session_id": "k2"}, client))
+                text = text["hookSpecificOutput"]["additionalContext"]
+                self.assertIn("ships on Fridays", text)
+                self.assertNotIn("Korely key", text)
+
+    def test_on_the_cloud_the_line_says_an_unadopted_key_needs_none(self):
+        from datetime import datetime, timedelta, timezone
+
+        class Cloud:
+            base_url = "https://api.korely.ai"
+            _key_profile = "default"
+            key_expires_at = (datetime.now(timezone.utc) + timedelta(days=6, hours=1)) \
+                .isoformat(timespec="seconds")
+
+        line = hooks._key_ends(Cloud(), "these hooks use")
+        self.assertIn("(in 6 days)", line)
+        self.assertIn("save it with `korely init --api-key <new key> --force`.", line)
+        self.assertIn("A key `korely init --agent` made, whose account nobody has signed in "
+                      "to yet, needs no new key: signing in to the Korely dashboard with it "
+                      "lifts that end.", line)
+        Cloud.base_url = self.server.url  # one's own server: no such account
+        self.assertNotIn("korely init --agent", hooks._key_ends(Cloud(), "these hooks use"))
+
+    def test_the_client_keeps_the_end_its_server_said(self):
+        from test_client import _Server
+        from korely_memory import Korely
+
+        ends = "2026-12-01T09:00:00+00:00"
+        answers = [(200, {"Korely-Key-Expires-At": ends}, {"ok": True}),
+                   (401, {}, {"code": "unauthorized", "message": "Invalid API key"}),
+                   (422, {"Korely-Key-Expires-At": "2026-12-02T09:00:00+00:00"},
+                    {"code": "validation_error", "message": "bad field"})]
+        server = _Server(lambda method, path: answers.pop(0))
+        self.addCleanup(server.close)
+        k = Korely(api_key="kor_self_hook_probe_0123456789", base_url=server.url)
+        self.assertIsNone(k.key_expires_at)
+        k.ping()
+        self.assertEqual(k.key_expires_at, ends)
+        with self.assertRaises(Exception):
+            k.ping()
+        # a 401 carries no end: the one said stays, it is the same key
+        self.assertEqual(k.key_expires_at, ends)
+        # a refusal to a key that ends still says when
+        with self.assertRaises(Exception):
+            k.ping()
+        self.assertEqual(k.key_expires_at, "2026-12-02T09:00:00+00:00")
+
+    def test_the_client_says_where_it_found_its_key(self):
+        from korely_memory import Korely
+
+        url = self.server.url
+        self.assertIsNone(Korely(api_key=self.ENV, base_url=url)._key_profile)
+        self.assertEqual(Korely()._key_profile, "default")
+        self.assertEqual(Korely(profile="work")._key_profile, "work")
+        with mock.patch.dict(os.environ, {"KORELY_PROFILE": "work"}):
+            self.assertEqual(Korely()._key_profile, "work")
+            with mock.patch.dict(os.environ, {"KORELY_API_KEY": self.ENV,
+                                              "KORELY_BASE_URL": url}):
+                self.assertIsNone(Korely()._key_profile)
+                # a profile named is a decision: the variable does not count
+                self.assertEqual(Korely(profile="work")._key_profile, "work")
+        self.assertIsNone(Korely.__new__(Korely)._key_profile)
 
 
 class Tools(Base):
@@ -363,6 +642,50 @@ class Installing(Base):
     def test_removing_what_was_never_installed_creates_nothing(self):
         hooks.install("cursor", self.repo, remove=True, base="/opt/bin/korely")
         self.assertFalse((self.repo / ".cursor").exists())
+
+    def test_no_mcp_touches_no_mcp_setting(self):
+        """`--no-mcp` (hooks only) ran `claude mcp remove ... korely` and
+        rewrote .cursor/mcp.json and .codex/config.toml without `korely`: a
+        server the developer had added by hand under that name was deleted."""
+        calls = []
+        run = lambda cmd, **kw: calls.append(cmd) or mock.Mock(returncode=0)  # noqa: E731
+        cursor = self.repo / ".cursor" / "mcp.json"
+        codex = self.repo / ".codex" / "config.toml"
+        cursor.parent.mkdir()
+        codex.parent.mkdir()
+        mine = '{"mcpServers": {"korely": {"url": "https://api.korely.ai/agent/mcp"}}}\n'
+        toml = '[mcp_servers.korely]\nurl = "https://api.korely.ai/agent/mcp"\n'
+        cursor.write_text(mine)
+        codex.write_text(toml)
+        for tool in ("claude-code", "cursor", "codex"):
+            for remove in (False, True):
+                with self.subTest(tool=tool, remove=remove):
+                    report = hooks.install(tool, self.repo, base="/opt/bin/korely", run=run,
+                                           mcp=False, remove=remove, also_read=["private"])
+                    self.assertEqual(calls, [])  # no `claude mcp` at all
+                    self.assertEqual(cursor.read_text(), mine)
+                    self.assertEqual(codex.read_text(), toml)
+                    self.assertIn("MCP settings not touched (--no-mcp): a korely server "
+                                  "already there stays as it is", report)
+        # the hooks went in and out all the same
+        self.assertNotIn("hooks", json.loads((self.repo / ".cursor" / "hooks.json").read_text()))
+        exclude = (self.repo / ".git" / "info" / "exclude").read_text()
+        self.assertIn(".cursor/hooks.json", exclude)
+        self.assertNotIn(".cursor/mcp.json", exclude)  # not ours to keep out of git
+
+    def test_no_mcp_installs_next_to_a_committed_mcp_file(self):
+        """The file `--no-mcp` does not write is not its to judge: a committed
+        .cursor/mcp.json stopped a hooks-only install."""
+        f = self.repo / ".cursor" / "mcp.json"
+        f.parent.mkdir()
+        f.write_text('{"mcpServers": {}}\n')
+        subprocess.run(["git", "-C", str(self.repo), "add", "."], check=True)
+        with self.assertRaises(hooks.InstallError):
+            hooks.install("cursor", self.repo, base="/opt/bin/korely")
+        hooks.install("cursor", self.repo, base="/opt/bin/korely", mcp=False)
+        self.assertIn("sessionStart",
+                      json.loads((self.repo / ".cursor" / "hooks.json").read_text())["hooks"])
+        self.assertEqual(f.read_text(), '{"mcpServers": {}}\n')
 
     def test_codex_everywhere(self):
         with mock.patch.object(Path, "home", return_value=self.tmp / "home"):

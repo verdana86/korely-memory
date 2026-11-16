@@ -81,13 +81,26 @@ export interface Memory {
   kind?: "note" | "session";
 }
 
+/** What `search()` may search, each once in `types`: the memories, or the
+ *  facts true now (Korely 1.0.13 and later). */
+export type SearchKind = "memories" | "facts";
+
 export interface SearchHit {
   id?: string;
   score?: number;
+  /** The first 280 characters of the text. */
   snippet?: string;
   user_id?: string;
   agent_id?: string;
   metadata?: Record<string, unknown>;
+  /** "memory" or "fact": in every result when the search names `types`
+   *  (Korely 1.0.13 and later), absent otherwise. */
+  type?: "memory" | "fact" | string;
+  /** The whole text (a memory's as stored, a fact's line): only with
+   *  `full_text: true` (Korely 1.0.13 and later). */
+  content?: string;
+  /** A fact's result: the fact as `getFacts()` shows it. Absent for a memory. */
+  fact?: Fact;
 }
 
 /** Iterable like the Python SDK's MemoryPage: `for (const m of page)` works,
@@ -345,7 +358,7 @@ export interface PingResponse {
   scopes: string[];
 }
 
-/** What `Korely.initAgent()` answers: a new hobby key and what it buys. */
+/** What `Korely.initAgent()` answers: a new key, when it ends, and what the account may do. */
 export interface AgentInitResult {
   /** The key, shown this once and never again: save it. */
   api_key: string;
@@ -354,7 +367,16 @@ export interface AgentInitResult {
   /** Where the new project's memories are read by a model. */
   processing_region?: "eu" | "global";
   scopes: string[];
-  /** The hobby allowance: writes_per_month, queries_per_month, agents, the monthly AI budget. */
+  /** When the key stops working (ISO 8601, with its time zone). Absent from a
+   *  server older than Korely Agent 1.0.10. */
+  expires_at?: string;
+  /** The same in the server's words: how long the key lasts, the trial's
+   *  limits until the account is adopted, and how to adopt it. Absent from a
+   *  server older than Korely Agent 1.0.10. */
+  note?: string;
+  /** The free plan's monthly allowance: writes_per_month, queries_per_month,
+   *  agents, the monthly AI budget. With a `note`, it applies once the account
+   *  is adopted; until then the trial's limits do. */
   quotas: Record<string, unknown>;
   /** The Terms of Service that creating the account accepts. Absent from a
    *  server older than Korely Agent 0.1.27. */
@@ -498,6 +520,22 @@ export interface SearchOptions {
   min_score?: number;
   /** Leave out the work sessions (`kind: "session"`) and what only they stated (Korely Agent 0.1.42). */
   exclude_sessions?: boolean;
+  /**
+   * What to search, each kind once: `["memories"]` (what the server searches
+   * when it is not sent), `["facts"]`, the facts true now, or both, each kind
+   * ranked by its own score and the rankings merged by rank (a fact's score
+   * and a memory's are not to be compared). Every result then says its
+   * `type`, and a fact's carries `fact`. `run_id`, `metadata` and `min_score`
+   * narrow the memories only: with `"facts"` the server answers 422. Sent
+   * only when given: Korely 1.0.13 and later; an older server answers 422.
+   */
+  types?: SearchKind[];
+  /**
+   * Also return each result's whole text as `content`; `snippet` stays its
+   * first 280 characters. A memory can hold 16,000 characters. Sent only
+   * when true: Korely 1.0.13 and later; an older server answers 422.
+   */
+  full_text?: boolean;
 }
 
 export interface ListOptions {
