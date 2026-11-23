@@ -1,6 +1,6 @@
 {
   "name": "korely-memory",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "JavaScript / TypeScript SDK for Korely Agents: memory for AI agents with bi-temporal typed facts.",
   "keywords": [
     "ai",

@@ -8,6 +8,39 @@ The server side of the entries marked "API" shipped on 2026-09-28. Against an
 older server these clients keep working: the old field names are still read,
 and a batch `timestamp` is refused there with a 422.
 
+## Python 0.2.2, npm 0.2.2 (2026-11-23)
+
+Patch releases with one change in both: **a read of the context block that
+names no budget asks for 1,500 tokens, not 800**, the API's own default since
+Korely 1.0.35. The clients name a budget on every read, so up to 0.2.1 they
+kept asking for 800 after the server moved, and code that never passed one
+got the smaller block. After the upgrade such a read can bring up to 700 more
+tokens of context, which the model then reads as input; a block that already
+fit in 800 (little in the memory for that question) stays as it was. On a
+memory with much in it, six questions: 793 tokens on average at 800,
+1,490 at 1,500. To keep the old size, pass the budget: `token_budget=800` in
+Python, `--token-budget 800` in the CLI, `token_budget: 800` in `getContext`
+and `tokenBudget: 800` in `korely-memory/ai-sdk`. Every Korely 1.x server takes
+50 to 8,000, so a Self-hosted server older than 1.0.35 is asked for 1,500 too.
+Code that already passes a budget sends it unchanged.
+
+### Python 0.2.2
+
+- `get_context()` (on `AsyncKorely` too), `korely context`, the
+  `korely_get_context` tool of `korely-mcp` and the LangGraph helpers
+  (`korely_context`, `akorely_context`, the `search_memory` tool of
+  `create_korely_tools`) take their default from one constant,
+  `korely_memory.client.DEFAULT_TOKEN_BUDGET` (1500), where each had its own
+  800. The MCP tool's schema shows the new default to the agent.
+- `korely hook` is unchanged: it already names its own budgets (1,500 at the
+  session start, 1,200 for a prompt, 700 for each extra user_id or profile).
+
+### npm 0.2.2
+
+- `getContext()`, `withKorelyMemory()` and `korelyTools()` take their default
+  from one constant (1500), where the client and the AI SDK entry each had
+  their own 800.
+
 ## Python 0.2.1, npm 0.2.1 (2026-11-16)
 
 Patch releases. Code written for Python 0.2.0 or npm 0.2.0 needs no change:
