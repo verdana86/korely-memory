@@ -394,7 +394,8 @@ def cmd_add(k: Korely, a) -> int:
         print("error: no content (pass text, '-' for stdin, or pipe it).", file=sys.stderr)
         return 2
     m = k.add(content, run_id=a.run_id, timestamp=getattr(a, "timestamp", None),
-              kind=getattr(a, "kind", None), **_writer(a, k.api_key))
+              kind=getattr(a, "kind", None),
+              idempotency_key=getattr(a, "idempotency_key", None), **_writer(a, k.api_key))
     if a.json:
         _emit_json(m)
     else:
@@ -779,7 +780,7 @@ def cmd_batch(k: Korely, a) -> int:
             "the items that name none. " + _save_hint(a, k.api_key), code="identity_required")
     for i in nobody:
         items[i].update(saved)
-    job = k.batch(items)
+    job = k.batch(items, idempotency_key=getattr(a, "idempotency_key", None))
     if a.json:
         _emit_json(job)
         return 0
@@ -1390,6 +1391,15 @@ def build_parser() -> argparse.ArgumentParser:
     agent_flag.add_argument("--agent-id",
                             help="agent namespace (counts against your agent cap)")
     both = [common, user_flag, agent_flag]
+    # The two writes that create (`add`, `batch`): the client sends one with
+    # no answer once more with its Idempotency-Key (Korely._write).
+    write_flags = argparse.ArgumentParser(add_help=False)
+    write_flags.add_argument("--idempotency-key",
+                             help="the write's Idempotency-Key (default: a new one): the same "
+                                  "key sends a write that got no answer again, made once "
+                                  "(Korely 1.0.27+)")
+    write_flags.add_argument("--no-retry", action="store_true",
+                             help="send once: no second try of a write that got no answer")
 
     sub = p.add_subparsers(dest="command", required=True)
 
@@ -1471,7 +1481,8 @@ def build_parser() -> argparse.ArgumentParser:
                         help="the key's tier, region and scopes (no scope, no quota)")
     sp.set_defaults(func=cmd_ping)
 
-    sp = sub.add_parser("add", parents=both, help="store a memory ('-' or pipe for stdin)")
+    sp = sub.add_parser("add", parents=[*both, write_flags],
+                        help="store a memory ('-' or pipe for stdin)")
     sp.add_argument("content", nargs="?", help="text to remember; '-' reads stdin")
     sp.add_argument("--run-id", help="optional run/session id")
     sp.add_argument("--timestamp",
@@ -1620,7 +1631,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--yes", action="store_true", help="confirm the irreversible purge")
     sp.set_defaults(func=cmd_delete_agent)
 
-    sp = sub.add_parser("batch", parents=both,
+    sp = sub.add_parser("batch", parents=[*both, write_flags],
                         help="bulk import (up to 500): JSON array, {\"memories\": [...]} or JSON Lines")
     sp.add_argument("file", help="the file; '-' reads stdin")
     sp.set_defaults(func=cmd_batch)
@@ -1732,7 +1743,8 @@ def main(argv=None) -> int:
               "or set KORELY_API_KEY (kor_live_...).", file=sys.stderr)
         return 2
     try:
-        client = Korely(api_key=key, base_url=_resolve_base_url(args))
+        client = Korely(api_key=key, base_url=_resolve_base_url(args),
+                        retry_writes=not getattr(args, "no_retry", False))
     except KorelyError as e:
         # Every refusal here used to print "no API key", including the one the
         # constructor exists for: a kor_self_ key with no address, or a

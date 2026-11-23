@@ -11,7 +11,8 @@
  *
  * A KorelyError that is not an APIError never reached the server, or got no
  * usable answer: no API key, a key and address that do not belong together,
- * a connection error or a timeout.
+ * a connection error or a timeout (code `connection_error`; a write left
+ * without an answer after its retry is `write_not_confirmed`, see `add()`).
  */
 
 export interface KorelyErrorOptions {

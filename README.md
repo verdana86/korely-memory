@@ -96,28 +96,35 @@ Polling is the only signal: no webhook fires when extraction finishes. The webho
 
 ## Retrying a write
 
-The clients never send a request again on their own: a call that times out
-(30 s by default) or fails raises, and what to do next is yours. A write that
-got no answer may still have been made: the server may finish it after your
-call gave up, and a proxy in front of it may hold it while the server restarts
-and send it on later (the one of Korely Cloud holds requests for some seconds
-during a restart). So **a caller that retries a write itself passes the
-same `idempotency_key` on every try**, and the server (Korely 1.0.27 and
-later) makes it once; an older server ignores it.
+A write that got no answer may still have been made: the server may finish it
+after the call gave up, and a proxy in front of it may hold it while the
+server restarts and send it on later (the one of Korely Cloud holds requests
+for some seconds during a restart). From Python 0.2.2 and npm 0.2.2 the
+clients retry such a write once themselves: every `add()` and `batch()`
+carries an `Idempotency-Key` (yours if you pass `idempotency_key`, else a new
+one per write), and a write whose answer never came (a timeout, a failed
+connection) is sent once more, after half a second, with the same key. Korely
+1.0.27 and later make it once and answer what the first try made. Only once,
+only these two writes: a read, a delete or a call the server answered (a 4xx,
+a 5xx) is never sent again by the client.
+
+If the second try gets no answer either, the call raises `KorelyError` with
+`code == "write_not_confirmed"`, and its message names the key. The write may
+have been made: send it again with that key (made at most once within 24
+hours) or look for it first. To send it again later yourself, pass your own
+key:
 
 ```python
-import time, uuid
+import uuid
 from korely_memory import KorelyError
 
 key = uuid.uuid4().hex  # one key per write, the same on every try of it
-for attempt in range(3):
-    try:
-        korely.add("Ada prefers tea.", user_id="ada", idempotency_key=key)
-        break
-    except KorelyError:
-        if attempt == 2:
-            raise  # the last try failed: the write may or may not have been made
-        time.sleep(2 ** attempt)
+try:
+    korely.add("Ada prefers tea.", user_id="ada", idempotency_key=key)
+except KorelyError as err:
+    if err.code != "write_not_confirmed":
+        raise
+    korely.add("Ada prefers tea.", user_id="ada", idempotency_key=key)  # made at most once
 ```
 
 ```ts
@@ -125,12 +132,15 @@ const key = crypto.randomUUID(); // one key per write, the same on every try of 
 await korely.add("Ada prefers tea.", { user_id: "ada", idempotency_key: key });
 ```
 
-`batch()` takes `idempotency_key` too. A key is 1 to 255 printable ASCII
-characters; anything else raises (`KorelyError`) before a request is sent. The
-clients do not make a key for each call themselves: they never retry, so a key
-made per call would be a new one on your retry and protect nothing. The hooks
-of `korely init`, which do try a session again, keep one key per session they
-send.
+`Korely(retry_writes=False)` in Python and `new Korely({ retryWrites: false })`
+in npm send every write once; `korely add` and `korely batch` take
+`--no-retry` and `--idempotency-key`. A key is 1 to 255 printable ASCII
+characters; anything else raises (`KorelyError`) before a request is sent. A
+server older than Korely 1.0.27 ignores the key: there a write whose answer
+was lost after it was made is made twice by the retry, as it would be by a
+retry of your own, so against such a server pass `retry_writes=False`
+(`retryWrites: false`). The hooks of `korely init`, which try a session again
+later, keep one key per session they send.
 
 ## Install
 

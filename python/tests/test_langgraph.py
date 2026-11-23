@@ -82,7 +82,7 @@ class FakeKorely:
         self._seq = 0
 
     # the transport seam
-    def __call__(self, method, path, *, params=None, json_body=None):
+    def __call__(self, method, path, *, params=None, json_body=None, headers=None):
         self.calls.append((method, path, params, json_body))
         if method == "POST" and path == "/v1/memories":
             return self._add(json_body)

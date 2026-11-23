@@ -104,7 +104,7 @@ class TheSameToolsAsTheHostedServer(unittest.TestCase):
 
         sent = []
 
-        def send(method, path, *, params=None, json_body=None):
+        def send(method, path, *, params=None, json_body=None, headers=None):
             sent.append(json_body)
             return 201, {"id": "mem_1", "content": "x", "facts": []}
 

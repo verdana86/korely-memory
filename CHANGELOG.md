@@ -10,19 +10,41 @@ and a batch `timestamp` is refused there with a 422.
 
 ## Python 0.2.2, npm 0.2.2 (2026-11-23)
 
-Patch releases with one change in both: **a read of the context block that
-names no budget asks for 1,500 tokens, not 800**, the API's own default since
-Korely 1.0.35. The clients name a budget on every read, so up to 0.2.1 they
-kept asking for 800 after the server moved, and code that never passed one
-got the smaller block. After the upgrade such a read can bring up to 700 more
-tokens of context, which the model then reads as input; a block that already
-fit in 800 (little in the memory for that question) stays as it was. On a
-memory with much in it, six questions: 793 tokens on average at 800,
-1,490 at 1,500. To keep the old size, pass the budget: `token_budget=800` in
-Python, `--token-budget 800` in the CLI, `token_budget: 800` in `getContext`
-and `tokenBudget: 800` in `korely-memory/ai-sdk`. Every Korely 1.x server takes
-50 to 8,000, so a Self-hosted server older than 1.0.35 is asked for 1,500 too.
-Code that already passes a budget sends it unchanged.
+Patch releases with two changes in both, each with a way back.
+
+**A read of the context block that names no budget asks for 1,500 tokens,
+not 800**, the API's own default since Korely 1.0.35. The clients name a
+budget on every read, so up to 0.2.1 they kept asking for 800 after the
+server moved, and code that never passed one got the smaller block. After the
+upgrade such a read can bring up to 700 more tokens of context, which the
+model then reads as input; a block that already fit in 800 (little in the
+memory for that question) stays as it was. On a memory with much in it,
+six questions: 793 tokens on average at 800, 1,490 at 1,500. To keep
+the old size, pass the budget: `token_budget=800` in Python, `--token-budget
+800` in the CLI, `token_budget: 800` in `getContext` and `tokenBudget: 800` in
+`korely-memory/ai-sdk`. Every Korely 1.x server takes 50 to 8,000, so a
+Self-hosted server older than 1.0.35 is asked for 1,500 too. Code that
+already passes a budget sends it unchanged.
+
+**A write whose answer never came is sent once more, with the same
+Idempotency-Key.** Every `add()` and `batch()` now carries an
+`Idempotency-Key`: the caller's `idempotency_key`, else a new one per write.
+A write that got no answer (a timeout, a failed connection) may have been
+made, so the client sends it once more, after half a second, with that key,
+and Korely 1.0.27 and later make it once and answer what the first try made.
+A lost answer after the write is now one memory and no error, where 0.2.1
+raised and a retry of the caller's own, without a key, made a second memory.
+Once only, and only these two writes: a read, a delete or a call the server
+answered (a 4xx, a 5xx) is never sent again. If the second try gets no answer
+either, the call raises `KorelyError` with `code` `write_not_confirmed`,
+whose message says the write may have been made and names the key to send it
+again with (made at most once within 24 hours). A connection error or a
+timeout of any call now has `code` `connection_error` (it had none). To send
+every write once, as 0.2.1 did: `Korely(retry_writes=False)` in Python,
+`new Korely({ retryWrites: false })` in npm, `--no-retry` in the CLI. A server
+older than Korely 1.0.27 ignores the key: there a write whose answer was lost
+after it was made is made twice by the retry, as by a retry of the caller's
+own, so against such a server turn the retry off.
 
 ### Python 0.2.2
 
@@ -32,14 +54,27 @@ Code that already passes a budget sends it unchanged.
   `create_korely_tools`) take their default from one constant,
   `korely_memory.client.DEFAULT_TOKEN_BUDGET` (1500), where each had its own
   800. The MCP tool's schema shows the new default to the agent.
-- `korely hook` is unchanged: it already names its own budgets (1,500 at the
-  session start, 1,200 for a prompt, 700 for each extra user_id or profile).
+- `add()` and `batch()` (on `AsyncKorely` too, which takes `retry_writes`)
+  send the key and make the one retry; so do `korely add`, `korely batch`,
+  the `korely_add` tool of `korely-mcp` and the LangGraph helpers that
+  write, which call them. `korely add` and `korely batch` take
+  `--idempotency-key` and `--no-retry`. With `--json`, an error with no
+  answer is `{"code": "connection_error", ...}` (it was `"error"`), and the
+  text line ends with `[connection_error]`.
+- `korely hook` keeps its budgets (1,500 at the session start, 1,200 for a
+  prompt, 700 for each extra user_id or profile) and its one key per session
+  it sends; a send of the hook now also gets the one retry inside it.
 
 ### npm 0.2.2
 
 - `getContext()`, `withKorelyMemory()` and `korelyTools()` take their default
   from one constant (1500), where the client and the AI SDK entry each had
   their own 800.
+- `add()` and `batch()` send the key and make the one retry, and so do the
+  turns `withKorelyMemory()` stores and the `addMemory` tool of
+  `korelyTools()`. The client option `retryWrites` (default true). The key a
+  write makes itself is 32 hex digits, from `crypto.randomUUID()`, or from
+  `Math.random()` where that is missing (a browser page over plain http).
 
 ## Python 0.2.1, npm 0.2.1 (2026-11-16)
 

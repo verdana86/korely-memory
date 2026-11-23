@@ -9,6 +9,7 @@ import json
 import math
 import os
 import re
+import time
 import uuid
 from datetime import date, datetime, timezone
 from typing import Any, Iterator, List, Optional
@@ -70,6 +71,11 @@ KEY_EXPIRES_HEADER = "Korely-Key-Expires-At"
 # LangGraph helpers. Until 0.2.1 each had its own 800 and kept it after the
 # server moved.
 DEFAULT_TOKEN_BUDGET = 1500
+# How long a write that got no answer waits before its one retry, in seconds:
+# the first retry delay of the Stainless-generated SDKs (openai-python 3.58,
+# _constants.py, INITIAL_RETRY_DELAY = 0.5), which also retry with the same
+# Idempotency-Key. One retry only, so no backoff to grow.
+WRITE_RETRY_DELAY = 0.5
 
 
 def _clean(d: dict) -> dict:
@@ -435,6 +441,12 @@ def _idempotency_header(key: Optional[str]) -> Optional[dict]:
     return {"Idempotency-Key": '"' + key.replace("\\", "\\\\").replace('"', '\\"') + '"'}
 
 
+def _new_idempotency_key() -> str:
+    """The Idempotency-Key of a write the caller gave none: random, made once
+    before the first try and sent again on the retry (`Korely._write`)."""
+    return uuid.uuid4().hex
+
+
 def _retry_after_seconds(raw: Any) -> Optional[int]:
     """Retry-After in whole seconds, rounded up, or None if absent/unreadable."""
     if raw is None:
@@ -467,6 +479,10 @@ class Korely:
     #: Set by the constructor, in the order it reads the key.
     _key_profile: Optional[str] = None
 
+    #: Whether a write that got no answer is sent once more with its key
+    #: (`_write`). Set by the constructor; True on a client built without it.
+    retry_writes: bool = True
+
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -477,6 +493,7 @@ class Korely:
         verify: bool = True,
         client: Optional[str] = None,
         profile: Optional[str] = None,
+        retry_writes: bool = True,
     ):
         """`client`: the tool writing, e.g. "claude-code" (argument, else
         KORELY_CLIENT), sent as `X-Korely-Client`: Korely Agent keeps it on
@@ -493,7 +510,14 @@ class Korely:
         CA. Needed on the Python 3.9 macOS ships with, whose LibreSSL does not
         read SSL_CERT_FILE. `verify=False` turns certificate checks off: only
         as an argument, never from the environment, because it lets anyone on
-        the path read the key and the memories."""
+        the path read the key and the memories.
+
+        `retry_writes`: a write (`add`, `batch`) whose answer never came, a
+        timeout or a connection that failed, is sent once more, after half a
+        second, with the same Idempotency-Key, which Korely 1.0.27 and later
+        make once. False sends every write once. Either way a write with no
+        answer raises a KorelyError with code ``write_not_confirmed`` that
+        names the key to send it again with."""
         if profile and not api_key and not _key_from_config(profile):
             raise KorelyError(f"No key saved for the profile {profile!r}: run "
                               f"`korely init --api-key <key> --profile {profile}`.")
@@ -533,6 +557,7 @@ class Korely:
         self.timeout = timeout
         self.client = (client or os.environ.get("KORELY_CLIENT") or "").strip() or None
         self._ssl_context = _ssl_context(ca_file or os.environ.get("KORELY_CA_FILE") or None, verify)
+        self.retry_writes = bool(retry_writes)
 
     @classmethod
     def init_agent(cls, agent_caller: Optional[str] = None, *, region: str = "eu",
@@ -674,14 +699,19 @@ class Korely:
             elif e.filename and _origin(e.filename) != _origin(req.full_url):
                 parsed["_redirect"] = _origin(e.filename)
             return e.code, parsed
+        # No answer, with the code that says so (`connection_error`): a write
+        # that ends here may have been made (`_write`). A timeout is one of
+        # them, as openai-python's APITimeoutError is an APIConnectionError.
         except _urlerror.URLError as e:
             raise KorelyError(
-                "Connection error: " + str(e.reason) + _sni_hint(self.base_url, e.reason)
+                "Connection error: " + str(e.reason) + _sni_hint(self.base_url, e.reason),
+                code="connection_error",
             )
         except (OSError, _httpclient.HTTPException) as e:
             raise KorelyError(
                 f"Connection error: {type(e).__name__}: {e} "
-                f"({method} {path}, timeout {self.timeout}s)"
+                f"({method} {path}, timeout {self.timeout}s)",
+                code="connection_error",
             )
         if not raw:
             return status, {}
@@ -723,6 +753,40 @@ class Korely:
         if not 200 <= status < 300:
             self._raise(status, body if isinstance(body, dict) else {}, method=method)
         return body
+
+    def _write(self, path: str, json_body: Any, idempotency_key: Optional[str],
+               how: str) -> dict:
+        """POST a write that creates (`add`, `batch`) with an Idempotency-Key:
+        the caller's, else one made here, the same on both tries. A try with
+        no answer (``connection_error``) may have been made, so it is sent
+        once more after WRITE_RETRY_DELAY, unless ``retry_writes`` is False;
+        a retry answered 409 ``idempotency_key_in_use`` found the first still
+        being made. Either outcome left unconfirmed raises KorelyError
+        ``write_not_confirmed``, naming the key. Never a third try, never a
+        call the server answered otherwise, never a read. ``how`` is how a
+        caller reads to look for it, for the message."""
+        key = idempotency_key if idempotency_key is not None else _new_idempotency_key()
+        headers = _idempotency_header(key)
+        tries = 2 if self.retry_writes else 1
+        failed: List[KorelyError] = []
+        for attempt in range(tries):
+            if attempt:
+                time.sleep(WRITE_RETRY_DELAY)
+            try:
+                return self._call("POST", path, json_body=json_body, headers=headers)
+            except KorelyError as e:
+                if not (e.code == "connection_error"
+                        or (attempt and e.code == "idempotency_key_in_use")):
+                    raise
+                failed.append(e)
+        what = ("; the retry with the same key: ".join(str(e) for e in failed) if tries > 1
+                else f"{failed[0]} (sent once: retry_writes is off)")
+        raise KorelyError(
+            f"POST {path} was not confirmed: {what}. The write may have been made. Send it "
+            f"again with the same Idempotency-Key, {key}: Korely 1.0.27 and later make it "
+            f"at most once within 24 hours. Or look for it first ({how}).",
+            code="write_not_confirmed",
+        ) from failed[-1]
 
     @staticmethod
     def _detail_line(body: dict) -> Optional[str]:
@@ -1047,20 +1111,23 @@ class Korely:
         of a work session, which a read can leave out (``exclude_sessions``).
         Korely Agent after 0.1.41; an older server refuses it (422).
 
-        ``idempotency_key``: send the same write again with the same key and
-        it is made once (Korely Agent 1.0.27 and later; an older server
-        ignores it). One new key per write, the same one only to send that
-        write again: a write whose answer never came (a timeout, a 502 while
-        the server restarted) may have been made, and without a key a resend
-        makes it twice."""
+        ``idempotency_key``: the same write sent again with the same key is
+        made once (Korely Agent 1.0.27 and later; an older server ignores
+        it). Without one the client makes one for this write (0.2.2). A write
+        whose answer never came (a timeout, a connection that failed) may
+        have been made: the client sends it once more with the same key
+        (``retry_writes``), and if that gets no answer either it raises
+        KorelyError ``write_not_confirmed``, naming the key. Pass your own key
+        to send the write again later yourself: one new key per write, the
+        same one only to send that write again."""
         text = _coerce_content(content)
         if not text.strip():
             raise KorelyError("content is empty: pass a non-blank string or messages with content.")
-        body = self._call("POST", "/v1/memories", json_body=_clean({
+        body = self._write("/v1/memories", _clean({
             "content": text, "agent_id": agent_id, "user_id": user_id,
             "run_id": run_id, "metadata": metadata, "timestamp": timestamp,
             "kind": kind,
-        }), headers=_idempotency_header(idempotency_key))
+        }), idempotency_key, "get_all() or search()")
         return Memory.from_dict(body)
 
     def search(self, query: str, *, user_id: Optional[str] = None,
@@ -1520,9 +1587,12 @@ class Korely:
         fit in what is left of the month, batches already queued included, and
         ``too_many_batches`` (TooManyBatchesError) while three batches are
         still being imported. The Self-hosted meters nothing and refuses
-        neither."""
-        body = self._call("POST", "/v1/batch", json_body={"memories": list(memories)},
-                          headers=_idempotency_header(idempotency_key))
+        neither.
+
+        ``idempotency_key``, and the one retry of a batch with no answer, as
+        on ``add()``."""
+        body = self._write("/v1/batch", {"memories": list(memories)}, idempotency_key,
+                           "get_all() once the import has run")
         return BatchJob.from_dict(body)
 
     def batch_status(self, job_id: str) -> BatchJob:

@@ -52,7 +52,7 @@ Every method wraps exactly one REST endpoint.
 
 | Method | Endpoint |
 |---|---|
-| `add(content, *, agent_id=, user_id=, run_id=, metadata=, timestamp=, idempotency_key=)` | `POST /v1/memories`; with `idempotency_key=`, the same write sent again with the same key is made once (Korely 1.0.27 and later; an older server ignores it): one new key per write, the same one only to send that write again. The client never retries by itself |
+| `add(content, *, agent_id=, user_id=, run_id=, metadata=, timestamp=, idempotency_key=)` | `POST /v1/memories`; every write carries an `Idempotency-Key` (`idempotency_key=`, else a new one), and one whose answer never came (a timeout, a failed connection) is sent once more with it, made once by Korely 1.0.27 and later (an older server ignores the key). No answer twice raises `KorelyError` `write_not_confirmed`, naming the key; `Korely(retry_writes=False)` sends once |
 | `search(query, *, user_id=, agent_id=, run_id=, metadata=, limit=, min_score=, types=, full_text=)` | `POST /v1/memories/search`; `min_score` (0 to 1) leaves out hits scored below it; `types=["memories", "facts"]` searches the facts true now too (`["facts"]` them only), and each hit says its `type`, a fact's with its `fact`; `full_text=True` adds the whole text as `content` (`snippet` is its first 280 characters). Korely 1.0.13 and later; sent only when given |
 | `get_all(*, user_id=, agent_id=, run_id=, limit=, offset=)` | `GET /v1/memories` |
 | `get(memory_id)` | `GET /v1/memories/:id` |
@@ -248,8 +248,9 @@ and the `message` of the REST error envelope (`{"code", "message"}`), so you can
 branch on `err.code`; a self-hosted install that answers FastAPI's `detail` is
 read the same way, and `err.body` keeps the response as it came. The common
 statuses also have their own subclass. Everything subclasses `KorelyError`,
-which is also what a client-side problem raises (no key, a connection error, a
-timeout).
+which is also what a client-side problem raises (no key, a connection error or a
+timeout, with `code == "connection_error"`, and a write left without an answer
+after its retry, `write_not_confirmed`).
 
 ```python
 import time
@@ -283,8 +284,8 @@ except QuotaExceededError as err:   # 429
 Every `APIError` has `retry_after`: the seconds of the server's `Retry-After`
 header, or None when it sent none. A rate limit sends it, and so does
 `writes_paused`, the Cloud's pause of the writes that need a model once its
-daily model budget is spent (until 00:00 UTC). The SDK does not retry on its
-own.
+daily model budget is spent (until 00:00 UTC). The SDK does not retry these:
+its one retry is of a write that got no answer at all (see `add()`).
 
 A key that expires ends with a 401 like any wrong key. To see it coming:
 Korely 1.0.23 and later say on every answer to such a key when it ends, and

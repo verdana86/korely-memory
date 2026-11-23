@@ -33,7 +33,7 @@ class _Recorder:
     def __init__(self, *answers):
         self.calls, self.answers = [], list(answers)
 
-    def __call__(self, method, path, *, params=None, json_body=None):
+    def __call__(self, method, path, *, params=None, json_body=None, headers=None):
         self.calls.append({"method": method, "path": path, "json": json_body})
         return self.answers.pop(0) if self.answers else (201, {"id": "x", "facts": []})
 
@@ -428,7 +428,7 @@ class TheExamplesNameTheUser(unittest.TestCase):
             with self.subTest(example=name):
                 sent = []
 
-                def send(self, method, path, *, params=None, json_body=None):
+                def send(self, method, path, *, params=None, json_body=None, headers=None):
                     sent.append((method, path, json_body))
                     return 201, {"id": "mem_1", "context": "", "sources": []}
 

@@ -13,9 +13,11 @@ statuses also have their own subclass, so both styles work:
 
 A ``KorelyError`` that is not an ``APIError`` never reached the server, or got
 no usable answer from it: no API key, a key and address that do not belong
-together, a connection or timeout error, or a refusal made before sending
-that carries the code the server would give (``confirmation_required``, and
-``identity_required`` from the ``korely`` command line and ``korely-mcp``).
+together, a connection or timeout error (code ``connection_error``; a write
+left without an answer after its retry is ``write_not_confirmed``, see
+``Korely.add``), or a refusal made before sending that carries the code the
+server would give (``confirmation_required``, and ``identity_required`` from
+the ``korely`` command line and ``korely-mcp``).
 """
 from __future__ import annotations
 

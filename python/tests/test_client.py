@@ -1880,7 +1880,7 @@ class FakeCloud:
     def deletes(self):
         return [c[2] for c in self.calls if c[0] == "DELETE"]
 
-    def __call__(self, method, path, *, params=None, json_body=None):
+    def __call__(self, method, path, *, params=None, json_body=None, headers=None):
         self.calls.append((method, path, dict(params or {})))
         if (method, path) == ("GET", "/admin/whoami"):
             return self.whoami
@@ -2549,9 +2549,19 @@ class AWriteCarriesItsIdempotencyKey(unittest.TestCase):
         self.k.batch([{"content": "x", "user_id": "ada"}], idempotency_key="b-1")
         self.assertEqual(self._key_sent(), '"b-1"')
 
-    def test_no_key_no_header(self):
-        self.k.add("Ada prefers tea.", user_id="ada")
-        self.assertIsNone(self._key_sent())
+    def test_without_a_key_each_write_carries_a_new_one(self):
+        """0.2.2: a write the caller gives no key gets one of its own, so the
+        client's own retry (and the caller's, with the key the error names)
+        is made once. A new one per write: two writes are two memories."""
+        keys = []
+        for write in (lambda: self.k.add("Ada prefers tea.", user_id="ada"),
+                      lambda: self.k.add("Ada prefers tea.", user_id="ada"),
+                      lambda: self.k.batch([{"content": "x", "user_id": "ada"}])):
+            write()
+            keys.append(self._key_sent())
+        for key in keys:
+            self.assertRegex(key, r'^"[0-9a-f]{32}"$')
+        self.assertEqual(len(set(keys)), 3)
 
     def test_a_quote_or_a_backslash_is_escaped(self):
         self.k.add("x", user_id="ada", idempotency_key='a"b\\c')
@@ -2580,3 +2590,224 @@ class ABadIdempotencyKeyIsRefusedBeforeTheCall(unittest.TestCase):
             rec.queue(201, {"id": "mem_1"})
             k.add("x", user_id="ada", idempotency_key=good)
         self.assertEqual(len(rec.calls), 4)
+
+
+class _KeyedServer:
+    """A real HTTP server on 127.0.0.1 that honours Idempotency-Key as Korely
+    1.0.27 and later do (the server's services/idempotency.py): the first
+    write with a key makes it, the same key again answers what the first made
+    (`Idempotent-Replayed: true`) and makes nothing.
+
+    ``fate(n)`` says what happens to the n-th request (1-based): "answer",
+    "lose" (made, then the connection closes with no answer: the answer lost
+    on the way back), "hang" (no answer for longer than the client waits),
+    "in_use" (the 409 of a key whose first request is still being made) or
+    an int, a status answered with nothing made."""
+
+    def __init__(self, fate=lambda n: "answer"):
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        self.seen = []      # (method, path, Idempotency-Key)
+        self.made = {}      # key -> id of what it made
+        self.writes = 0     # memories or jobs made
+        server = self
+        lock = threading.Lock()
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *a):
+                pass
+
+            def _reply(self, status, body, headers=()):
+                data = json.dumps(body).encode("utf-8")
+                self.send_response(status)
+                for k, v in headers:
+                    self.send_header(k, v)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+
+            def _answer(self):
+                length = int(self.headers.get("Content-Length") or 0)
+                if length:
+                    self.rfile.read(length)
+                key = self.headers.get("Idempotency-Key")
+                with lock:
+                    server.seen.append((self.command, self.path, key))
+                    fate = server._fate(len(server.seen))
+                if isinstance(fate, int):
+                    return self._reply(fate, {"code": "unavailable", "message": "down"})
+                if fate == "hang":
+                    threading.Event().wait(1.0)
+                    self.close_connection = True
+                    return
+                if fate == "in_use":
+                    return self._reply(409, {
+                        "code": "idempotency_key_in_use",
+                        "message": "A request with this Idempotency-Key is still being "
+                                   "made; retry it as it is."})
+                replayed = []
+                if self.command == "POST":
+                    with lock:
+                        if key and key in server.made:
+                            made = server.made[key]
+                            replayed = [("Idempotent-Replayed", "true")]
+                        else:
+                            server.writes += 1
+                            made = f"mem_{server.writes}"
+                            if key:
+                                server.made[key] = made
+                    body = ({"id": made, "content": "x", "status": "processing"}
+                            if self.path == "/v1/memories" else
+                            {"id": made, "status": "queued", "received": 1})
+                    status = 201 if self.path == "/v1/memories" else 202
+                else:
+                    status, body = 200, {"context": "", "tokens": 0, "sources": []}
+                if fate == "lose":
+                    self.close_connection = True
+                    return
+                self._reply(status, body, replayed)
+
+            do_GET = do_POST = do_DELETE = _answer
+
+        self._fate = fate
+        self._httpd = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self._httpd.server_address[1]}"
+        threading.Thread(target=self._httpd.serve_forever, kwargs={"poll_interval": 0.05},
+                         daemon=True).start()
+
+    def posts(self):
+        return [s for s in self.seen if s[0] == "POST"]
+
+    def close(self):
+        self._httpd.shutdown()
+        self._httpd.server_close()
+
+
+class TheRetryWaitsHalfASecond(unittest.TestCase):
+    def test_one_pause_before_the_retry_and_the_same_header(self):
+        from unittest import mock
+
+        from korely_memory import client as client_module
+
+        tries = []
+
+        def send(method, path, *, params=None, json_body=None, headers=None):
+            tries.append(headers)
+            if len(tries) == 1:
+                raise KorelyError("Connection error: timed out", code="connection_error")
+            return 201, {"id": "mem_1"}
+
+        k = Korely(api_key="kor_live_test")
+        k._send = send
+        with mock.patch.object(client_module.time, "sleep") as slept:
+            self.assertEqual(k.add("x", user_id="ada").id, "mem_1")
+        slept.assert_called_once_with(0.5)
+        self.assertEqual(len(tries), 2)
+        self.assertEqual(tries[0], tries[1])
+
+
+class AWriteWithNoAnswerIsSentOnceMoreWithItsKey(unittest.TestCase):
+    """0.2.2. A write whose answer never came (a timeout, a connection closed
+    before the answer) may have been made: the client sends it once more,
+    after a short pause, with the same Idempotency-Key, which Korely 1.0.27
+    and later make once. Never more than once, never a read, never a call
+    the server answered. If the second try gets no answer either, the error
+    says the write may have been made and names the key to send it again
+    with. The Stainless SDKs do the same for every call that is not a GET
+    (openai-python 3.58, _base_client.py: one key made before the first try,
+    the same on each retry)."""
+
+    def setUp(self):
+        from unittest import mock
+
+        from korely_memory import client as client_module
+
+        patcher = mock.patch.dict(os.environ, {"no_proxy": "*", "NO_PROXY": "*"})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        # The pause before the retry, at 0: what it is is not what these test.
+        pause = mock.patch.object(client_module, "WRITE_RETRY_DELAY", 0)
+        pause.start()
+        self.addCleanup(pause.stop)
+
+    def _server(self, fate):
+        server = _KeyedServer(fate)
+        self.addCleanup(server.close)
+        return server
+
+    def _korely(self, server, **kw):
+        return Korely(api_key="kor_self_test", base_url=server.url, timeout=0.3, **kw)
+
+    def test_an_answer_lost_after_the_write_is_one_memory_and_no_error(self):
+        server = self._server(lambda n: "lose" if n == 1 else "answer")
+        memory = self._korely(server).add("Ada prefers tea.", user_id="ada")
+        self.assertEqual(memory.id, "mem_1")
+        self.assertEqual(server.writes, 1)
+        keys = [key for _, _, key in server.posts()]
+        self.assertEqual(len(keys), 2)
+        self.assertEqual(keys[0], keys[1])
+
+    def test_a_batch_too(self):
+        server = self._server(lambda n: "lose" if n == 1 else "answer")
+        job = self._korely(server).batch([{"content": "x", "user_id": "ada"}])
+        self.assertEqual((job.id, server.writes, len(server.posts())), ("mem_1", 1, 2))
+
+    def test_and_from_the_async_client(self):
+        import asyncio
+
+        from korely_memory import AsyncKorely
+
+        server = self._server(lambda n: "lose" if n == 1 else "answer")
+        ak = AsyncKorely(api_key="kor_self_test", base_url=server.url, timeout=0.3)
+        memory = asyncio.run(ak.add("Ada prefers tea.", user_id="ada"))
+        self.assertEqual((memory.id, server.writes, len(server.posts())), ("mem_1", 1, 2))
+
+    def test_no_answer_twice_is_a_clear_error_after_one_retry(self):
+        server = self._server(lambda n: "hang")
+        with self.assertRaises(KorelyError) as caught:
+            self._korely(server).add("Ada prefers tea.", user_id="ada")
+        self.assertEqual(len(server.posts()), 2)
+        key = server.posts()[0][2].strip('"')
+        self.assertEqual(caught.exception.code, "write_not_confirmed")
+        self.assertIn("may have been made", str(caught.exception))
+        self.assertIn(key, str(caught.exception))
+
+    def test_a_retry_that_finds_the_first_still_being_made_says_so_too(self):
+        server = self._server(lambda n: "lose" if n == 1 else "in_use")
+        with self.assertRaises(KorelyError) as caught:
+            self._korely(server).add("Ada prefers tea.", user_id="ada")
+        self.assertEqual(caught.exception.code, "write_not_confirmed")
+        self.assertEqual(len(server.posts()), 2)
+
+    def test_the_callers_key_is_the_one_sent_both_times(self):
+        server = self._server(lambda n: "lose" if n == 1 else "answer")
+        self._korely(server).add("Ada prefers tea.", user_id="ada", idempotency_key="k-7")
+        self.assertEqual([key for _, _, key in server.posts()], ['"k-7"', '"k-7"'])
+        self.assertEqual(server.writes, 1)
+
+    def test_retry_writes_false_sends_it_once_and_names_the_key(self):
+        server = self._server(lambda n: "lose" if n == 1 else "answer")
+        with self.assertRaises(KorelyError) as caught:
+            self._korely(server, retry_writes=False).add("x", user_id="ada",
+                                                         idempotency_key="k-8")
+        self.assertEqual(len(server.posts()), 1)
+        self.assertEqual(caught.exception.code, "write_not_confirmed")
+        self.assertIn("k-8", str(caught.exception))
+
+    def test_a_read_or_a_delete_is_never_sent_again(self):
+        server = self._server(lambda n: "lose")
+        k = self._korely(server)
+        with self.assertRaises(KorelyError) as read:
+            k.get_context("where?", user_id="ada")
+        with self.assertRaises(KorelyError):
+            k.delete("mem_1")
+        self.assertEqual([m for m, _, _ in server.seen], ["GET", "DELETE"])
+        self.assertEqual(read.exception.code, "connection_error")
+
+    def test_a_write_the_server_answered_is_not_sent_again(self):
+        server = self._server(lambda n: 503)
+        with self.assertRaises(KorelyError) as caught:
+            self._korely(server).add("x", user_id="ada")
+        self.assertEqual((caught.exception.status, len(server.posts())), (503, 1))

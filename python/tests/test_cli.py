@@ -28,7 +28,7 @@ class _Recorder:
         self._responses.append((status, body))
         return self
 
-    def __call__(self, method, path, *, params=None, json_body=None):
+    def __call__(self, method, path, *, params=None, json_body=None, headers=None):
         self.calls.append({"method": method, "path": path, "params": params, "json": json_body})
         return self._responses.pop(0) if self._responses else (200, {})
 
@@ -336,6 +336,61 @@ class _CleanEnv(unittest.TestCase):
                 os.environ.pop(k, None)
             else:
                 os.environ[k] = v
+
+
+class AWriteWithNoAnswerFromTheCli(_CleanEnv):
+    """0.2.2: `korely add` and `korely batch` are the client's writes, so an
+    answer lost after the write is one memory and no error; `--no-retry`
+    sends once, `--idempotency-key` is the key sent (also on the retry)."""
+
+    def setUp(self):
+        super().setUp()
+        from test_client import _KeyedServer
+
+        from korely_memory import client as client_module
+
+        patches = [mock.patch.dict(os.environ, {"no_proxy": "*", "NO_PROXY": "*"}),
+                   mock.patch.object(client_module, "WRITE_RETRY_DELAY", 0)]
+        for p in patches:
+            p.start()
+            self.addCleanup(p.stop)
+        self.server = _KeyedServer(lambda n: "lose" if n == 1 else "answer")
+        self.addCleanup(self.server.close)
+
+    def _run(self, *argv):
+        out, err = io.StringIO(), io.StringIO()
+        with redirect_stderr(err), redirect_stdout(out):
+            rc = cli.main([*argv, "--user-id", "ada", "--api-key", "kor_self_x",
+                           "--base-url", self.server.url])
+        return rc, out.getvalue(), err.getvalue()
+
+    def test_add_is_made_once(self):
+        rc, out, _ = self._run("add", "Ada prefers tea.")
+        self.assertEqual((rc, self.server.writes, len(self.server.posts())), (0, 1, 2))
+        self.assertIn("stored  mem_1", out)
+
+    def test_the_key_given_is_sent_both_times(self):
+        rc, _, _ = self._run("add", "Ada prefers tea.", "--idempotency-key", "k-9")
+        self.assertEqual(rc, 0)
+        self.assertEqual([key for _, _, key in self.server.posts()], ['"k-9"', '"k-9"'])
+
+    def test_no_retry_sends_once_and_says_what_to_do(self):
+        rc, _, err = self._run("add", "Ada prefers tea.", "--no-retry",
+                               "--idempotency-key", "k-10")
+        self.assertEqual((rc, len(self.server.posts())), (1, 1))
+        self.assertIn("may have been made", err)
+        self.assertIn("k-10", err)
+        self.assertIn("[write_not_confirmed]", err)
+
+    def test_batch_too(self):
+        import tempfile
+
+        with tempfile.NamedTemporaryFile("w", suffix=".jsonl", delete=False) as f:
+            f.write(json.dumps({"content": "Ada prefers tea."}) + "\n")
+        self.addCleanup(os.unlink, f.name)
+        rc, _, _ = self._run("batch", f.name, "--idempotency-key", "b-9")
+        self.assertEqual((rc, self.server.writes), (0, 1))
+        self.assertEqual([key for _, _, key in self.server.posts()], ['"b-9"', '"b-9"'])
 
 
 class TheCliSaysWhatIsWrongWithTheKey(_CleanEnv):

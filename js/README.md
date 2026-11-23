@@ -94,7 +94,7 @@ Every method maps to one REST endpoint.
 
 | Method | Endpoint | |
 |---|---|---|
-| `add(content, opts?)` | `POST /v1/memories` | Write. `content` is a string or a list of chat messages. `opts.user_id` or `opts.agent_id` says whose memory it is (Korely 1.0.19 and later refuse neither). `opts.timestamp` (ISO) backfills the past: facts inherit it as `valid_from`. With `opts.idempotency_key`, the same write sent again with the same key is made once (Korely 1.0.27 and later; an older server ignores it): one new key per write, the same one only to send that write again. The client never retries by itself. |
+| `add(content, opts?)` | `POST /v1/memories` | Write. `content` is a string or a list of chat messages. `opts.user_id` or `opts.agent_id` says whose memory it is (Korely 1.0.19 and later refuse neither). `opts.timestamp` (ISO) backfills the past: facts inherit it as `valid_from`. Every write carries an `Idempotency-Key` (`opts.idempotency_key`, else a new one), and one whose answer never came (a timeout, a failed connection) is sent once more with it, made once by Korely 1.0.27 and later (an older server ignores the key). No answer twice rejects with `KorelyError` `write_not_confirmed`, naming the key; `new Korely({ retryWrites: false })` sends once. |
 | `search(query, opts?)` | `POST /v1/memories/search` | Semantic search over memories; filter by `user_id`, `agent_id`, `run_id`, `metadata`; `min_score` (0 to 1) leaves out hits scored below it. `types: ["memories", "facts"]` searches the facts true now too (`["facts"]` them only), and each hit says its `type`, a fact's with its `fact`; `full_text: true` adds the whole text as `content` (`snippet` is its first 280 characters). Korely 1.0.13 and later; sent only when given. |
 | `getAll(opts?)` | `GET /v1/memories` | List a scope, newest first. The page is iterable; `limit` up to 200. |
 | `get(id)` | `GET /v1/memories/:id` | One memory, with its facts. |
@@ -147,7 +147,8 @@ and the `message` of the REST error envelope (`{code, message}`; a self-hosted
 install that answers FastAPI's `detail` is read the same way). The common
 statuses also have their own subclass.
 Everything subclasses `KorelyError`, which is also what a client-side problem
-throws (no key, a connection error, a timeout).
+throws (no key, a connection error or a timeout, with `code === "connection_error"`,
+and a write left without an answer after its retry, `write_not_confirmed`).
 
 ```ts
 import { Korely, APIError, QuotaExceededError } from "korely-memory";
@@ -179,7 +180,8 @@ of all of these, and everything else: 422, 503; a write that names neither
 later, and this client sends only the ids each call names). Every `APIError` has
 `retryAfter` when the server sent `Retry-After`: a rate limit, and the Cloud's
 503 `writes_paused` (writes that need a model are paused until 00:00 UTC). The
-SDK does not retry on its own.
+SDK does not retry these: its one retry is of a write that got no answer at
+all (see `add()`).
 
 A call that is not a `GET` (`add`, `update`, `delete`...) is never redirected:
 a 3xx rejects with an `APIError` of that status, its message naming the origin
@@ -194,6 +196,7 @@ new Korely({
   apiKey: "kor_live_...",  // or the KORELY_API_KEY env var
   region: "eu",             // the API, api.korely.ai: data stored in the EU
   timeoutMs: 30000,         // covers the whole request, response body included
+  retryWrites: true,        // a write with no answer is sent once more, same key
 });
 ```
 

@@ -1437,19 +1437,26 @@ test("the package's own examples, run as written, name the user in every write (
 // without a key it is made twice, with the same `idempotency_key` once
 // (Korely Agent 1.0.27). The header as draft-ietf-httpapi-idempotency-key-
 // header-08 section 2.1 wants it, a quoted String of RFC 9651.
-test("add and batch send the Idempotency-Key they are given, and none without", async () => {
+test("add and batch send the Idempotency-Key they are given, and a new one of their own without", async () => {
   const { k, f } = client([
     { status: 201, body: { id: "mem_1" } },
     { status: 202, body: { job_id: "job_1" } },
     { status: 201, body: { id: "mem_2" } },
     { status: 201, body: { id: "mem_3" } },
+    { status: 202, body: { job_id: "job_2" } },
+    { status: 201, body: { id: "mem_4" } },
   ]);
   await k.add("Ada prefers tea.", { user_id: "ada", idempotency_key: "3f2c9a" });
   await k.batch([{ content: "x", user_id: "ada" }], { idempotency_key: "b-1" });
   await k.add("Ada prefers tea.", { user_id: "ada" });
+  await k.add("Ada prefers tea.", { user_id: "ada" });
+  await k.batch([{ content: "x", user_id: "ada" }]);
   await k.add("x", { user_id: "ada", idempotency_key: 'a"b\\c' });
   const sent = f.calls.map((c) => c.init.headers["Idempotency-Key"]);
-  assert.deepEqual(sent, ['"3f2c9a"', '"b-1"', undefined, '"a\\"b\\\\c"']);
+  assert.deepEqual([sent[0], sent[1], sent[5]], ['"3f2c9a"', '"b-1"', '"a\\"b\\\\c"']);
+  // 0.2.2: a write given no key gets one of its own, a new one per write.
+  for (const own of sent.slice(2, 5)) assert.match(own, /^"[0-9a-f]{32}"$/);
+  assert.equal(new Set(sent.slice(2, 5)).size, 3);
 });
 
 test("a bad Idempotency-Key is a KorelyError and nothing is sent", async () => {
@@ -1466,4 +1473,154 @@ test("a bad Idempotency-Key is a KorelyError and nothing is sent", async () => {
   await k.add("x", { user_id: "ada", idempotency_key: "~".repeat(255) });
   await k.add("x", { user_id: "ada", idempotency_key: " spaced key " });
   assert.equal(f.calls.length, 2);
+});
+
+// 0.2.2. A write whose answer never came (a timeout, a connection that failed)
+// may have been made: the client sends it once more, after half a second,
+// with the same Idempotency-Key, which Korely 1.0.27 and later make once.
+// Never more than once, never a read, never a call the server answered. The
+// Stainless SDKs do the same for every call that is not a GET (openai-python
+// 3.58, _base_client.py: one key made before the first try, the same on each
+// retry). This fetch honours the key as the server's services/idempotency.py
+// does: the same key again answers what the first made, and makes nothing.
+// `fate(n)` says what happens to the n-th request: "answer", "lose" (made,
+// then the connection fails: the answer lost), "hang" (no answer until the
+// client gives up), "in_use" (the 409 of a key whose first request is still
+// being made) or a status answered with nothing made.
+function keyedFetch(fate = () => "answer") {
+  const seen = [];
+  const made = new Map();
+  let writes = 0;
+  const reply = (status, body, headers = {}) => ({
+    ok: status >= 200 && status < 300,
+    status,
+    async text() {
+      return JSON.stringify(body);
+    },
+    headers: { get: (k) => headers[k.toLowerCase()] ?? null },
+  });
+  const fn = async (url, init) => {
+    const key = init.headers["Idempotency-Key"];
+    seen.push({ method: init.method, path: new URL(url).pathname, key });
+    const what = fate(seen.length);
+    if (typeof what === "number") return reply(what, { code: "unavailable", message: "down" });
+    if (what === "hang") {
+      return new Promise((_resolve, reject) =>
+        init.signal.addEventListener("abort", () => reject(new Error("This operation was aborted"))));
+    }
+    if (what === "in_use") {
+      return reply(409, {
+        code: "idempotency_key_in_use",
+        message: "A request with this Idempotency-Key is still being made; retry it as it is.",
+      });
+    }
+    let status = 200;
+    let body = { context: "", tokens: 0, sources: [] };
+    const headers = {};
+    if (init.method === "POST") {
+      let id = key && made.get(key);
+      if (id) headers["idempotent-replayed"] = "true";
+      else {
+        id = `mem_${++writes}`;
+        if (key) made.set(key, id);
+      }
+      [status, body] = new URL(url).pathname === "/v1/memories"
+        ? [201, { id, content: "x", status: "processing" }]
+        : [202, { id, status: "queued", received: 1 }];
+    }
+    if (what === "lose") throw new TypeError("fetch failed");
+    return reply(status, body, headers);
+  };
+  fn.seen = seen;
+  fn.writes = () => writes;
+  fn.posts = () => seen.filter((s) => s.method === "POST");
+  return fn;
+}
+
+function keyedClient(fate, opts = {}) {
+  const f = keyedFetch(fate);
+  const k = new Korely({ apiKey: "kor_self_test", baseUrl: "https://api.test", fetch: f, timeoutMs: 50, ...opts });
+  return { k, f };
+}
+
+const loseTheFirst = (n) => (n === 1 ? "lose" : "answer");
+
+test("an answer lost after the write: one memory, no error, the same key twice", async () => {
+  const { k, f } = keyedClient(loseTheFirst);
+  const memory = await k.add("Ada prefers tea.", { user_id: "ada" });
+  assert.equal(memory.id, "mem_1");
+  assert.equal(f.writes(), 1);
+  const keys = f.posts().map((p) => p.key);
+  assert.equal(keys.length, 2);
+  assert.equal(keys[0], keys[1]);
+});
+
+test("a batch with its answer lost is made once too", async () => {
+  const { k, f } = keyedClient(loseTheFirst);
+  const job = await k.batch([{ content: "x", user_id: "ada" }]);
+  assert.deepEqual([job.id, f.writes(), f.posts().length], ["mem_1", 1, 2]);
+});
+
+test("no answer twice: after one retry, an error that says it may have been made and names the key", async () => {
+  const { k, f } = keyedClient(() => "hang");
+  await assert.rejects(k.add("Ada prefers tea.", { user_id: "ada" }), (e) => {
+    const key = f.posts()[0].key.replace(/"/g, "");
+    assert.ok(e instanceof KorelyError);
+    assert.equal(e.code, "write_not_confirmed");
+    assert.match(e.message, /may have been made/);
+    assert.ok(e.message.includes(key), e.message);
+    return true;
+  });
+  assert.equal(f.posts().length, 2);
+});
+
+test("a retry that finds the first still being made is not confirmed either", async () => {
+  const { k, f } = keyedClient((n) => (n === 1 ? "lose" : "in_use"));
+  await assert.rejects(k.add("x", { user_id: "ada" }), (e) => e.code === "write_not_confirmed");
+  assert.equal(f.posts().length, 2);
+});
+
+test("the caller's key is the one sent both times", async () => {
+  const { k, f } = keyedClient(loseTheFirst);
+  await k.add("Ada prefers tea.", { user_id: "ada", idempotency_key: "k-7" });
+  assert.deepEqual(f.posts().map((p) => p.key), ['"k-7"', '"k-7"']);
+  assert.equal(f.writes(), 1);
+});
+
+test("retryWrites: false sends a write once, and the error names the key", async () => {
+  const { k, f } = keyedClient(loseTheFirst, { retryWrites: false });
+  await assert.rejects(k.add("x", { user_id: "ada", idempotency_key: "k-8" }), (e) => {
+    assert.equal(e.code, "write_not_confirmed");
+    assert.ok(e.message.includes("k-8"), e.message);
+    return true;
+  });
+  assert.equal(f.posts().length, 1);
+});
+
+test("a read or a delete with no answer is never sent again", async () => {
+  const { k, f } = keyedClient(() => "lose");
+  await assert.rejects(k.getContext("where?", { user_id: "ada" }), (e) => e.code === "connection_error");
+  await assert.rejects(k.delete("mem_1"), KorelyError);
+  assert.deepEqual(f.seen.map((s) => s.method), ["GET", "DELETE"]);
+});
+
+test("a write the server answered is not sent again", async () => {
+  const { k, f } = keyedClient(() => 503);
+  await assert.rejects(k.add("x", { user_id: "ada" }), (e) => e.status === 503);
+  assert.equal(f.posts().length, 1);
+});
+
+test("without crypto.randomUUID (a page over plain http) a write still gets a key of its own", async () => {
+  const kept = Object.getOwnPropertyDescriptor(globalThis, "crypto");
+  Object.defineProperty(globalThis, "crypto", { value: {}, configurable: true, writable: true });
+  try {
+    const { k, f } = keyedClient(() => "answer");
+    await k.add("x", { user_id: "ada" });
+    await k.add("x", { user_id: "ada" });
+    const keys = f.posts().map((p) => p.key);
+    for (const key of keys) assert.match(key, /^"[0-9a-f]{32}"$/);
+    assert.notEqual(keys[0], keys[1]);
+  } finally {
+    Object.defineProperty(globalThis, "crypto", kept);
+  }
 });

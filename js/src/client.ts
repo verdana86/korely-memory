@@ -91,6 +91,14 @@ export interface KorelyOptions {
    * label no agent cap counts. Left out, the header names this library.
    */
   client?: string;
+  /**
+   * A write (`add`, `batch`) whose answer never came, a timeout or a
+   * connection that failed, is sent once more, after half a second, with the
+   * same Idempotency-Key, which Korely 1.0.27 and later make once. Default
+   * true; false sends every write once. Either way a write with no answer
+   * rejects with a KorelyError `write_not_confirmed` that names the key.
+   */
+  retryWrites?: boolean;
 }
 
 /** Where and how `Korely.initAgent()` signs up: the client options a call
@@ -106,7 +114,8 @@ export interface InitAgentOptions extends Pick<KorelyOptions, "region" | "baseUr
 
 // The options each method reads (options.ts): the compiler holds every list to
 // its type, and every method refuses a key that is not on its list.
-const CLIENT_KEYS = keysOf<KorelyOptions>()("apiKey", "region", "baseUrl", "timeoutMs", "fetch", "client");
+const CLIENT_KEYS = keysOf<KorelyOptions>()(
+  "apiKey", "region", "baseUrl", "timeoutMs", "fetch", "client", "retryWrites");
 const INIT_KEYS = keysOf<InitAgentOptions>()("region", "baseUrl", "timeoutMs", "fetch", "processingRegion");
 const ADD_KEYS = keysOf<AddOptions>()(
   "agent_id", "user_id", "run_id", "metadata", "timestamp", "kind", "idempotency_key",
@@ -121,6 +130,31 @@ const ADD_KEYS = keysOf<AddOptions>()(
  * to `~`. Anything else is refused here, before a request is sent, as a
  * KorelyError like every other failure of a call.
  */
+/**
+ * How long a write that got no answer waits before its one retry: the first
+ * retry delay of the Stainless-generated SDKs (openai-python 3.58,
+ * _constants.py, INITIAL_RETRY_DELAY = 0.5 s), which also retry with the same
+ * Idempotency-Key. One retry only, so no backoff to grow.
+ */
+const WRITE_RETRY_DELAY_MS = 500;
+
+/**
+ * The Idempotency-Key of a write the caller gave none: random, made once
+ * before the first try and sent again on the retry (`Korely.write`), 32 hex
+ * digits as the Python client makes it. Where `crypto.randomUUID` is missing
+ * (a browser page served over plain http, which is not a secure context),
+ * `Math.random` gives the digits: enough for a key that only has to differ
+ * from the project's other keys of the same day and is no secret (it does
+ * nothing without the API key).
+ */
+function newIdempotencyKey(): string {
+  const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+  if (c?.randomUUID) return c.randomUUID().replace(/-/g, "");
+  let key = "";
+  for (let i = 0; i < 32; i++) key += Math.floor(Math.random() * 16).toString(16);
+  return key;
+}
+
 function idempotencyHeader(key: string | undefined): Record<string, string> | undefined {
   if (key === undefined) return undefined;
   if (typeof key !== "string" || !/^[\x20-\x7e]{1,255}$/.test(key)) {
@@ -459,11 +493,15 @@ async function exchange(
     timedOut = true;
     controller.abort();
   }, t.timeoutMs);
+  // No answer, with the code that says so (`connection_error`): a write that
+  // ends here may have been made (`Korely.write`). A timeout is one of them,
+  // as openai-python's APITimeoutError is an APIConnectionError.
   const failed = (e: any): KorelyError =>
     new KorelyError(
       timedOut
         ? `Request timed out after ${t.timeoutMs} ms (${method} ${path}).`
         : `Connection error: ${e?.message ?? String(e)}`,
+      { code: "connection_error" },
     );
   let resp: Response;
   let text: string;
@@ -704,6 +742,8 @@ export class Korely {
   readonly baseUrl: string;
   readonly timeoutMs: number;
   readonly client?: string;
+  /** Whether a write that got no answer is sent once more with its key. */
+  readonly retryWrites: boolean;
   private readonly fetchImpl: typeof fetch;
 
   constructor(opts: KorelyOptions = {}) {
@@ -744,6 +784,7 @@ export class Korely {
     ).replace(/\/+$/, "");
     refuseAMismatchedPair(this.apiKey, this.baseUrl);
     this.timeoutMs = opts.timeoutMs ?? 30000;
+    this.retryWrites = opts.retryWrites ?? true;
     const f = opts.fetch ?? (globalThis.fetch as typeof fetch | undefined);
     if (!f) {
       throw new KorelyError(
@@ -818,6 +859,44 @@ export class Korely {
       { baseUrl: this.baseUrl, timeoutMs: this.timeoutMs, fetchImpl: this.fetchImpl, apiKey: this.apiKey,
         client: this.client },
       method, path, opts,
+    );
+  }
+
+  /**
+   * POST a write that creates (`add`, `batch`) with an Idempotency-Key: the
+   * caller's, else one made here, the same on both tries. A try with no
+   * answer (`connection_error`) may have been made, so it is sent once more
+   * after WRITE_RETRY_DELAY_MS, unless `retryWrites` is false; a retry
+   * answered 409 `idempotency_key_in_use` found the first still being made.
+   * Either outcome left unconfirmed rejects with KorelyError
+   * `write_not_confirmed`, naming the key. Never a third try, never a call
+   * the server answered otherwise, never a read. `how` is how a caller reads
+   * to look for it, for the message.
+   */
+  private async write(path: string, body: unknown, given: string | undefined, how: string): Promise<any> {
+    const key = given ?? newIdempotencyKey();
+    const headers = idempotencyHeader(key);
+    const tries = this.retryWrites ? 2 : 1;
+    const failed: KorelyError[] = [];
+    for (let attempt = 0; attempt < tries; attempt++) {
+      if (attempt) await new Promise((resolve) => setTimeout(resolve, WRITE_RETRY_DELAY_MS));
+      try {
+        return await this.request("POST", path, { body, headers });
+      } catch (e) {
+        const unconfirmed = e instanceof KorelyError &&
+          (e.code === "connection_error" || (attempt > 0 && e.code === "idempotency_key_in_use"));
+        if (!unconfirmed) throw e;
+        failed.push(e);
+      }
+    }
+    const what = tries > 1
+      ? failed.map((e) => e.message).join("; the retry with the same key: ")
+      : `${failed[0].message} (sent once: retryWrites is false)`;
+    throw new KorelyError(
+      `POST ${path} was not confirmed: ${what}. The write may have been made. Send it again ` +
+        `with the same Idempotency-Key, ${key}: Korely 1.0.27 and later make it at most once ` +
+        `within 24 hours. Or look for it first (${how}).`,
+      { code: "write_not_confirmed" },
     );
   }
 
@@ -1042,18 +1121,15 @@ export class Korely {
         "content is empty: pass a non-blank string or messages with content.",
       );
     }
-    return this.request("POST", "/v1/memories", {
-      body: {
-        content: text,
-        agent_id: opts.agent_id,
-        user_id: opts.user_id,
-        run_id: opts.run_id,
-        metadata: opts.metadata,
-        timestamp: opts.timestamp,
-        kind: opts.kind,
-      },
-      headers: idempotencyHeader(opts.idempotency_key),
-    });
+    return this.write("/v1/memories", {
+      content: text,
+      agent_id: opts.agent_id,
+      user_id: opts.user_id,
+      run_id: opts.run_id,
+      metadata: opts.metadata,
+      timestamp: opts.timestamp,
+      kind: opts.kind,
+    }, opts.idempotency_key, "getAll() or search()");
   }
 
   /**
@@ -1464,9 +1540,7 @@ export class Korely {
     memories: Array<BatchMemory | Record<string, unknown>>,
     opts: { idempotency_key?: string } = {},
   ): Promise<BatchJob> {
-    return this.request("POST", "/v1/batch", {
-      body: { memories }, headers: idempotencyHeader(opts.idempotency_key),
-    });
+    return this.write("/v1/batch", { memories }, opts.idempotency_key, "getAll() once the import has run");
   }
 
   /** GET /v1/batch/:id: poll an import job. */
