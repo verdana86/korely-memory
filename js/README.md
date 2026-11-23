@@ -148,7 +148,7 @@ install that answers FastAPI's `detail` is read the same way). The common
 statuses also have their own subclass.
 Everything subclasses `KorelyError`, which is also what a client-side problem
 throws (no key, a connection error or a timeout, with `code === "connection_error"`,
-and a write left without an answer after its retry, `write_not_confirmed`).
+and a write left unconfirmed after its retry, `write_not_confirmed`).
 
 ```ts
 import { Korely, APIError, QuotaExceededError } from "korely-memory";

@@ -515,9 +515,10 @@ class Korely:
         `retry_writes`: a write (`add`, `batch`) whose answer never came, a
         timeout or a connection that failed, is sent once more, after half a
         second, with the same Idempotency-Key, which Korely 1.0.27 and later
-        make once. False sends every write once. Either way a write with no
-        answer raises a KorelyError with code ``write_not_confirmed`` that
-        names the key to send it again with."""
+        make once; a retry that does not succeed (no answer again, a 5xx, a
+        429) leaves it unconfirmed. False sends every write once. Either way
+        a write left unconfirmed raises a KorelyError with code
+        ``write_not_confirmed`` that names the key to send it again with."""
         if profile and not api_key and not _key_from_config(profile):
             raise KorelyError(f"No key saved for the profile {profile!r}: run "
                               f"`korely init --api-key <key> --profile {profile}`.")
@@ -759,12 +760,15 @@ class Korely:
         """POST a write that creates (`add`, `batch`) with an Idempotency-Key:
         the caller's, else one made here, the same on both tries. A try with
         no answer (``connection_error``) may have been made, so it is sent
-        once more after WRITE_RETRY_DELAY, unless ``retry_writes`` is False;
-        a retry answered 409 ``idempotency_key_in_use`` found the first still
-        being made. Either outcome left unconfirmed raises KorelyError
-        ``write_not_confirmed``, naming the key. Never a third try, never a
-        call the server answered otherwise, never a read. ``how`` is how a
-        caller reads to look for it, for the message."""
+        once more after WRITE_RETRY_DELAY, unless ``retry_writes`` is False.
+        Only a success of the retry tells what became of the first try:
+        anything else it meets (no answer, a 409 ``idempotency_key_in_use``
+        for a first try still being made, a 5xx, a 429) leaves the write
+        unconfirmed, as does a first try with no answer and no retry. That
+        raises KorelyError ``write_not_confirmed``, naming the key and the
+        cause. Never a third try, never a first try the server answered,
+        never a read. ``how`` is how a caller reads to look for it, for the
+        message."""
         key = idempotency_key if idempotency_key is not None else _new_idempotency_key()
         headers = _idempotency_header(key)
         tries = 2 if self.retry_writes else 1
@@ -775,12 +779,12 @@ class Korely:
             try:
                 return self._call("POST", path, json_body=json_body, headers=headers)
             except KorelyError as e:
-                if not (e.code == "connection_error"
-                        or (attempt and e.code == "idempotency_key_in_use")):
+                if not attempt and e.code != "connection_error":
                     raise
                 failed.append(e)
-        what = ("; the retry with the same key: ".join(str(e) for e in failed) if tries > 1
-                else f"{failed[0]} (sent once: retry_writes is off)")
+        causes = [f"{e} (HTTP {e.status})" if e.status else str(e) for e in failed]
+        what = ("; the retry with the same key: ".join(causes) if tries > 1
+                else f"{causes[0]} (sent once: retry_writes is off)")
         raise KorelyError(
             f"POST {path} was not confirmed: {what}. The write may have been made. Send it "
             f"again with the same Idempotency-Key, {key}: Korely 1.0.27 and later make it "
@@ -1116,8 +1120,9 @@ class Korely:
         it). Without one the client makes one for this write (0.2.2). A write
         whose answer never came (a timeout, a connection that failed) may
         have been made: the client sends it once more with the same key
-        (``retry_writes``), and if that gets no answer either it raises
-        KorelyError ``write_not_confirmed``, naming the key. Pass your own key
+        (``retry_writes``), and if that does not succeed either (no answer,
+        a 5xx, a 429) it raises KorelyError ``write_not_confirmed``, naming
+        the key and the cause. Pass your own key
         to send the write again later yourself: one new key per write, the
         same one only to send that write again."""
         text = _coerce_content(content)

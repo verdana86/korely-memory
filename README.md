@@ -108,8 +108,10 @@ connection) is sent once more, after half a second, with the same key. Korely
 only these two writes: a read, a delete or a call the server answered (a 4xx,
 a 5xx) is never sent again by the client.
 
-If the second try gets no answer either, the call raises `KorelyError` with
-`code == "write_not_confirmed"`, and its message names the key. The write may
+If the second try does not succeed either (no answer again, or any answer
+that is not a success: a 5xx, a 429, a 409 for a first try still being made),
+the call raises `KorelyError` with `code == "write_not_confirmed"`, and its
+message names the key and the cause. The write may
 have been made: send it again with that key (made at most once within 24
 hours) or look for it first. To send it again later yourself, pass your own
 key:

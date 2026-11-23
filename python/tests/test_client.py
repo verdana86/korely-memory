@@ -2781,6 +2781,26 @@ class AWriteWithNoAnswerIsSentOnceMoreWithItsKey(unittest.TestCase):
         self.assertEqual(caught.exception.code, "write_not_confirmed")
         self.assertEqual(len(server.posts()), 2)
 
+    def test_a_retry_that_fails_any_other_way_leaves_the_write_unconfirmed(self):
+        # The first try was made and its answer lost. Only a success of the
+        # retry says so: a 5xx, a 429 or a timeout of the retry tell nothing
+        # of the first, so each is write_not_confirmed, with the key and the
+        # cause, never the bare 503 that read as "not made". Until 2026-11-23
+        # these raised the retry's own error.
+        for fate in (503, 502, 429, "hang"):
+            with self.subTest(retry=fate):
+                server = self._server(lambda n, fate=fate: "lose" if n == 1 else fate)
+                with self.assertRaises(KorelyError) as caught:
+                    self._korely(server).add("Ada prefers tea.", user_id="ada")
+                e = caught.exception
+                key = server.posts()[0][2].strip('"')
+                self.assertEqual((e.code, len(server.posts()), server.writes),
+                                 ("write_not_confirmed", 2, 1))
+                self.assertIn("may have been made", str(e))
+                self.assertIn(key, str(e))
+                self.assertIn(f"HTTP {fate}" if isinstance(fate, int) else "timed out", str(e))
+                self.assertEqual(e.__cause__.status, fate if isinstance(fate, int) else None)
+
     def test_the_callers_key_is_the_one_sent_both_times(self):
         server = self._server(lambda n: "lose" if n == 1 else "answer")
         self._korely(server).add("Ada prefers tea.", user_id="ada", idempotency_key="k-7")

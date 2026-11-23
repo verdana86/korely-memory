@@ -35,10 +35,12 @@ and Korely 1.0.27 and later make it once and answer what the first try made.
 A lost answer after the write is now one memory and no error, where 0.2.1
 raised and a retry of the caller's own, without a key, made a second memory.
 Once only, and only these two writes: a read, a delete or a call the server
-answered (a 4xx, a 5xx) is never sent again. If the second try gets no answer
-either, the call raises `KorelyError` with `code` `write_not_confirmed`,
-whose message says the write may have been made and names the key to send it
-again with (made at most once within 24 hours). A connection error or a
+answered (a 4xx, a 5xx) is never sent again. If the second try does not
+succeed either (no answer again, or any answer that is not a success: a 5xx, a
+429, a 409 for a first try still being made), the call raises `KorelyError`
+with `code` `write_not_confirmed`, whose message says the write may have been
+made and names the key to send it again with (made at most once within 24
+hours) and the cause. A connection error or a
 timeout of any call now has `code` `connection_error` (it had none). To send
 every write once, as 0.2.1 did: `Korely(retry_writes=False)` in Python,
 `new Korely({ retryWrites: false })` in npm, `--no-retry` in the CLI. A server
@@ -73,8 +75,10 @@ own, so against such a server turn the retry off.
 - `add()` and `batch()` send the key and make the one retry, and so do the
   turns `withKorelyMemory()` stores and the `addMemory` tool of
   `korelyTools()`. The client option `retryWrites` (default true). The key a
-  write makes itself is 32 hex digits, from `crypto.randomUUID()`, or from
-  `Math.random()` where that is missing (a browser page over plain http).
+  write makes itself is 32 hex digits, from `crypto.randomUUID()`; where
+  that is missing (a browser page over plain http) from
+  `crypto.getRandomValues()`, and from `Math.random()` only where neither
+  exists.
 
 ## Python 0.2.1, npm 0.2.1 (2026-11-16)
 

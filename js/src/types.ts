@@ -490,9 +490,9 @@ export interface AddOptions {
    * 1.0.27 and later; an older server ignores it). Without one the client
    * makes one for this write (0.2.2). A write whose answer never came (a
    * timeout, a connection that failed) may have been made: the client sends
-   * it once more with the same key (`retryWrites`), and if that gets no
-   * answer either it rejects with KorelyError `write_not_confirmed`, naming
-   * the key. Pass your own key to send the write again later yourself: one
+   * it once more with the same key (`retryWrites`), and if that does not
+   * succeed either (no answer, a 5xx, a 429) it rejects with KorelyError
+   * `write_not_confirmed`, naming the key and the cause. Pass your own key to send the write again later yourself: one
    * new key per write, the same one only to send that write again.
    */
   idempotency_key?: string;

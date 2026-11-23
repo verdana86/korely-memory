@@ -1580,6 +1580,27 @@ test("a retry that finds the first still being made is not confirmed either", as
   assert.equal(f.posts().length, 2);
 });
 
+test("a retry that fails any other way (5xx, 429, timeout) leaves the write unconfirmed", async () => {
+  // The first try was made and its answer lost. Only a success of the retry
+  // says so: a 5xx, a 429 or a timeout of the retry tell nothing of the
+  // first, so each is write_not_confirmed, with the key and the cause, never
+  // the bare 503 that read as "not made". Until 2026-11-23 these rejected
+  // with the retry's own error.
+  for (const fate of [503, 502, 429, "hang"]) {
+    const { k, f } = keyedClient((n) => (n === 1 ? "lose" : fate));
+    await assert.rejects(k.add("Ada prefers tea.", { user_id: "ada" }), (e) => {
+      const key = f.posts()[0].key.replace(/"/g, "");
+      assert.ok(e instanceof KorelyError && !(e instanceof APIError), String(fate));
+      assert.equal(e.code, "write_not_confirmed", String(fate));
+      assert.match(e.message, /may have been made/);
+      assert.ok(e.message.includes(key), e.message);
+      assert.ok(e.message.includes(typeof fate === "number" ? `HTTP ${fate}` : "timed out"), e.message);
+      return true;
+    });
+    assert.deepEqual([f.posts().length, f.writes()], [2, 1], String(fate));
+  }
+});
+
 test("the caller's key is the one sent both times", async () => {
   const { k, f } = keyedClient(loseTheFirst);
   await k.add("Ada prefers tea.", { user_id: "ada", idempotency_key: "k-7" });
@@ -1611,15 +1632,23 @@ test("a write the server answered is not sent again", async () => {
 });
 
 test("without crypto.randomUUID (a page over plain http) a write still gets a key of its own", async () => {
+  // Such a page still has crypto.getRandomValues, and the key comes from it;
+  // Math.random only where there is no crypto at all.
   const kept = Object.getOwnPropertyDescriptor(globalThis, "crypto");
-  Object.defineProperty(globalThis, "crypto", { value: {}, configurable: true, writable: true });
+  const real = kept.get ? kept.get.call(globalThis) : kept.value;
+  let drawn = 0;
+  const onlyValues = { getRandomValues: (a) => (drawn++, real.getRandomValues(a)) };
   try {
-    const { k, f } = keyedClient(() => "answer");
-    await k.add("x", { user_id: "ada" });
-    await k.add("x", { user_id: "ada" });
-    const keys = f.posts().map((p) => p.key);
-    for (const key of keys) assert.match(key, /^"[0-9a-f]{32}"$/);
-    assert.notEqual(keys[0], keys[1]);
+    for (const crypto of [onlyValues, {}]) {
+      Object.defineProperty(globalThis, "crypto", { value: crypto, configurable: true, writable: true });
+      const { k, f } = keyedClient(() => "answer");
+      await k.add("x", { user_id: "ada" });
+      await k.add("x", { user_id: "ada" });
+      const keys = f.posts().map((p) => p.key);
+      for (const key of keys) assert.match(key, /^"[0-9a-f]{32}"$/);
+      assert.notEqual(keys[0], keys[1]);
+    }
+    assert.equal(drawn, 2);
   } finally {
     Object.defineProperty(globalThis, "crypto", kept);
   }

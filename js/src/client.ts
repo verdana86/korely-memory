@@ -95,8 +95,10 @@ export interface KorelyOptions {
    * A write (`add`, `batch`) whose answer never came, a timeout or a
    * connection that failed, is sent once more, after half a second, with the
    * same Idempotency-Key, which Korely 1.0.27 and later make once. Default
-   * true; false sends every write once. Either way a write with no answer
-   * rejects with a KorelyError `write_not_confirmed` that names the key.
+   * true; false sends every write once. A retry that does not succeed (no
+   * answer again, a 5xx, a 429) leaves it unconfirmed. Either way a write left
+   * unconfirmed rejects with a KorelyError `write_not_confirmed` that names
+   * the key.
    */
   retryWrites?: boolean;
 }
@@ -143,16 +145,20 @@ const WRITE_RETRY_DELAY_MS = 500;
  * before the first try and sent again on the retry (`Korely.write`), 32 hex
  * digits as the Python client makes it. Where `crypto.randomUUID` is missing
  * (a browser page served over plain http, which is not a secure context),
- * `Math.random` gives the digits: enough for a key that only has to differ
- * from the project's other keys of the same day and is no secret (it does
- * nothing without the API key).
+ * `crypto.getRandomValues`, which such a page still has, gives the 16 bytes;
+ * `Math.random` only where neither exists: enough for a key that only has to
+ * differ from the project's other keys of the same day and is no secret (it
+ * does nothing without the API key).
  */
 function newIdempotencyKey(): string {
-  const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+  const c = (globalThis as {
+    crypto?: { randomUUID?: () => string; getRandomValues?: (a: Uint8Array) => Uint8Array };
+  }).crypto;
   if (c?.randomUUID) return c.randomUUID().replace(/-/g, "");
-  let key = "";
-  for (let i = 0; i < 32; i++) key += Math.floor(Math.random() * 16).toString(16);
-  return key;
+  const bytes = new Uint8Array(16);
+  if (c?.getRandomValues) c.getRandomValues(bytes);
+  else for (let i = 0; i < bytes.length; i++) bytes[i] = Math.floor(Math.random() * 256);
+  return Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 function idempotencyHeader(key: string | undefined): Record<string, string> | undefined {
@@ -866,12 +872,14 @@ export class Korely {
    * POST a write that creates (`add`, `batch`) with an Idempotency-Key: the
    * caller's, else one made here, the same on both tries. A try with no
    * answer (`connection_error`) may have been made, so it is sent once more
-   * after WRITE_RETRY_DELAY_MS, unless `retryWrites` is false; a retry
-   * answered 409 `idempotency_key_in_use` found the first still being made.
-   * Either outcome left unconfirmed rejects with KorelyError
-   * `write_not_confirmed`, naming the key. Never a third try, never a call
-   * the server answered otherwise, never a read. `how` is how a caller reads
-   * to look for it, for the message.
+   * after WRITE_RETRY_DELAY_MS, unless `retryWrites` is false. Only a
+   * success of the retry tells what became of the first try: anything else it
+   * meets (no answer, a 409 `idempotency_key_in_use` for a first try still
+   * being made, a 5xx, a 429) leaves the write unconfirmed, as does a first
+   * try with no answer and no retry. That rejects with KorelyError
+   * `write_not_confirmed`, naming the key and the cause. Never a third try,
+   * never a first try the server answered, never a read. `how` is how a
+   * caller reads to look for it, for the message.
    */
   private async write(path: string, body: unknown, given: string | undefined, how: string): Promise<any> {
     const key = given ?? newIdempotencyKey();
@@ -883,15 +891,14 @@ export class Korely {
       try {
         return await this.request("POST", path, { body, headers });
       } catch (e) {
-        const unconfirmed = e instanceof KorelyError &&
-          (e.code === "connection_error" || (attempt > 0 && e.code === "idempotency_key_in_use"));
-        if (!unconfirmed) throw e;
+        if (!(e instanceof KorelyError) || (attempt === 0 && e.code !== "connection_error")) throw e;
         failed.push(e);
       }
     }
+    const causes = failed.map((e) => (e.status ? `${e.message} (HTTP ${e.status})` : e.message));
     const what = tries > 1
-      ? failed.map((e) => e.message).join("; the retry with the same key: ")
-      : `${failed[0].message} (sent once: retryWrites is false)`;
+      ? causes.join("; the retry with the same key: ")
+      : `${causes[0]} (sent once: retryWrites is false)`;
     throw new KorelyError(
       `POST ${path} was not confirmed: ${what}. The write may have been made. Send it again ` +
         `with the same Idempotency-Key, ${key}: Korely 1.0.27 and later make it at most once ` +
