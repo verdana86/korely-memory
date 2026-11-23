@@ -260,6 +260,23 @@ class TestFactsContextBatch(unittest.TestCase):
         self.assertEqual(ctx.tokens, 642)
         self.assertEqual(ctx.sources, ["fct_b91e", "mem_8f2c1a"])
 
+    def test_a_read_that_names_no_budget_asks_for_the_apis_1500(self):
+        """Korely 1.0.35 packs the block into 1,500 tokens when a read names
+        no budget (the server's services/context.py, DEFAULT_TOKEN_BUDGET).
+        The client names one on every read, so its default must be the API's:
+        0.2.1 sent 800 and kept the old, smaller block after the server moved."""
+        import asyncio
+
+        from korely_memory import AsyncKorely
+
+        rec = _Recorder().queue(200, {"context": "", "tokens": 0, "sources": []})
+        _client(rec).get_context("where does Maria live?", user_id="maria")
+        self.assertEqual(rec.last["params"]["token_budget"], 1500)
+        ak = AsyncKorely(api_key="kor_live_test")
+        ak._sync._send = rec
+        asyncio.run(ak.get_context("where does Maria live?", user_id="maria"))
+        self.assertEqual(rec.last["params"]["token_budget"], 1500)
+
     def test_batch_and_status(self):
         rec = _Recorder().queue(202, {"id": "job_1", "status": "processing", "received": 2})
         job = _client(rec).batch([{"content": "a", "user_id": "c1"}, {"content": "b"}])

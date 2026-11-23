@@ -38,11 +38,11 @@ korely.add("Maria moved to Milan", user_id="maria")
 for hit in korely.search("where does Maria live", user_id="maria", limit=5):
     print(hit.id, hit.score, hit.snippet)
 
-# One-call, prompt-ready context for your LLM. Its "Known facts" are the
-# current ones, so the Rome fact, once superseded, is not among them.
+# One-call, prompt-ready context for your LLM, within token_budget (1,500
+# tokens unless you pass another, the API's own default). Its "Known facts" are
+# the current ones, so the Rome fact, once superseded, is not among them.
 # (Facts are extracted a few seconds after each write on the hosted service.)
-ctx = korely.get_context("where should I send the package?", user_id="maria",
-                         token_budget=800)
+ctx = korely.get_context("where should I send the package?", user_id="maria")
 messages = [{"role": "system", "content": f"You are helpful.\n\n{ctx.context}"}]
 ```
 
@@ -381,11 +381,11 @@ package keeps zero dependencies.
 
 `korely_context(client, user_id, query)` makes one `GET /v1/context` call and
 returns the text for a `SystemMessage`: the user's current facts and the
-memories relevant to the question, within `token_budget`, under a
-`Current date: YYYY-MM-DD` line. In our measurements the model answers better
-when its prompt carries the date; `include_date=False` leaves it out and
-`today=` sets it. Write each turn back with `add()`, and the next turn finds
-it, on any thread.
+memories relevant to the question, within `token_budget` (1,500 tokens by
+default, the API's own), under a `Current date: YYYY-MM-DD` line. In our
+measurements the model answers better when its prompt carries the date;
+`include_date=False` leaves it out and `today=` sets it. Write each turn back
+with `add()`, and the next turn finds it, on any thread.
 
 ```python
 from dataclasses import dataclass
@@ -411,7 +411,7 @@ class Context:
 def call_model(state: MessagesState, runtime: Runtime[Context]):
     user_id = runtime.context.user_id
     question = state["messages"][-1].text
-    memory = korely_context(korely, user_id, question, token_budget=800)
+    memory = korely_context(korely, user_id, question)
     reply = model.invoke([SystemMessage(memory), *state["messages"]])
     korely.add([{"role": "user", "content": question},
                 {"role": "assistant", "content": reply.text}], user_id=user_id)

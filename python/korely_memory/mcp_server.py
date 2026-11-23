@@ -38,7 +38,7 @@ from __future__ import annotations
 import os
 from typing import Optional
 
-from .client import Korely, saved_identity
+from .client import DEFAULT_TOKEN_BUDGET, Korely, saved_identity
 from .exceptions import KorelyError
 
 # The protocol, standard library only (_mcp_stdio.py): the `mcp` package needs
@@ -205,7 +205,8 @@ def _fact_line(f) -> str:
 
 @mcp.tool()
 def korely_get_context(query: str, user_id: Optional[str] = None,
-                       token_budget: int = 800, known_as_of: Optional[str] = None) -> str:
+                       token_budget: int = DEFAULT_TOKEN_BUDGET,
+                       known_as_of: Optional[str] = None) -> str:
     """Recall what Korely knows for one end user, assembled into a prompt-ready block.
 
     THE primary recall path: call this before answering so the assistant has the

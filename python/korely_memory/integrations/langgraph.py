@@ -46,7 +46,7 @@ except ImportError as exc:  # pragma: no cover - exercised in a subprocess
     ) from exc
 
 from ..aio import AsyncKorely
-from ..client import Korely
+from ..client import DEFAULT_TOKEN_BUDGET, Korely
 from ..exceptions import KorelyError, NotFoundError
 from ..models import Memory
 
@@ -134,7 +134,7 @@ def korely_context(
     user_id: str,
     query: Optional[str],
     *,
-    token_budget: int = 800,
+    token_budget: int = DEFAULT_TOKEN_BUDGET,
     include_date: bool = True,
     agent_id: Optional[str] = None,
     today: Optional[date] = None,
@@ -142,7 +142,8 @@ def korely_context(
     """The text a graph node prepends as a SystemMessage before the model answers.
 
     One ``GET /v1/context``: the user's current facts and the memories most
-    relevant to ``query``, packed under ``token_budget`` tokens (50 to 8000),
+    relevant to ``query``, packed under ``token_budget`` tokens (50 to 8000;
+    1,500 by default, the API's own default since Korely 1.0.35),
     with ``Current date: YYYY-MM-DD`` on top. The date is there by default
     because the reader answers better when its prompt carries it: "since
     2026-05-12" means something only next to today. ``today`` overrides it
@@ -166,7 +167,7 @@ async def akorely_context(
     user_id: str,
     query: Optional[str],
     *,
-    token_budget: int = 800,
+    token_budget: int = DEFAULT_TOKEN_BUDGET,
     include_date: bool = True,
     agent_id: Optional[str] = None,
     today: Optional[date] = None,
@@ -222,7 +223,7 @@ def create_korely_tools(
     user_id: str,
     agent_id: Optional[str] = None,
     *,
-    token_budget: int = 800,
+    token_budget: int = DEFAULT_TOKEN_BUDGET,
     include_date: bool = True,
 ) -> List[BaseTool]:
     """``[search_memory, save_memory]``, bound to one end user.

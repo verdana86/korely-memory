@@ -224,6 +224,9 @@ class TheProtocol(unittest.TestCase):
         self.assertEqual(
             tools["korely_get_context"]["inputSchema"]["properties"]["known_as_of"]["type"],
             ["string", "null"])
+        # The default the agent sees, and gets, is the API's (Korely 1.0.35).
+        self.assertEqual(tools["korely_get_context"]["inputSchema"]["properties"]["token_budget"],
+                         {"type": "integer", "default": 1500})
         self.assertEqual(tools["korely_search"]["inputSchema"]["required"], ["query"])
         self.assertTrue(tools["korely_get_context"]["description"])
 

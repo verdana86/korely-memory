@@ -222,6 +222,8 @@ test("the finished turn is stored as one memory, without holding up the call", a
     prompt: "Email me, never Slack.",
   });
 
+  // No tokenBudget given: the read asks for the API's default (Korely 1.0.35).
+  assert.equal(k.reads()[0].query.token_budget, "1500");
   // The reply is back while the server has not answered the write yet.
   assert.equal(result.text, "I'll email you from now on.");
   assert.equal(keep.list.length, 1);
@@ -814,7 +816,8 @@ test("the model cannot pick whose memory the tools read or write", async () => {
     query: "contact preference",
     user_id: "maria",
     agent_id: "support",
-    token_budget: "800",
+    // No tokenBudget given: the API's default (Korely 1.0.35), not 0.2.1's 800.
+    token_budget: "1500",
   });
   assert.equal(k.writes().length, 1);
   assert.deepEqual(k.writes()[0].body, {

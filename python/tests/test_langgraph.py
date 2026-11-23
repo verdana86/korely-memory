@@ -725,6 +725,17 @@ class TheContextHelper(unittest.TestCase):
                 self.assertEqual(text, "Current date: 2026-10-05\n\nctx")
         self.assertEqual(len(fake.requests("GET", "/v1/context")), 2)
 
+    def test_a_read_that_names_no_budget_asks_for_the_apis_1500(self):
+        """The helpers and the search tool name a budget on every read: the
+        API's default (Korely 1.0.35), not the 800 of 0.2.1."""
+        fake = FakeKorely(context="ctx")
+        korely_context(_client(fake), "maria", "q")
+        asyncio.run(akorely_context(_async_client(fake), "maria", "q"))
+        search, _ = create_korely_tools(_client(fake), "maria")
+        search.invoke({"query": "q"})
+        reads = fake.requests("GET", "/v1/context")
+        self.assertEqual([r[2]["token_budget"] for r in reads], [1500, 1500, 1500])
+
 
 # ── the tools ──────────────────────────────────────────────────────────────
 
@@ -831,7 +842,7 @@ class TheReadmeExampleRuns(unittest.TestCase):
         def call_model(state: MessagesState, runtime: Runtime[Context]):
             user_id = runtime.context.user_id
             question = state["messages"][-1].text
-            memory = korely_context(korely, user_id, question, token_budget=800)
+            memory = korely_context(korely, user_id, question)
             reply = model.invoke([SystemMessage(memory), *state["messages"]])
             korely.add([{"role": "user", "content": question},
                         {"role": "assistant", "content": reply.text}], user_id=user_id)

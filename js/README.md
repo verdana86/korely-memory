@@ -76,7 +76,7 @@ than `contextTimeoutMs` (5 s) to answer, the call goes on without memory,
 `onError` is told, and an answer that arrives later is dropped.
 
 Options: `userId` (required), `agentId`, `runId`, `client` (a configured
-`Korely`, default `new Korely()`), `tokenBudget` (800), `contextTimeoutMs`
+`Korely`, default `new Korely()`), `tokenBudget` (1500, the API's own default), `contextTimeoutMs`
 (5000; 0 waits for the client's own 30 s), `includeDate` (true), `timeZone`
 ("UTC"), `remember` (true), `waitUntil`, `onError`.
 

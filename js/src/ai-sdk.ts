@@ -26,7 +26,7 @@ import { gateway, jsonSchema, tool, wrapLanguageModel } from "ai";
 import type { LanguageModel, LanguageModelMiddleware, Tool } from "ai";
 import { Korely, KorelyError } from "korely-memory";
 import type { Context } from "korely-memory";
-import { keysOf, unknownOption } from "./options.js";
+import { DEFAULT_TOKEN_BUDGET, keysOf, unknownOption } from "./options.js";
 
 // ── what the API accepts ────────────────────────────────────────────────────
 // GET /v1/context and POST /v1/memories/search answer 422 to a query longer
@@ -39,8 +39,6 @@ const CONTENT_MAX = 16000;
 const USER_MAX = 6000;
 /** "user: " and "\nassistant: ", which `add()` puts around the two messages. */
 const TURN_OVERHEAD = 18;
-/** The API's own default for `token_budget`. */
-const DEFAULT_TOKEN_BUDGET = 800;
 /**
  * How long the context of one turn is reused. A tool loop calls the model once
  * per step with the same latest user message: one read per turn instead of one
@@ -95,7 +93,7 @@ export interface KorelyToolsOptions {
   runId?: string;
   /** The client to use. Default: `new Korely()`, configured from the environment (KORELY_API_KEY, KORELY_BASE_URL). */
   client?: Korely;
-  /** Token budget of the context block (`token_budget`). Default 800, the API's default. */
+  /** Token budget of the context block (`token_budget`). Default 1500, the API's default since Korely 1.0.35. */
   tokenBudget?: number;
   /** Add a "Current date: YYYY-MM-DD" line. Default true: the reader answers better when its prompt carries the date. */
   includeDate?: boolean;

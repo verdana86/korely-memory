@@ -19,7 +19,7 @@ import {
   StaleWriteError,
   TooManyBatchesError,
 } from "./errors.js";
-import { keysOf, unknownOption } from "./options.js";
+import { DEFAULT_TOKEN_BUDGET, keysOf, unknownOption } from "./options.js";
 import type {
   AccountDeleteReceipt,
   AddFactTripleOptions,
@@ -1404,7 +1404,7 @@ export class Korely {
         query: o.query,
         user_id: o.user_id,
         agent_id: o.agent_id,
-        token_budget: o.token_budget ?? 800,
+        token_budget: o.token_budget ?? DEFAULT_TOKEN_BUDGET,
         known_as_of: o.known_as_of,
         exclude_sessions: o.exclude_sessions ? "true" : undefined,
       },

@@ -43,3 +43,13 @@ export function unknownOption(method: string, opts: unknown, known: readonly str
   }
   return undefined;
 }
+
+/**
+ * The token budget of the context block when the caller names none: the API's
+ * own default (DEFAULT_TOKEN_BUDGET in the server's services/context.py, 1500
+ * since Korely 1.0.35). Every read of the block in this package names a
+ * budget, so each takes it from here: `getContext` and the AI SDK entry
+ * (`withKorelyMemory`, `korelyTools`). Until 0.2.1 each had its own 800 and
+ * kept it after the server moved.
+ */
+export const DEFAULT_TOKEN_BUDGET = 1500;

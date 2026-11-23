@@ -664,6 +664,7 @@ export interface GetContextOptions {
   query: string;
   user_id?: string;
   agent_id?: string;
+  /** 50 to 8000 tokens. Default 1500, the API's default since Korely 1.0.35. */
   token_budget?: number;
   /**
    * ISO date: the block as the store could have built it then, the facts it

@@ -63,6 +63,13 @@ _REGIONS = {"eu": "https://api.korely.ai"}
 # The header with which every answer to a key that expires says when
 # (Korely 1.0.23 and later).
 KEY_EXPIRES_HEADER = "Korely-Key-Expires-At"
+# The token budget of the context block when the caller names none: the API's
+# own default (DEFAULT_TOKEN_BUDGET in the server's services/context.py, 1,500
+# since Korely 1.0.35). Every read of the block in this package names a budget,
+# so each takes it from here: the client, the CLI, the local MCP server and the
+# LangGraph helpers. Until 0.2.1 each had its own 800 and kept it after the
+# server moved.
+DEFAULT_TOKEN_BUDGET = 1500
 
 
 def _clean(d: dict) -> dict:
@@ -1429,11 +1436,14 @@ class Korely:
 
     # ── context ──────────────────────────────────────────────────────────────
     def get_context(self, query: Optional[str] = None, *, user_id: Optional[str] = None,
-                    agent_id: Optional[str] = None, token_budget: int = 800,
+                    agent_id: Optional[str] = None,
+                    token_budget: int = DEFAULT_TOKEN_BUDGET,
                     known_as_of: Optional[str] = None,
                     exclude_sessions: bool = False) -> Context:
         """GET /v1/context: one call that assembles a prompt-ready context
-        block (profile + relevant facts + memories) within a token budget.
+        block (profile + relevant facts + memories) within a token budget:
+        ``token_budget``, 50 to 8000, 1,500 by default (``DEFAULT_TOKEN_BUDGET``,
+        the API's own default since Korely 1.0.35).
 
         ``query`` by position or by name: ``get_context("...", user_id=...)``
         is how the docs write it, and it raised TypeError until 2026-09-29.

@@ -495,6 +495,17 @@ class TestLaConformitaDel29Set(unittest.TestCase):
         self.assertEqual(ctx.context, "ok")
         self.assertEqual(rec.last["params"]["query"], "What's the latest?")
 
+    def test_context_without_a_budget_asks_for_the_apis_1500(self):
+        """`korely context` names a budget on every read: without
+        --token-budget it is the API's default (Korely 1.0.35), not 800."""
+        rec = _Recorder().queue(200, {"context": "ok", "tokens": 1, "sources": []})
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            cli.cmd_context(_client(rec), _args(["context", "What's the latest?"]))
+        self.assertEqual(rec.last["params"]["token_budget"], 1500)
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            cli.cmd_context(_client(rec), _args(["context", "x", "--token-budget", "600"]))
+        self.assertEqual(rec.last["params"]["token_budget"], 600)
+
 
 class InitSignsUpThroughTheSdk(_CleanEnv):
     """`korely init --agent` makes the SDK's call (Korely.init_agent) instead

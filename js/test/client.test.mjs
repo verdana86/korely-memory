@@ -655,6 +655,21 @@ test("getContext takes a bare query string (the Vercel AI SDK example, 2026-09-2
   await assert.rejects(() => k.getContext(""), KorelyError);
 });
 
+test("a read that names no budget asks for the API's 1500 (Korely 1.0.35)", async () => {
+  // The client names a budget on every read, so its default must be the
+  // API's (the server's services/context.py, DEFAULT_TOKEN_BUDGET): 0.2.1
+  // sent 800 and kept the old, smaller block after the server moved.
+  const ok = { status: 200, body: { context: "ok", tokens: 1, sources: [] } };
+  const { k, f } = client([ok, ok, ok]);
+  await k.getContext("latest on the renewal");
+  await k.getContext({ query: "latest", user_id: "acme" });
+  await k.getContext("latest", { token_budget: 600 });
+  assert.deepEqual(
+    f.calls.map((c) => new URL(c.url).searchParams.get("token_budget")),
+    ["1500", "1500", "600"],
+  );
+});
+
 
 test("an id that is not a string never reaches the server", async () => {
   // A function or an object went out as the path through String():

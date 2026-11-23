@@ -25,8 +25,8 @@ from typing import Any, List, Optional
 
 from . import __version__
 from ._files import read_config, write_private
-from .client import (Korely, _refuse_a_mismatched_pair, config_path, profile_config,
-                     saved_identity)
+from .client import (DEFAULT_TOKEN_BUDGET, Korely, _refuse_a_mismatched_pair, config_path,
+                     profile_config, saved_identity)
 from .exceptions import APIError, KorelyError
 
 _DEFAULT_BASE = "https://api.korely.ai"
@@ -1512,7 +1512,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("context", parents=both,
                         help="assembled, prompt-ready context block (the agent call)")
     sp.add_argument("query")
-    sp.add_argument("--token-budget", type=int, default=800)
+    sp.add_argument("--token-budget", type=int, default=DEFAULT_TOKEN_BUDGET)
     sp.add_argument("--known-as-of", help="ISO date: the block as Korely knew it then")
     sp.add_argument("--exclude-sessions", action="store_true",
                     help="leave out the work sessions and what only they stated")
