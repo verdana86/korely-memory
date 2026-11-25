@@ -8,10 +8,9 @@ The server side of the entries marked "API" shipped on 2026-09-28. Against an
 older server these clients keep working: the old field names are still read,
 and a batch `timestamp` is refused there with a 422.
 
-## Python 0.3.0, npm 0.3.0 (Unreleased, proposed)
+## Python 0.3.0, npm 0.3.0 (2026-11-25)
 
-A minor version, not a patch, because one change breaks code that worked:
-the publication and the number are the founder's to decide.
+A minor version, not a patch, because one change breaks code that worked.
 
 **Breaking: a `region` other than `"eu"` is refused**, in both clients, as a
 wrong `processing_region` already was: `Korely(region=...)`, `AsyncKorely`,

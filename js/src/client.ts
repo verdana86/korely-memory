@@ -65,7 +65,7 @@ import type {
 
 /** Must equal `version` in package.json (a test checks). It goes out in the
  *  X-Korely-Client header, and said 0.1.1 from 0.1.1 to 0.1.6. */
-export const VERSION = "0.2.2";
+export const VERSION = "0.3.0";
 
 const REGIONS: Record<string, string> = { eu: "https://api.korely.ai" };
 
