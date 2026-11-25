@@ -1204,6 +1204,28 @@ test("Korely.initAgent() signs up with no key: POST /v1/agents/init, no Authoriz
   }
 });
 
+test("an unknown region is refused, never turned into eu in silence", async () => {
+  // Up to 0.2.2 any region but "eu" fell back to "eu": region "global", the
+  // name of a processing region, looked chosen and changed nothing (finding
+  // of 25 Nov 2026). Refused as a wrong processingRegion is, before sending.
+  for (const wrong of ["global", "EU", "us", "", 1, "constructor", "toString"]) {
+    assert.throws(
+      () => new Korely({ apiKey: "kor_self_test", region: wrong, fetch: async () => ({}) }),
+      (e) => e instanceof KorelyError && e.message.includes("processingRegion"),
+      String(wrong),
+    );
+    assert.throws(
+      () => new Korely({ apiKey: "kor_self_test", region: wrong, baseUrl: "https://api.test", fetch: async () => ({}) }),
+      KorelyError,
+    );
+    const f = fakeFetch([]);
+    await assert.rejects(() => Korely.initAgent("x", { region: wrong, baseUrl: "https://api.test", fetch: f }), KorelyError);
+    assert.equal(f.calls.length, 0, "nothing sent");
+  }
+  assert.equal(new Korely({ apiKey: "kor_self_test", region: null, baseUrl: "https://api.test", fetch: async () => ({}) }).baseUrl,
+    "https://api.test", "null is the default, as None is in Python");
+});
+
 test("Korely.initAgent(): the refusals keep their code; a label that is not text, or base_url, never leaves", async () => {
   const f = fakeFetch([
     { status: 403, body: { code: "signup_disabled", message: "Agent self-signup is currently closed." } },

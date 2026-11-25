@@ -69,6 +69,22 @@ export const VERSION = "0.2.2";
 
 const REGIONS: Record<string, string> = { eu: "https://api.korely.ai" };
 
+/** The API of `region`. Any other value is refused at once, as a wrong
+ *  `processingRegion` is: up to 0.2.2 it fell back to "eu" in silence, so
+ *  `region: "global"` (the name of a processing region) looked like a choice
+ *  and changed nothing. */
+function regionUrl(region: unknown = "eu"): string {
+  const url = typeof region === "string" && Object.prototype.hasOwnProperty.call(REGIONS, region) ? REGIONS[region] : undefined;
+  if (url === undefined) {
+    throw new KorelyError(
+      `region is "eu", the only API today, not ${JSON.stringify(region)}. Where a model reads ` +
+        "the memories is the project's processing region: processingRegion in initAgent, " +
+        "or the project's region in the dashboard.",
+    );
+  }
+  return url;
+}
+
 export interface KorelyOptions {
   /** Your `kor_live_...` key. Falls back to the KORELY_API_KEY env var. */
   apiKey?: string;
@@ -76,7 +92,8 @@ export interface KorelyOptions {
    * The API to call: "eu" (api.korely.ai), the only one today. The data is
    * stored in the EU (Helsinki). The model that reads a memory is the
    * project's region, set per project in the dashboard: Europe (gpt-oss-120b
-   * on Scaleway, in Paris) or Global (Gemini, by Google), the default.
+   * on Scaleway, in Paris) or Global (Gemini, by Google), the default. Any
+   * other value throws a KorelyError.
    */
   region?: "eu";
   /** Override the base URL (a self-hosted install, or testing). */
@@ -781,13 +798,8 @@ export class Korely {
     // a 401, so nothing is stored, but the memory travelled in the body of the
     // request before being refused. For a product sold on "your data stays on
     // your machine" that is the one failure that cannot be waved through.
-    this.baseUrl = (
-      opts.baseUrl ??
-      envBase ??
-      text(saved.base_url) ??
-      REGIONS[opts.region ?? "eu"] ??
-      REGIONS.eu
-    ).replace(/\/+$/, "");
+    const hosted = regionUrl(opts.region ?? "eu");
+    this.baseUrl = (opts.baseUrl ?? envBase ?? text(saved.base_url) ?? hosted).replace(/\/+$/, "");
     refuseAMismatchedPair(this.apiKey, this.baseUrl);
     this.timeoutMs = opts.timeoutMs ?? 30000;
     this.retryWrites = opts.retryWrites ?? true;
@@ -837,12 +849,8 @@ export class Korely {
     }
     const envBase =
       typeof process !== "undefined" ? process.env?.KORELY_BASE_URL : undefined;
-    const baseUrl = (
-      opts.baseUrl ??
-      envBase ??
-      REGIONS[opts.region ?? "eu"] ??
-      REGIONS.eu
-    ).replace(/\/+$/, "");
+    const hosted = regionUrl(opts.region ?? "eu");
+    const baseUrl = (opts.baseUrl ?? envBase ?? hosted).replace(/\/+$/, "");
     const fetchImpl = opts.fetch ?? (globalThis.fetch as typeof fetch | undefined);
     if (!fetchImpl) {
       throw new KorelyError(

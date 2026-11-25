@@ -8,6 +8,23 @@ The server side of the entries marked "API" shipped on 2026-09-28. Against an
 older server these clients keep working: the old field names are still read,
 and a batch `timestamp` is refused there with a 422.
 
+## Python 0.2.3, npm 0.2.3 (Unreleased)
+
+**A `region` other than `"eu"` is refused**, in both clients, as a wrong
+`processing_region` already was: `Korely(region=...)`, `AsyncKorely`,
+`Korely.init_agent` and, in Node, `new Korely({ region })` and
+`Korely.initAgent`. Up to 0.2.2 any other value fell back to `"eu"` in
+silence, so `region="global"`, the name of a processing region, looked like a
+choice and changed nothing. Now it raises `KorelyError` before any request,
+with a message that points to `processing_region` (Python) or
+`processingRegion` (Node), which is where a model reads the memories.
+`None` in Python and `null` or `undefined` in Node are still the default,
+`"eu"`.
+
+Before upgrading: if your code passes a `region` other than `"eu"`, remove it
+(it never did anything) or set the project's processing region instead. Way
+back: pin 0.2.2.
+
 ## Python 0.2.2, npm 0.2.2 (2026-11-23)
 
 Patch releases with two changes in both, each with a way back.

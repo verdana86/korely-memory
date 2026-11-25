@@ -60,6 +60,27 @@ class TestConstruction(unittest.TestCase):
     def test_region_maps_to_eu_base_url(self):
         self.assertEqual(Korely(api_key="x", region="eu").base_url, "https://api.korely.ai")
 
+    def test_an_unknown_region_is_refused_not_turned_into_eu(self):
+        """Up to 0.2.2 any region but "eu" fell back to "eu" in silence:
+        region="global", the name of a processing region, looked chosen and
+        changed nothing (finding of 25 Nov 2026). Refused as a wrong
+        processing_region is, before any request, on every door."""
+        from korely_memory import AsyncKorely
+
+        for wrong in ("global", "EU", "us", "", 1):
+            with self.subTest(region=wrong):
+                with self.assertRaises(KorelyError) as said:
+                    Korely(api_key="x", region=wrong)
+                self.assertIn("processing_region", str(said.exception))
+                with self.assertRaises(KorelyError):
+                    Korely(api_key="x", region=wrong, base_url="http://localhost:8000")
+                with self.assertRaises(KorelyError):
+                    AsyncKorely(api_key="x", region=wrong)
+                with self.assertRaises(KorelyError):
+                    Korely.init_agent("app", region=wrong, base_url="http://localhost:8000")
+        self.assertEqual(Korely(api_key="x", region=None).base_url, "https://api.korely.ai",
+                         "None is the default, as undefined is in Node")
+
     def test_base_url_override(self):
         self.assertEqual(Korely(api_key="x", base_url="http://localhost:8000/").base_url,
                          "http://localhost:8000")

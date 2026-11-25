@@ -61,6 +61,20 @@ __version__ = "0.2.2"
 # dashboard: Europe (gpt-oss-120b on Scaleway, Paris) or Global (Gemini, by
 # Google), the default.
 _REGIONS = {"eu": "https://api.korely.ai"}
+
+
+def _region_url(region: object) -> str:
+    """The API of ``region``. Any other value is refused at once, as a wrong
+    ``processing_region`` is: up to 0.2.2 it fell back to "eu" in silence, so
+    ``region="global"`` (the name of a processing region) looked like a
+    choice and changed nothing."""
+    url = _REGIONS.get(region) if isinstance(region, str) else None
+    if url is None:
+        raise KorelyError(
+            f"region is \"eu\", the only API today, not {region!r}. Where a model reads "
+            "the memories is the project's processing region: processing_region in "
+            "init_agent, or the project's region in the dashboard.")
+    return url
 # The header with which every answer to a key that expires says when
 # (Korely 1.0.23 and later).
 KEY_EXPIRES_HEADER = "Korely-Key-Expires-At"
@@ -547,12 +561,12 @@ class Korely:
         # decision, a variable is a setting, a config file is what `korely init`
         # was told once. The hosted region is the last resort, not the default
         # that quietly wins.
+        hosted = _region_url("eu" if region is None else region)
         self.base_url = (
             base_url
             or env.get("KORELY_BASE_URL")
             or _base_from_config(profile)
-            or _REGIONS.get(region)
-            or _REGIONS["eu"]
+            or hosted
         ).rstrip("/")
         _refuse_a_mismatched_pair(self.api_key, self.base_url)
         self.timeout = timeout
@@ -597,9 +611,10 @@ class Korely:
                               f"not {type(agent_caller).__name__}.")
         if processing_region is not None and processing_region not in ("eu", "global"):
             raise KorelyError(f"processing_region is \"eu\" or \"global\", not {processing_region!r}.")
+        hosted = _region_url("eu" if region is None else region)
         k = cls._without_key(
-            base_url or os.environ.get("KORELY_BASE_URL") or _REGIONS.get(region)
-            or _REGIONS["eu"], timeout=timeout, ca_file=ca_file, verify=verify)
+            base_url or os.environ.get("KORELY_BASE_URL") or hosted,
+            timeout=timeout, ca_file=ca_file, verify=verify)
         body = k._call("POST", "/v1/agents/init",
                        json_body=_clean({"agent_caller": agent_caller,
                                          "processing_region": processing_region}))

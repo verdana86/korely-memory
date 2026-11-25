@@ -28,6 +28,8 @@ from korely_memory import Korely
 korely = Korely(api_key="kor_live_...", region="eu")
 # or read the key from the environment (KORELY_API_KEY)
 korely = Korely(region="eu")
+# region names the API, and "eu" is the only one: any other value, "global"
+# among them, raises KorelyError (since 0.2.3; up to 0.2.2 it became "eu")
 
 # Remember: the write path extracts facts and resolves contradictions
 korely.add("Maria lives in Rome", user_id="maria")
