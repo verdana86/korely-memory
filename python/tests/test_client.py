@@ -65,6 +65,8 @@ class TestConstruction(unittest.TestCase):
         region="global", the name of a processing region, looked chosen and
         changed nothing (finding of 25 Nov 2026). Refused as a wrong
         processing_region is, before any request, on every door."""
+        from unittest import mock
+
         from korely_memory import AsyncKorely
 
         for wrong in ("global", "EU", "us", "", 1):
@@ -76,8 +78,16 @@ class TestConstruction(unittest.TestCase):
                     Korely(api_key="x", region=wrong, base_url="http://localhost:8000")
                 with self.assertRaises(KorelyError):
                     AsyncKorely(api_key="x", region=wrong)
-                with self.assertRaises(KorelyError):
-                    Korely.init_agent("app", region=wrong, base_url="http://localhost:8000")
+                # Refused before any request: a transport that answers
+                # everything sees no call, and the refusal names the region
+                # (a refused connection is a KorelyError too).
+                sent = []
+                with mock.patch("korely_memory.client._open",
+                                lambda req, timeout: sent.append(req)):
+                    with self.assertRaises(KorelyError) as said:
+                        Korely.init_agent("app", region=wrong, base_url="http://localhost:8000")
+                self.assertEqual(sent, [])
+                self.assertIn("region is \"eu\"", str(said.exception))
         self.assertEqual(Korely(api_key="x", region=None).base_url, "https://api.korely.ai",
                          "None is the default, as undefined is in Node")
 

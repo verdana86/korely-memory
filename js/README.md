@@ -205,8 +205,8 @@ where, is the project's region, chosen per project in the dashboard: Europe
 (gpt-oss-120b on Scaleway, in Paris) or Global (Gemini, by Google), the
 default. A memory written to a Global project is read by Google's model.
 `region` names the API, and `"eu"` is the only one: any other value, `"global"`
-among them, throws a `KorelyError` (since 0.2.3; up to 0.2.2 it fell back to
-`"eu"` in silence).
+among them, throws a `KorelyError`, even with `baseUrl` set (since 0.3.0; up to 0.2.2
+it fell back to `"eu"` in silence).
 
 In Node, `new Korely()` with no key and no `KORELY_API_KEY` reads what
 `korely init` saved (the key and the server, in `~/.korely/config.json`, or

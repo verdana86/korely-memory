@@ -8,22 +8,32 @@ The server side of the entries marked "API" shipped on 2026-09-28. Against an
 older server these clients keep working: the old field names are still read,
 and a batch `timestamp` is refused there with a 422.
 
-## Python 0.2.3, npm 0.2.3 (Unreleased)
+## Python 0.3.0, npm 0.3.0 (Unreleased, proposed)
 
-**A `region` other than `"eu"` is refused**, in both clients, as a wrong
-`processing_region` already was: `Korely(region=...)`, `AsyncKorely`,
+A minor version, not a patch, because one change breaks code that worked:
+the publication and the number are the founder's to decide.
+
+**Breaking: a `region` other than `"eu"` is refused**, in both clients, as a
+wrong `processing_region` already was: `Korely(region=...)`, `AsyncKorely`,
 `Korely.init_agent` and, in Node, `new Korely({ region })` and
 `Korely.initAgent`. Up to 0.2.2 any other value fell back to `"eu"` in
 silence, so `region="global"`, the name of a processing region, looked like a
 choice and changed nothing. Now it raises `KorelyError` before any request,
 with a message that points to `processing_region` (Python) or
 `processingRegion` (Node), which is where a model reads the memories.
-`None` in Python and `null` or `undefined` in Node are still the default,
-`"eu"`.
 
-Before upgrading: if your code passes a `region` other than `"eu"`, remove it
-(it never did anything) or set the project's processing region instead. Way
-back: pin 0.2.2.
+- The comparison is exact and lower case: `"EU"`, `"Eu"`, `" eu"` and
+  `"eu "` are refused too.
+- It is refused also when `base_url` (or `KORELY_BASE_URL`, or a saved
+  config) names the server, where `region` was never used: a Self-hosted
+  client written as `Korely(region="global", base_url=...)` worked up to
+  0.2.2 and raises from 0.3.0.
+- `None` in Python and `null` or `undefined` in Node are still the default,
+  `"eu"`.
+
+Before upgrading: remove any `region` other than `"eu"` from your code (it
+never did anything), and set the project's processing region where you meant
+one. Way back: pin 0.2.2.
 
 ## Python 0.2.2, npm 0.2.2 (2026-11-23)
 
