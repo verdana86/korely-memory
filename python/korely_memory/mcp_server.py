@@ -43,6 +43,7 @@ from .exceptions import KorelyError
 
 # The protocol, standard library only (_mcp_stdio.py): the `mcp` package needs
 # Python 3.10, and mcp 2.0 removed the module this server imported.
+from ._lines import with_its_id
 from ._mcp_stdio import Server
 from .client import __version__
 
@@ -288,7 +289,10 @@ def korely_search(query: str, user_id: Optional[str] = None, limit: int = 10,
     for u, h in hits:
         score = f"{h.score:.3f}" if isinstance(h.score, (int, float)) else "n/a"
         whose = f", {u}" if len(readers) > 1 else ""
-        lines.append(f"[{score}] {h.snippet or ''}".rstrip() + f"  ({h.id}{whose})")
+        # The server's rule (`_lines`): the text's lines after its first are
+        # marked, the id ends the first, so a memory's own line break never
+        # prints a line that reads as another hit (review of 8 Nov 2026).
+        lines.append(with_its_id(f"[{score}] ", (h.snippet or "").rstrip(), f"{h.id}{whose}"))
     return "\n".join(lines)
 
 

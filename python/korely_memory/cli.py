@@ -25,6 +25,7 @@ from typing import Any, List, Optional
 
 from . import __version__
 from ._files import read_config, write_private
+from ._lines import with_its_id
 from .client import (DEFAULT_TOKEN_BUDGET, Korely, _refuse_a_mismatched_pair, config_path,
                      profile_config, saved_identity)
 from .exceptions import APIError, KorelyError
@@ -498,11 +499,13 @@ def cmd_search(k: Korely, a) -> int:
         return 0
     for h in hits:
         score = f"{h.score:.3f}" if isinstance(h.score, (int, float)) else "n/a"
-        # The whole text when it was asked for, its lines under the first
-        # one's indent; else the first 280 characters, as before.
+        # The whole text when it was asked for, else the first 280
+        # characters. Its lines after the first are marked and the id ends
+        # the first one (`_lines`, the server's rule): a text's own line
+        # break printed a line just like a hit's id line (review of 8 Nov
+        # 2026).
         text = h.content if full_text and h.content is not None else (h.snippet or "")
-        print(f"[{score}] {text}".rstrip().replace("\n", "\n        "))
-        print(f"        {h.id}" + (f"  {h.type}" if h.type else ""))
+        print(with_its_id(f"[{score}] ", text.rstrip(), h.id + (f", {h.type}" if h.type else "")))
     return 0
 
 
