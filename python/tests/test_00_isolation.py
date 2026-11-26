@@ -1,4 +1,4 @@
-"""Under unittest, which RELEASING.md runs (`unittest discover -s tests`),
+"""Under unittest (`python -m unittest discover -s tests`, how the tests run),
 conftest.py is not read: this module, imported first because discovery
 imports the test files in name order, gives the whole run an empty config
 directory instead of the machine's ~/.korely. The release of 0.1.25 found

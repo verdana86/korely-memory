@@ -76,7 +76,7 @@ def main() -> int:
     if avanti and args.strict:
         print()
         print("Le riparazioni in " + " e ".join(avanti) + " esistono solo qui.")
-        print("Vedi RELEASING.md. Finche' non sono pubblicate, per chi installa")
+        print("Finche' non sono pubblicate, per chi installa")
         print("il prodotto non sono state fatte.")
         return 1
     return 0

@@ -1441,7 +1441,7 @@ def _published_text_files():
     for root, _dirs, files in os.walk(_PKG):
         out += [os.path.join(root, f) for f in files if f.endswith(".py")]
     for rel in ("README.md", "CHANGELOG.md", "python/README.md", "python/pyproject.toml",
-                "js/README.md", "js/package.json", "n8n/README.md", "RELEASING.md"):
+                "js/README.md", "js/package.json", "n8n/README.md"):
         p = os.path.join(_REPO, rel)
         if os.path.exists(p):
             out.append(p)
