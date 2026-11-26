@@ -556,8 +556,8 @@ def cmd_facts(k: Korely, a) -> int:
     if when:
         print(f"# {when}\n")
     # A page that is not all of them says so, as `list` does: past the 200 of
-    # a page the rest were not shown and nothing said there were more (the
-    # team's use of 6 Nov 2026: 4 facts of 204 out of sight).
+    # a page the rest were not shown and nothing said there were more (6 Nov
+    # 2026: 4 facts of 204 out of sight).
     offset = getattr(a, "offset", 0) or 0
     if offset or len(facts) < facts.total:
         print(f"{offset + 1}-{offset + len(facts)} of {facts.total} fact(s); "
