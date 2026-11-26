@@ -1545,7 +1545,10 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("context", parents=both,
                         help="assembled, prompt-ready context block (the agent call)")
     sp.add_argument("query")
-    sp.add_argument("--token-budget", type=int, default=DEFAULT_TOKEN_BUDGET)
+    sp.add_argument("--token-budget", type=int, default=DEFAULT_TOKEN_BUDGET,
+                    help=f"50 to 8000 (default {DEFAULT_TOKEN_BUDGET}); the block holds at most "
+                         "10 facts, so more room adds memories, and a memory too long for "
+                         "its room is cut")
     sp.add_argument("--known-as-of", help="ISO date: the block as Korely knew it then")
     sp.add_argument("--exclude-sessions", action="store_true",
                     help="leave out the work sessions and what only they stated")

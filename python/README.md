@@ -194,7 +194,10 @@ the head that is the same from one call to the next (put it in the system
 prompt, where the model provider's prompt cache reuses it; `stable_hash` says
 when it changed), and `volatile`, the facts and memories for this question.
 `degraded` is True when part of the block could not be retrieved, and
-`degraded_parts` says which.
+`degraded_parts` says which. The block holds at most 10 facts, the ones
+nearest the question: a larger `token_budget` adds memories, not facts, and a
+memory too long for the room left is cut. To read more facts, use
+`get_facts()`.
 
 Agent notices (Korely 1.0.15 and later): pass your agent's own name as
 `reader=` to `get_facts()` and `get_context()`. The server keeps which facts
