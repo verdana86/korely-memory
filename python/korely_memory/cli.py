@@ -562,8 +562,11 @@ def cmd_facts(k: Korely, a) -> int:
     # 2026: 4 facts of 204 out of sight).
     offset = getattr(a, "offset", 0) or 0
     if offset or len(facts) < facts.total:
-        print(f"{offset + 1}-{offset + len(facts)} of {facts.total} fact(s); "
-              f"the next page: --offset {offset + len(facts)}")
+        # The next page only when there is one: on the last page an offset
+        # past the end answered "no facts." (review of 26 Nov 2026).
+        after = offset + len(facts)
+        nxt = f"; the next page: --offset {after}" if after < facts.total else ""
+        print(f"{offset + 1}-{after} of {facts.total} fact(s){nxt}")
     for f in facts:
         print(" ", _fact_row(f))
     return 0

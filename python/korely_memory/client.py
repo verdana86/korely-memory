@@ -1246,7 +1246,14 @@ class Korely:
         facts it alone stated go from the database; the receipt then says
         ``status == "erased"``, ``erasure == "permanent"`` and counts
         ``facts_deleted``. A memory forgotten earlier can be erased too. For
-        every memory of one end user, ``delete_all``."""
+        every memory of one end user, ``delete_all``.
+
+        ``erase`` is ``True`` or ``False`` and nothing else: a call that
+        erases for good is never asked by a value that only looks true
+        (``"false"``, ``1``); any other value raises ``KorelyError`` before
+        any request."""
+        if erase is not True and erase is not False:
+            raise KorelyError(f"delete(erase=...) takes True or False, not {type(erase).__name__}.")
         return DeleteReceipt.from_dict(
             self._call("DELETE", "/v1/memories/" + _seg(memory_id, "memory_id"),
                        params={"erase": "true"} if erase else None))

@@ -1412,6 +1412,10 @@ test("delete can erase, and the receipt says what went", async () => {
   await k.delete("mem_2");
   assert.doesNotMatch(f.calls[1].url, /erase/);
   await assert.rejects(k.delete("mem_3", { erse: true }), /erse/);
+  for (const wrong of ["true", "false", 1, 0, null]) {
+    await assert.rejects(k.delete("mem_3", { erase: wrong }), /takes true or false/);
+  }
+  assert.equal(f.calls.length, 2, "nothing is sent");
 });
 
 test("exclude_sessions is sent only when true", async () => {

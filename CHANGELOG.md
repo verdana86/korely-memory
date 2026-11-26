@@ -8,10 +8,34 @@ The server side of the entries marked "API" shipped on 2026-09-28. Against an
 older server these clients keep working: the old field names are still read,
 and a batch `timestamp` is refused there with a 422.
 
-## Python 0.3.1, npm 0.3.1 (Unreleased)
+## Python 0.4.0, npm 0.4.0 (Unreleased)
 
-Patch releases. Nothing that worked stops working; one printed layout
-changes (`korely search` and the stdio MCP server's `korely_search`).
+A minor version: new methods and options (`reader`, `changes`,
+`delete(erase=True)`, `korely facts --offset`). No call that worked is
+refused, and no answer of the API is read differently. What changes is what
+the CLI and the stdio MCP server print, which a script may have parsed:
+
+- **`korely search` prints each hit on its first line with its id at the
+  end**, `[0.812] text  (mem_..., memory)`, and the text's other lines under
+  four spaces. Up to 0.3.0 the id was alone on the line after the text,
+  under eight spaces, with the type after it. A script that took the id
+  from that line finds no such line now: read it from the end of the first
+  line, between the last parentheses, or use `korely search --json`, whose
+  shape does not change.
+- **The stdio MCP server's `korely_search`** puts the id at the end of a
+  hit's first line; up to 0.3.0 it was at the end of the hit's last line,
+  the same line only for a text of one line. A hit's other lines, and the
+  other lines of a fact in `korely_get_facts`, now begin with four spaces
+  instead of at the margin.
+- **A terminal's controls are written out**: ESC, BACKSPACE, the C1 controls
+  and the direction overrides (U+202E and the other bidi controls) in a
+  memory or a fact print as `\x1b`, `\x08`, `\u202e`... in `search`,
+  `facts`, `list`, `get` and the MCP server's `korely_search` and
+  `korely_get_facts`. A memory that held them printed them raw, and a
+  terminal ran them: it could clear the screen, write over a line or
+  reverse the letters after it. `--json` carries the text as stored.
+
+Also in this version:
 
 - **Agent notices in both clients and the CLI.** `reader=` on `get_facts()`
   and `get_context()` (Node: `reader` in `getFacts` and `getContext`), and
@@ -22,23 +46,23 @@ changes (`korely search` and the stdio MCP server's `korely_search`).
   `korely facts --reader NAME`. Up to 0.3.0 neither client sent them.
 - **`delete(memory_id, erase=True)`** (Node: `delete(id, { erase: true })`)
   erases one memory for good, as `DELETE /v1/memories/{id}?erase=true`
-  does, and `DeleteReceipt` has the two fields of that answer, `erasure`
-  and `facts_deleted` (None on a forget). Up to 0.3.0 the clients could not
+  does (`erase` takes `True` or `False` only, `true` or `false` in Node:
+  any other value raises before any request), and `DeleteReceipt` has the
+  two fields of that answer, `erasure` and `facts_deleted` (None on a
+  forget). Up to 0.3.0 the clients could not
   ask for it and dropped the two fields.
-- **A hit's own line breaks never print a line of another hit.** `korely
-  search` printed a snippet's line breaks under the indent of the id line,
-  so a memory could print a line just like another hit's id; the stdio MCP
-  server's `korely_search` printed them at the margin, where a result
-  begins. Both now follow the rule of Korely's server: the lines after the
-  first start with four spaces, and the id ends the first line,
-  `[0.812] text  (mem_..., memory)`. A script that read the id from the
-  line after the text must read it from the end of the first line, or use
-  `--json`.
+- **Why the layout above: a hit's own line breaks never print a line of
+  another hit.** `korely search` printed a snippet's line breaks under the
+  indent of the id line, so a memory could print a line just like another
+  hit's id; the stdio MCP server's `korely_search` printed them at the
+  margin, where a result begins. Both now follow the rule of Korely's
+  server.
 - **`korely forget-fact --at` a later day** says `ends on DATE` and that the
   fact is current until then. It said `forgotten`.
 - **`korely facts` says when a page is not all of them** (`1-200 of 204
-  fact(s); the next page: --offset 200`) and takes `--offset`. Past the 200
-  of a page the rest were out of sight with nothing saying so.
+  fact(s); the next page: --offset 200`, the next page named only when
+  there is one) and takes `--offset`. Past the 200 of a page the rest were
+  out of sight with nothing saying so.
 - **The help says what the server takes**: `add-fact` 200 characters for
   the subject and the predicate, 500 for the object; `facts --limit` up to
   200; `context --token-budget` 50 to 8,000, with at most 10 facts in a

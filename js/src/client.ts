@@ -1247,10 +1247,16 @@ export class Korely {
    * `{ erase: true }` erases it for good instead: the row, its text and the
    * facts it alone stated go from the database; the receipt says `status`
    * "erased", `erasure` "permanent" and counts `facts_deleted`. For every
-   * memory of one end user, `deleteAll`.
+   * memory of one end user, `deleteAll`. `erase` is `true` or `false` and
+   * nothing else.
    */
   async delete(memoryId: string, opts: { erase?: boolean } = {}): Promise<DeleteReceipt> {
     checkOptions("delete", opts, ["erase"]);
+    // true or false and nothing else: an erasure for good is never asked by
+    // a value that only looks true ("false", 1).
+    if (opts.erase !== undefined && typeof opts.erase !== "boolean") {
+      throw new KorelyError(`delete({ erase }) takes true or false, not ${typeof opts.erase}.`);
+    }
     return this.request("DELETE", `/v1/memories/${seg(memoryId, "memoryId")}`, {
       params: opts.erase ? { erase: "true" } : undefined,
     });

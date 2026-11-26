@@ -275,6 +275,25 @@ class TestMemories(unittest.TestCase):
         r = k.delete("mem_2")
         self.assertFalse(rec.last["params"])
         self.assertEqual((r.erasure, r.facts_deleted), (None, None))
+        sent = len(rec.calls)
+        for wrong in ("true", "false", 1, 0, None, [True]):
+            with self.subTest(erase=wrong), self.assertRaises(KorelyError):
+                k.delete("mem_3", erase=wrong)
+        self.assertEqual(len(rec.calls), sent, "nothing is sent")
+        # The async client asks for the erasure too, and refuses the same.
+        import asyncio
+
+        from korely_memory import AsyncKorely
+
+        ak = AsyncKorely(api_key="kor_live_test")
+        ak._sync._send = arec = _Recorder().queue(200, {"id": "mem_1", "status": "erased",
+                                                       "erasure": "permanent", "facts_deleted": 2,
+                                                       "facts_invalidated": 0, "facts_reopened": 0,
+                                                       "audit_id": "aud_3"})
+        r = asyncio.run(ak.delete("mem_1", erase=True))
+        self.assertEqual((arec.last["params"], r.erasure), ({"erase": "true"}, "permanent"))
+        with self.assertRaises(KorelyError):
+            asyncio.run(ak.delete("mem_1", erase="yes"))
 
     def test_declare_name_posts_the_name_for_the_end_user(self):
         rec = _Recorder().queue(201, {"user_id": "maria", "name": "Maria Rossi",

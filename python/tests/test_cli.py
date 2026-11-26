@@ -189,7 +189,8 @@ class TestParserWiring(unittest.TestCase):
         with redirect_stdout(out):
             cli.cmd_facts(k, _args(["facts", "--limit", "200", "--offset", "200"]))
         self.assertEqual(rec.last["params"]["offset"], 200)
-        self.assertIn("201-204 of 204 fact(s)", out.getvalue())
+        self.assertIn("201-204 of 204 fact(s)\n", out.getvalue())
+        self.assertNotIn("next page", out.getvalue(), "the last page names no page after it")
         rec.queue(200, {"facts": rows[:3], "total": 3})
         out = io.StringIO()
         with redirect_stdout(out):
