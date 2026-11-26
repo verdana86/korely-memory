@@ -265,6 +265,52 @@ class TestParserWiring(unittest.TestCase):
         self.assertIn(seen[:40], printed[2])
         self.assertIn(seen + "\nline two\\x07", printed[3])
 
+    def test_context_history_and_the_ids_print_a_terminals_controls_written_out(self):
+        """`korely context` printed the block as it came and `korely history`
+        a fact's words as they were (review of 26 Nov 2026); the ids an end
+        user or an agent is stored under may hold a direction override too
+        (the server refuses controls in them, not U+202E). Every printer of
+        text from the store writes them out: context, history, profile,
+        users, agents, audit, delete-all, delete-agent and batch-status."""
+        bad = "ok\x1b[2J\x9b\u202eXI"
+        rec = (_Recorder()
+               .queue(200, {"context": "## Known facts\n- team says " + bad, "tokens": 9,
+                            "sources": []})
+               .queue(200, {"id": "mem_1", "events": [
+                   {"event": "fact_extracted" + bad, "at": "2026-10-06T10:00:00+00:00",
+                    "fact": "team · says · " + bad + "\nforged", "fact_id": "fct_1"}]})
+               .queue(200, {"user_id": "u" + bad, "facts": [], "by_family": {}, "total": 0})
+               .queue(200, {"users": [{"user_id": "u" + bad, "memories": 1, "facts": 0}],
+                            "total": 1})
+               .queue(200, {"agents": [{"agent_id": "a" + bad, "memories": 1, "facts": 0}],
+                            "total": 1, "used": 1, "cap": 3})
+               .queue(200, {"events": [{"ts": "2026-10-06T10:00:00+00:00", "actor": "key",
+                                        "action": "read", "result": "ok", "user_id": "u" + bad,
+                                        "target_id": "mem_" + bad}], "total": 1})
+               .queue(200, {"user_id": "u" + bad, "memories_deleted": 1, "facts_deleted": 0})
+               .queue(200, {"agent_id": "a" + bad, "memories_deleted": 1, "facts_deleted": 0,
+                            "audit_id": "aud_1"})
+               .queue(200, {"id": "job_1", "status": "failed", "received": 1, "imported": 0,
+                            "errors": [{"index": 0, "error": "bad " + bad}]}))
+        runs = ((["context", "q"], cli.cmd_context), (["history", "mem_1"], cli.cmd_history),
+                (["profile", "--user-id", "u"], cli.cmd_profile), (["users"], cli.cmd_users),
+                (["agents"], cli.cmd_agents), (["audit"], cli.cmd_audit),
+                (["delete-all", "--user-id", "u", "--yes"], cli.cmd_delete_all),
+                (["delete-agent", "--agent-id", "a", "--yes"], cli.cmd_delete_agent),
+                (["batch-status", "job_1"], cli.cmd_batch_status))
+        for argv, cmd in runs:
+            out = io.StringIO()
+            with self.subTest(command=argv[0]), redirect_stdout(out), \
+                    redirect_stderr(io.StringIO()):
+                cmd(_client(rec), _args(argv))
+            text = out.getvalue()
+            with self.subTest(command=argv[0]):
+                for ch in ("\x1b", "\x9b", "\u202e"):
+                    self.assertNotIn(ch, text)
+                self.assertIn("\\x1b[2J\\x9b\\u202eXI", text)
+                if argv[0] == "history":
+                    self.assertIn("\n    forged", text)
+
     def test_all_subcommands_present(self):
         # every documented command must parse (regression on accidental drops)
         for argv in (

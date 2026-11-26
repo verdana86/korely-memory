@@ -307,7 +307,8 @@ def cmd_ping(k: Korely, a) -> int:
 
 def _audit_line(e) -> str:
     line = (f"  {_utc_moment(e.ts):<19}  {e.actor or '':<9} {e.action or '':<15} "
-            f"{e.result or '':<6} {e.user_id or '-':<20} {e.target_id or ''}").rstrip()
+            f"{e.result or '':<6} {visible(e.user_id or '-'):<20} "
+            f"{visible(e.target_id or '')}").rstrip()
     if e.read:
         line += f"  (read {len(e.read.memories)} memories, {len(e.read.facts)} facts)"
     return line
@@ -453,9 +454,11 @@ def cmd_history(k: Korely, a) -> int:
         return 0
     print(f"{h.id}  ({len(h.events)} event(s))")
     for e in h.events:
-        line = f"  {_utc_moment(e.at):<19}  {e.event or ''}"
+        # The fact's words, and the event a server names, are kept in their
+        # line with a terminal's controls written out (`_lines`).
+        line = f"  {_utc_moment(e.at):<19}  {in_its_line(e.event or '')}"
         if e.fact:
-            line += f"  {e.fact}"
+            line += f"  {in_its_line(e.fact)}"
         if e.fact_id:
             line += f"  ({e.fact_id})"
         print(line)
@@ -519,7 +522,7 @@ def cmd_context(k: Korely, a) -> int:
     if a.json:
         _emit_json(ctx)
         return 0
-    print(ctx.context or "(empty)")
+    print(shown(ctx.context) if ctx.context else "(empty)")
     print(f"\n({ctx.tokens} tokens, {len(ctx.sources)} source(s))", file=sys.stderr)
     return 0
 
@@ -579,7 +582,7 @@ def cmd_profile(k: Korely, a) -> int:
         _emit_json(p)
         return 0
     when = _what_was(p.as_of, p.known_as_of)
-    head = f"profile of {p.user_id}" + (f", {when}" if when else "")
+    head = f"profile of {visible(p.user_id or '')}" + (f", {when}" if when else "")
     print(head + f"  ({p.total} fact(s))")
     for family, facts in (p.by_family or {}).items():
         print(f"\n{family}:")
@@ -601,7 +604,7 @@ def cmd_users(k: Korely, a) -> int:
         return 0
     print(f"{page.total} end user(s):")
     for u in page:
-        print(f"  {u.user_id:30s} {u.memories:>4} mem  {u.facts:>4} facts  "
+        print(f"  {visible(u.user_id or ''):30s} {u.memories:>4} mem  {u.facts:>4} facts  "
               f"{(u.last_active or '')[:10]}")
     return 0
 
@@ -651,7 +654,7 @@ def cmd_delete_all(k: Korely, a) -> int:
         # The rows are physically deleted, and since 2026-09-28 the receipt
         # says so (memories_deleted, facts_deleted). BulkReceipt fills them
         # from the old names when an older server sends only those.
-        print(f"forgot user {r.user_id}  ({r.memories_deleted or 0} memory(ies), "
+        print(f"forgot user {visible(r.user_id or '')}  ({r.memories_deleted or 0} memory(ies), "
               f"{r.facts_deleted or 0} fact(s) erased, audit {r.audit_id})")
     return 0
 
@@ -668,7 +671,7 @@ def cmd_agents(k: Korely, a) -> int:
         return 0
     print(f"{page.total} agent namespace(s) in this project ({cap}):")
     for ag in page:
-        print(f"  {ag.agent_id or '':30s} {ag.memories:>4} mem  {ag.facts:>4} facts  "
+        print(f"  {visible(ag.agent_id or ''):30s} {ag.memories:>4} mem  {ag.facts:>4} facts  "
               f"{(ag.last_active or '')[:10]}")
     return 0
 
@@ -686,7 +689,7 @@ def cmd_delete_agent(k: Korely, a) -> int:
     if a.json:
         _emit_json(r)
         return 0
-    print(f"deleted agent {r.agent_id}  ({r.memories_deleted or 0} memory(ies), "
+    print(f"deleted agent {visible(r.agent_id or '')}  ({r.memories_deleted or 0} memory(ies), "
           f"{r.facts_deleted or 0} fact(s) erased{_reopened(r)}, audit {r.audit_id})")
     return 0
 
@@ -826,9 +829,9 @@ def cmd_batch_status(k: Korely, a) -> int:
     errors = job.errors or []
     for e in errors[:10]:
         if isinstance(e, dict) and "index" in e:
-            print(f"  memory {e.get('index')}: {e.get('error')}")
+            print(f"  memory {e.get('index')}: {visible(str(e.get('error')))}")
         else:
-            print(f"  {e}")
+            print(f"  {visible(str(e))}")
     if len(errors) > 10:
         print(f"  ...and {len(errors) - 10} more (--json shows them all)")
     return 0
@@ -1154,7 +1157,8 @@ def _declare_name(args, name: str) -> int:
     except KorelyError as e:
         print(f"error: the name was not declared: {e}", file=sys.stderr)
         return 1
-    print(f"name     \"{d.name}\" is {d.user_id}: what the memories say about it is theirs, "
+    print(f"name     \"{visible(d.name or '')}\" is {visible(d.user_id or '')}: what the "
+          "memories say about it is theirs, "
           "the facts already written included")
     return 0
 

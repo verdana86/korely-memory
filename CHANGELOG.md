@@ -29,11 +29,17 @@ the CLI and the stdio MCP server print, which a script may have parsed:
   instead of at the margin.
 - **A terminal's controls are written out**: ESC, BACKSPACE, the C1 controls
   and the direction overrides (U+202E and the other bidi controls) in a
-  memory or a fact print as `\x1b`, `\x08`, `\u202e`... in `search`,
-  `facts`, `list`, `get` and the MCP server's `korely_search` and
-  `korely_get_facts`. A memory that held them printed them raw, and a
-  terminal ran them: it could clear the screen, write over a line or
-  reverse the letters after it. `--json` carries the text as stored.
+  memory, a fact, or an end user's or agent's id print as `\x1b`, `\x08`,
+  `\u202e`... A memory that held them printed them raw, and a terminal ran
+  them: it could clear the screen, write over a line or reverse the letters
+  after it. The commands that print text from the store: `search`,
+  `context`, `facts`, `profile`, `list`, `get`, `history`, `add`, `update`,
+  `add-fact`, `correct-fact` (the facts they print), `users`, `agents`,
+  `audit`, `delete-all`, `delete-agent`, `batch-status` (the errors of the
+  items), `init --name`; and the stdio MCP server's `korely_search`,
+  `korely_get_facts` and `korely_add` (its facts). `--json` carries the
+  text as stored, and so do `korely_get_context` and the coding
+  assistants' hooks, which hand the text to a model, not to a terminal.
 
 Also in this version:
 
