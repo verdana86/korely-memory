@@ -8,7 +8,7 @@ The server side of the entries marked "API" shipped on 2026-09-28. Against an
 older server these clients keep working: the old field names are still read,
 and a batch `timestamp` is refused there with a 422.
 
-## Python 0.4.0, npm 0.4.0 (Unreleased)
+## Python 0.4.0, npm 0.4.0 (2026-11-26)
 
 A minor version: new methods and options (`reader`, `changes`,
 `delete(erase=True)`, `korely facts --offset`, `max_retries`). No call that
@@ -43,7 +43,9 @@ could, or the wait asked was longer than its bound. The CLI and the stdio MCP
 server use the client's defaults. The coding assistants' hooks (`korely init
 --tool ...`) never wait: the assistant stops a hook after a few seconds, so
 their client sends each call once, and a 429 is written to
-`~/.korely/hook.log` at once, the turns kept for the next try. A
+`~/.korely/hook.log` at once, the turns kept for the next try. (`korely hook
+flush`, the detached process that sends them later, still waits as the
+client does: no assistant stops it.) A
 `Retry-After` that cannot be read (`inf`, `nan`) is no wait: the call raises
 `QuotaExceededError` with `retry_after` None, never an OverflowError.
 

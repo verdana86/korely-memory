@@ -54,7 +54,7 @@ from .models import (
     UsersPage,
 )
 
-__version__ = "0.3.0"
+__version__ = "0.4.0"
 
 # One API today, in the EU, where the data is stored (Helsinki). The model
 # that reads a memory is the project's region, set per project in the
