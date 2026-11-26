@@ -1,19 +1,21 @@
 #!/usr/bin/env python3
-"""Quello che hai riparato e' arrivato a chi installa, o e' solo sul tuo disco?
+"""Has what you fixed reached the people who install the clients, or is it
+only on your disk?
 
-    python scripts/check_published.py            # dice dove sei
-    python scripts/check_published.py --strict   # rosso se il locale e' avanti
+    python scripts/check_published.py            # says where you are
+    python scripts/check_published.py --strict   # fails if the local copy is ahead
 
-Esiste per un difetto trovato da un collaudatore che verificava riparazioni: tre
-su sei risultavano non fatte, perche' stavano nei client e i client li installa
-da PyPI e da npm. Le avevo scritte e lasciate nel working tree.
+It exists because of a defect a tester found while checking fixes: three of
+six looked undone, because they were in the clients, and the clients are
+installed from PyPI and npm. They had been written and left in the working
+tree.
 
-Il server si installa clonando il repository, quindi una riparazione lato server
-arriva appena la committi. Un client no: arriva quando lo pubblichi. Le due cose
-hanno tempi diversi, e nessuno se ne accorge finche' qualcuno non prova il
-prodotto dall'esterno.
+The server is installed by cloning its repository, so a fix on the server
+side arrives as soon as it is committed. A client does not: it arrives when it
+is published. The two run on different clocks, and nobody notices until
+someone tries the product from the outside.
 
-`--strict` e' pensato per girare prima di dire "riparato" a qualcuno.
+`--strict` is meant to run before telling anyone "fixed".
 """
 from __future__ import annotations
 
@@ -28,56 +30,56 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def _locale() -> tuple[str, str]:
+def _local() -> tuple[str, str]:
     py = re.search(r'^version = "([^"]+)"',
                    (ROOT / "python" / "pyproject.toml").read_text(), re.M).group(1)
     js = json.loads((ROOT / "js" / "package.json").read_text())["version"]
     return py, js
 
 
-def _pubblicata(url: str, dove) -> str | None:
+def _published(url: str, where) -> str | None:
     try:
         with urllib.request.urlopen(url, timeout=20) as r:
-            return dove(json.loads(r.read().decode()))
+            return where(json.loads(r.read().decode()))
     except (urllib.error.URLError, KeyError, ValueError) as e:
-        print(f"  ! non ho potuto chiedere a {url}: {e}", file=sys.stderr)
+        print(f"  ! could not ask {url}: {e}", file=sys.stderr)
         return None
 
 
-def _tupla(v: str) -> tuple:
+def _parts(v: str) -> tuple:
     return tuple(int(x) for x in re.findall(r"\d+", v))
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--strict", action="store_true",
-                    help="esce rosso se il locale e' avanti al pubblicato")
+                    help="exit with an error when the local version is ahead of the published one")
     args = ap.parse_args()
 
-    py_loc, js_loc = _locale()
-    py_pub = _pubblicata("https://pypi.org/pypi/korely-memory/json",
-                         lambda d: d["info"]["version"])
-    js_pub = _pubblicata("https://registry.npmjs.org/korely-memory",
-                         lambda d: d["dist-tags"]["latest"])
+    py_local, js_local = _local()
+    py_pub = _published("https://pypi.org/pypi/korely-memory/json",
+                        lambda d: d["info"]["version"])
+    js_pub = _published("https://registry.npmjs.org/korely-memory",
+                        lambda d: d["dist-tags"]["latest"])
 
-    avanti = []
-    for nome, loc, pub in (("PyPI", py_loc, py_pub), ("npm", js_loc, js_pub)):
+    ahead = []
+    for name, local, pub in (("PyPI", py_local, py_pub), ("npm", js_local, js_pub)):
         if pub is None:
-            print(f"{nome:<6} locale {loc}  pubblicata ?")
+            print(f"{name:<6} local {local}  published ?")
             continue
-        stato = "allineato"
-        if _tupla(loc) > _tupla(pub):
-            stato = "LOCALE AVANTI: chi installa non ha le tue riparazioni"
-            avanti.append(nome)
-        elif _tupla(loc) < _tupla(pub):
-            stato = "locale indietro: il repository e' vecchio"
-        print(f"{nome:<6} locale {loc:<9} pubblicata {pub:<9} {stato}")
+        state = "in step"
+        if _parts(local) > _parts(pub):
+            state = "LOCAL AHEAD: whoever installs it does not have your fixes"
+            ahead.append(name)
+        elif _parts(local) < _parts(pub):
+            state = "local behind: this repository is out of date"
+        print(f"{name:<6} local {local:<9} published {pub:<9} {state}")
 
-    if avanti and args.strict:
+    if ahead and args.strict:
         print()
-        print("Le riparazioni in " + " e ".join(avanti) + " esistono solo qui.")
-        print("Finche' non sono pubblicate, per chi installa")
-        print("il prodotto non sono state fatte.")
+        print("The fixes in " + " and ".join(ahead) + " exist only here.")
+        print("Until they are published, for whoever installs the product")
+        print("they have not been made.")
         return 1
     return 0
 
