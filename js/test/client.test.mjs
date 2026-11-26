@@ -38,12 +38,13 @@ function fakeFetch(queue) {
   return fn;
 }
 
-function client(queue) {
+function client(queue, opts = {}) {
   const f = fakeFetch(queue);
   const k = new Korely({
     apiKey: "kor_self_test",
     baseUrl: "https://api.test",
     fetch: f,
+    ...opts,
   });
   return { k, f };
 }
@@ -208,7 +209,7 @@ test("429 maps to QuotaExceededError with retryAfter", async () => {
       body: { code: "quota_exceeded", message: "slow down" },
       headers: { "retry-after": "12" },
     },
-  ]);
+  ], { maxRetries: 0 });  // how the answer is read; waiting it out: rate-limit.test.mjs
   await assert.rejects(
     () => k.add("x", { user_id: "u" }),
     (e) => {
@@ -492,7 +493,7 @@ test("addFactTriple can say the tense, and leaves it to the server otherwise", a
 test("a fractional Retry-After rounds up", async () => {
   const { k } = client([
     { status: 429, body: { code: "rate_limit_exceeded", message: "slow" }, headers: { "retry-after": "1.5" } },
-  ]);
+  ], { maxRetries: 0 });
   await assert.rejects(() => k.users(), (e) => {
     assert.equal(e.retryAfter, 2);
     return true;
@@ -1349,7 +1350,7 @@ test("a quota refusal carries limit, used and resets_at, read from the body, nev
     { status: 429, body: { code: "quota_exceeded", message: "2,000 writes on the Developer plan this month...",
                            limit: 2000, used: 2200, resets_at: "2026-11-01" } },
     { status: 429, body: { code: "rate_limit_exceeded", message: "slow down" }, headers: { "retry-after": "7" } },
-  ]);
+  ], { maxRetries: 0 });
   await assert.rejects(() => k.add("x", { user_id: "u" }), (e) =>
     e instanceof QuotaExceededError && e.limit === 2000 && e.used === 2200 && e.resetsAt === "2026-11-01");
   await assert.rejects(() => k.add("x", { user_id: "u" }), (e) =>

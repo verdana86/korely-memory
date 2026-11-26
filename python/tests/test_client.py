@@ -400,9 +400,13 @@ class TestErrorMapping(unittest.TestCase):
             _client(rec).update("mem_1", content="x", expected_updated_at="2000-01-01T00:00:00Z")
 
     def test_429_quota_with_retry_after(self):
+        # Sent once (max_retries=0): this is how the answer is read; waiting
+        # a 429 out is tests/test_rate_limit_retry.py's.
         rec = _Recorder().queue(429, {"code": "quota_exceeded", "message": "slow down", "_retry_after": "12"})
+        k = _client(rec)
+        k.max_retries = 0
         with self.assertRaises(QuotaExceededError) as cm:
-            _client(rec).add("x")
+            k.add("x")
         self.assertEqual(cm.exception.retry_after, 12)
         self.assertIsNone(cm.exception.limit, "a server that does not send it")
 

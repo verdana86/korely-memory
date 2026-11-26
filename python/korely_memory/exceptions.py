@@ -144,7 +144,9 @@ class QuotaExceededError(APIError):
       (``list_agents()``) or delete one (``delete_agent()``).
 
     ``retry_after`` comes from :class:`APIError`, which every error the server
-    answers with now carries.
+    answers with now carries. Since 0.4.0 the client waits out a 429 that
+    names a wait, within ``max_retries`` and ``max_retry_wait``, before it
+    raises this: caught, it is a limit the client could not wait out.
 
     On the Cloud's ``quota_exceeded`` (2026-10-07): ``limit`` (the month's
     allowance, the plan plus the month's top-ups), ``used`` and ``resets_at``

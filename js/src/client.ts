@@ -118,6 +118,20 @@ export interface KorelyOptions {
    * the key.
    */
   retryWrites?: boolean;
+  /**
+   * A call answered 429 with a wait (Retry-After) is sent again after that
+   * wait, at most this many more times. Default 3; 0 sends every call once,
+   * as up to 0.3.0. A write keeps its Idempotency-Key, so it is made once. A
+   * 429 that names no wait (the month's quota, the agent cap) is never sent
+   * again.
+   */
+  maxRetries?: number;
+  /**
+   * The most seconds of waiting in all for one call (default 60): a wait the
+   * server asks that would pass it is not waited, and the call rejects at
+   * once with QuotaExceededError and its `retryAfter`.
+   */
+  maxRetryWait?: number;
 }
 
 /** Where and how `Korely.initAgent()` signs up: the client options a call
@@ -134,7 +148,8 @@ export interface InitAgentOptions extends Pick<KorelyOptions, "region" | "baseUr
 // The options each method reads (options.ts): the compiler holds every list to
 // its type, and every method refuses a key that is not on its list.
 const CLIENT_KEYS = keysOf<KorelyOptions>()(
-  "apiKey", "region", "baseUrl", "timeoutMs", "fetch", "client", "retryWrites");
+  "apiKey", "region", "baseUrl", "timeoutMs", "fetch", "client", "retryWrites", "maxRetries",
+  "maxRetryWait");
 const INIT_KEYS = keysOf<InitAgentOptions>()("region", "baseUrl", "timeoutMs", "fetch", "processingRegion");
 const ADD_KEYS = keysOf<AddOptions>()(
   "agent_id", "user_id", "run_id", "metadata", "timestamp", "kind", "idempotency_key",
@@ -157,6 +172,47 @@ const ADD_KEYS = keysOf<AddOptions>()(
  */
 const WRITE_RETRY_DELAY_MS = 500;
 
+/**
+ * A 429 is waited out and the call sent again, as Mem0's client and the
+ * Stainless-generated SDKs do (openai-python 3.58, _base_client.py: a 429 is
+ * retried after the server's Retry-After, up to DEFAULT_MAX_RETRIES = 2): at
+ * most RATE_LIMIT_RETRIES more tries and RATE_LIMIT_WAIT seconds of waiting
+ * in all for one call, the bounds of the Python client. Decided on 26 Nov
+ * 2026.
+ */
+export const RATE_LIMIT_RETRIES = 3;
+export const RATE_LIMIT_WAIT = 60;
+
+/** The bounds of the waits of one client (`exchangeWaitingOut`). */
+interface Bounds {
+  maxRetries: number;
+  maxRetryWait: number;
+}
+
+/**
+ * `exchange`, with a 429 that names a wait (`retryAfter`) waited out and the
+ * same request sent again, within `b`: the same headers, so a write keeps its
+ * Idempotency-Key. Anything else rejects as `exchange` does.
+ */
+async function exchangeWaitingOut(
+  t: Transport,
+  b: Bounds,
+  method: string,
+  path: string,
+  opts: { params?: Params; body?: unknown; headers?: Record<string, string> } = {},
+): Promise<any> {
+  let waited = 0;
+  for (let tries = 0; ; tries++) {
+    try {
+      return await exchange(t, method, path, opts);
+    } catch (e) {
+      const wait = e instanceof QuotaExceededError && e.status === 429 ? e.retryAfter : undefined;
+      if (wait === undefined || tries >= b.maxRetries || waited + wait > b.maxRetryWait) throw e;
+      await Korely._sleep(wait * 1000);
+      waited += wait;
+    }
+  }
+}
 /**
  * The Idempotency-Key of a write the caller gave none: random, made once
  * before the first try and sent again on the retry (`Korely.write`), 32 hex
@@ -768,6 +824,15 @@ export class Korely {
   readonly client?: string;
   /** Whether a write that got no answer is sent once more with its key. */
   readonly retryWrites: boolean;
+  /** How many more times a call answered 429 with a wait is sent (`maxRetries`). */
+  readonly maxRetries: number;
+  /** The most seconds of waiting in all for one call (`maxRetryWait`). */
+  readonly maxRetryWait: number;
+  /**
+   * How a wait is waited: the one seam the tests replace.
+   * @internal
+   */
+  static _sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
   private readonly fetchImpl: typeof fetch;
 
   constructor(opts: KorelyOptions = {}) {
@@ -804,6 +869,16 @@ export class Korely {
     refuseAMismatchedPair(this.apiKey, this.baseUrl);
     this.timeoutMs = opts.timeoutMs ?? 30000;
     this.retryWrites = opts.retryWrites ?? true;
+    const retries = opts.maxRetries ?? RATE_LIMIT_RETRIES;
+    if (!Number.isInteger(retries) || retries < 0) {
+      throw new KorelyError(`maxRetries is a whole number, 0 or more, not ${String(opts.maxRetries)}.`);
+    }
+    const wait = opts.maxRetryWait ?? RATE_LIMIT_WAIT;
+    if (typeof wait !== "number" || !(wait >= 0)) {
+      throw new KorelyError(`maxRetryWait is seconds, 0 or more, not ${String(opts.maxRetryWait)}.`);
+    }
+    this.maxRetries = retries;
+    this.maxRetryWait = wait;
     const f = opts.fetch ?? (globalThis.fetch as typeof fetch | undefined);
     if (!f) {
       throw new KorelyError(
@@ -858,7 +933,8 @@ export class Korely {
         "No fetch available. On Node < 18 pass a fetch implementation via { fetch }.",
       );
     }
-    return exchange({ baseUrl, timeoutMs: opts.timeoutMs ?? 30000, fetchImpl },
+    return exchangeWaitingOut({ baseUrl, timeoutMs: opts.timeoutMs ?? 30000, fetchImpl },
+      { maxRetries: RATE_LIMIT_RETRIES, maxRetryWait: RATE_LIMIT_WAIT },
       "POST", "/v1/agents/init", {
         body: { agent_caller: agentCaller ?? undefined, processing_region: opts.processingRegion },
       });
@@ -870,9 +946,10 @@ export class Korely {
     path: string,
     opts: { params?: Params; body?: unknown; headers?: Record<string, string> } = {},
   ): Promise<any> {
-    return exchange(
+    return exchangeWaitingOut(
       { baseUrl: this.baseUrl, timeoutMs: this.timeoutMs, fetchImpl: this.fetchImpl, apiKey: this.apiKey,
         client: this.client },
+      { maxRetries: this.maxRetries, maxRetryWait: this.maxRetryWait },
       method, path, opts,
     );
   }
@@ -1089,8 +1166,8 @@ export class Korely {
    * the rest one place down: the next page began with events already returned.
    * The pin makes the export the trail as it stood when it started.
    *
-   * A rate limit rejects mid-way, as any call does, and the SDK does not
-   * retry. To resume, call again with the same `until` (pin it yourself:
+   * A rate limit the client could not wait out (`maxRetries`) rejects mid-way,
+   * as any call does. To resume, call again with the same `until` (pin it yourself:
    * `until: new Date()`) and `offset` the number of events already read.
    */
   async *iterAudit(opts: IterAuditOptions = {}): AsyncGenerator<AuditEvent, void, undefined> {

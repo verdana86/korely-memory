@@ -90,6 +90,17 @@ DEFAULT_TOKEN_BUDGET = 1500
 # _constants.py, INITIAL_RETRY_DELAY = 0.5), which also retry with the same
 # Idempotency-Key. One retry only, so no backoff to grow.
 WRITE_RETRY_DELAY = 0.5
+# A 429 is waited out and the call sent again, as Mem0's client and the
+# Stainless-generated SDKs do (openai-python 3.58, _base_client.py: a 429 is
+# retried, after the server's Retry-After when it sends one, up to
+# DEFAULT_MAX_RETRIES = 2): at most RATE_LIMIT_RETRIES more tries, and never
+# more than RATE_LIMIT_WAIT seconds of waiting in all for one call. A wait the
+# server asks that would pass that bound is not waited at all: the call raises
+# at once, with `retry_after`, as before. A 429 that names no wait (the
+# month's quota, the agent cap) is never retried: nothing a few seconds can
+# change. Decided on 26 Nov 2026.
+RATE_LIMIT_RETRIES = 3
+RATE_LIMIT_WAIT = 60.0
 
 
 def _clean(d: dict) -> dict:
@@ -497,6 +508,12 @@ class Korely:
     #: (`_write`). Set by the constructor; True on a client built without it.
     retry_writes: bool = True
 
+    #: How many more times a call answered 429 is sent, after the wait the
+    #: server asks (`_call_any`); 0 sends every call once. And the most
+    #: seconds of waiting in all for one call.
+    max_retries: int = RATE_LIMIT_RETRIES
+    max_retry_wait: float = RATE_LIMIT_WAIT
+
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -508,6 +525,8 @@ class Korely:
         client: Optional[str] = None,
         profile: Optional[str] = None,
         retry_writes: bool = True,
+        max_retries: int = RATE_LIMIT_RETRIES,
+        max_retry_wait: float = RATE_LIMIT_WAIT,
     ):
         """`client`: the tool writing, e.g. "claude-code" (argument, else
         KORELY_CLIENT), sent as `X-Korely-Client`: Korely Agent keeps it on
@@ -532,7 +551,16 @@ class Korely:
         make once; a retry that does not succeed (no answer again, a 5xx, a
         429) leaves it unconfirmed. False sends every write once. Either way
         a write left unconfirmed raises a KorelyError with code
-        ``write_not_confirmed`` that names the key to send it again with."""
+        ``write_not_confirmed`` that names the key to send it again with.
+
+        `max_retries` and `max_retry_wait`: a call answered 429 with a wait
+        (Retry-After) is sent again after that wait, at most `max_retries`
+        more times (3) and after at most `max_retry_wait` seconds of waiting
+        in all (60); a write keeps its Idempotency-Key, so it is made once. A
+        wait that would pass the bound, or a 429 that names none (the month's
+        quota, the agent cap), raises QuotaExceededError at once, with
+        ``retry_after``. ``max_retries=0`` sends every call once, as up to
+        0.3.0."""
         if profile and not api_key and not _key_from_config(profile):
             raise KorelyError(f"No key saved for the profile {profile!r}: run "
                               f"`korely init --api-key <key> --profile {profile}`.")
@@ -573,6 +601,13 @@ class Korely:
         self.client = (client or os.environ.get("KORELY_CLIENT") or "").strip() or None
         self._ssl_context = _ssl_context(ca_file or os.environ.get("KORELY_CA_FILE") or None, verify)
         self.retry_writes = bool(retry_writes)
+        if isinstance(max_retries, bool) or not isinstance(max_retries, int) or max_retries < 0:
+            raise KorelyError(f"max_retries is a whole number, 0 or more, not {max_retries!r}.")
+        if (isinstance(max_retry_wait, bool) or not isinstance(max_retry_wait, (int, float))
+                or not max_retry_wait >= 0):
+            raise KorelyError(f"max_retry_wait is seconds, 0 or more, not {max_retry_wait!r}.")
+        self.max_retries = max_retries
+        self.max_retry_wait = float(max_retry_wait)
 
     @classmethod
     def init_agent(cls, agent_caller: Optional[str] = None, *, region: str = "eu",
@@ -765,10 +800,32 @@ class Korely:
         # A header of the call's own (the Idempotency-Key of a write) only when
         # there is one: every other exchange is the one it always was.
         extra = {"headers": headers} if headers else {}
-        status, body = self._send(method, path, params=params, json_body=json_body, **extra)
+        waited, tries = 0.0, 0
+        while True:
+            status, body = self._send(method, path, params=params, json_body=json_body, **extra)
+            wait = self._rate_limit_wait(status, body, tries, waited)
+            if wait is None:
+                break
+            # The same request again, its Idempotency-Key with it: a write
+            # the 429 refused was not made, and is made once (RATE_LIMIT_WAIT).
+            time.sleep(wait)
+            waited += wait
+            tries += 1
         if not 200 <= status < 300:
             self._raise(status, body if isinstance(body, dict) else {}, method=method)
         return body
+
+    def _rate_limit_wait(self, status: int, body: Any, tries: int, waited: float) -> Optional[float]:
+        """The seconds to wait before sending again a call answered `status`,
+        or None to answer it now: a 429 that names a wait (Retry-After, or
+        `retry_after` in the body, as `_raise` reads it) within the client's
+        bounds, `max_retries` more tries and `max_retry_wait` seconds in all."""
+        if status != 429 or tries >= self.max_retries or not isinstance(body, dict):
+            return None
+        wait = _retry_after_seconds(body.get("_retry_after") or body.get("retry_after"))
+        if wait is None or waited + wait > self.max_retry_wait:
+            return None
+        return float(wait)
 
     def _write(self, path: str, json_body: Any, idempotency_key: Optional[str],
                how: str) -> dict:
@@ -1073,8 +1130,8 @@ class Korely:
         already returned. The pin makes the export the trail as it stood when
         it started.
 
-        A rate limit raises QuotaExceededError mid-way, as any call does, and
-        the SDK does not retry. To resume, call again with the same ``until``
+        A rate limit the client could not wait out (``max_retries``) raises
+        QuotaExceededError mid-way, as any call does. To resume, call again with the same ``until``
         (pin it yourself: ``until=datetime.now(timezone.utc)``) and ``offset``
         the number of events already read.
         """

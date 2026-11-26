@@ -278,12 +278,21 @@ except AuthenticationError:
     raise                           # 401: check or rotate the key
 except NotFoundError:
     memory = None                   # 404: forgotten or never existed
-except QuotaExceededError as err:   # 429
+except QuotaExceededError as err:   # 429, after the client's own waits
     if err.retry_after is None:
-        raise                       # monthly quota used up: nothing to wait for
-    time.sleep(err.retry_after)     # rate limit: wait as long as the server said
-    memory = korely.get("mem_8f2c1a")
+        raise                       # monthly quota or agent cap: nothing to wait for
+    print(f"still limited: try again in {err.retry_after} s")
 ```
+
+A 429 that says how long to wait (Retry-After) is waited out by the client,
+which sends the same call again: at most 3 more times and 60 seconds of
+waiting in all for one call (`Korely(max_retries=3, max_retry_wait=60)`), a
+write with the same Idempotency-Key, so it is made once. A wait that would
+pass those bounds is not waited: `QuotaExceededError` comes at once, with
+`retry_after`. A 429 that names no wait (the month's quota, the agent cap)
+comes at once too. `max_retries=0` sends every call once and leaves the 429
+to you, as up to 0.3.0; `AsyncKorely` takes the same two options and waits in
+its worker thread, never on the event loop.
 
 | Exception | Status | Typical `code` |
 |---|---|---|
@@ -299,8 +308,9 @@ except QuotaExceededError as err:   # 429
 Every `APIError` has `retry_after`: the seconds of the server's `Retry-After`
 header, or None when it sent none. A rate limit sends it, and so does
 `service_paused`, the pause of the calls to a model (a spending stop or a
-provider's brake; it asks for an hour). The SDK does not retry these:
-its one retry is of a write that got no answer at all (see `add()`).
+provider's brake; it asks for an hour). The SDK waits out a 429 within the
+bounds above; it never retries a 503 by itself, and its other retry is of a
+write that got no answer at all (see `add()`).
 
 A key that expires ends with a 401 like any wrong key. To see it coming:
 Korely 1.0.23 and later say on every answer to such a key when it ends, and

@@ -37,7 +37,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any, AsyncIterator, List, Optional
 
-from .client import Korely
+from .client import RATE_LIMIT_RETRIES, RATE_LIMIT_WAIT, Korely
 from .models import (
     AccountDeleteReceipt,
     AgentDeleteReceipt,
@@ -81,11 +81,15 @@ class AsyncKorely:
                  base_url: Optional[str] = None, timeout: float = 30.0,
                  ca_file: Optional[str] = None, verify: bool = True,
                  client: Optional[str] = None, profile: Optional[str] = None,
-                 retry_writes: bool = True):
+                 retry_writes: bool = True, max_retries: int = RATE_LIMIT_RETRIES,
+                 max_retry_wait: float = RATE_LIMIT_WAIT):
+        # A 429 is waited out in the worker thread of the call (`_run`), never
+        # on the event loop.
         self._sync = Korely(api_key=api_key, region=region,
                             base_url=base_url, timeout=timeout,
                             ca_file=ca_file, verify=verify, client=client, profile=profile,
-                            retry_writes=retry_writes)
+                            retry_writes=retry_writes, max_retries=max_retries,
+                            max_retry_wait=max_retry_wait)
 
     @classmethod
     async def init_agent(cls, agent_caller: Optional[str] = None, **kw) -> AgentInitResult:

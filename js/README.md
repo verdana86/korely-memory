@@ -157,6 +157,7 @@ try {
   await korely.add("...", { user_id: "u" });
 } catch (e) {
   if (e instanceof QuotaExceededError && e.retryAfter !== undefined) {
+    // after the client's own waits: still limited
     console.log(`Rate limited, retry after ${e.retryAfter}s`);
   } else if (e instanceof APIError && e.code === "invalid_key") {
     console.log("Bad or missing API key");
@@ -181,8 +182,16 @@ of all of these, and everything else: 422, 503; a write that names neither
 later, and this client sends only the ids each call names). Every `APIError` has
 `retryAfter` when the server sent `Retry-After`: a rate limit, and the 503
 `service_paused` (the service does not call the models now, a spending stop or
-a provider's brake; it asks for an hour). The
-SDK does not retry these: its one retry is of a write that got no answer at
+a provider's brake; it asks for an hour).
+
+A 429 that says how long to wait (Retry-After) is waited out by the client,
+which sends the same call again: at most 3 more times and 60 seconds of
+waiting in all for one call (`maxRetries`, `maxRetryWait`), a write with the
+same Idempotency-Key, so it is made once. A wait that would pass those bounds
+is not waited: `QuotaExceededError` rejects at once, with `retryAfter`, and so
+does a 429 that names no wait (the month's quota, the agent cap).
+`maxRetries: 0` sends every call once, as up to 0.3.0. The client never
+retries a 503 by itself; its other retry is of a write that got no answer at
 all (see `add()`).
 
 A call that is not a `GET` (`add`, `update`, `delete`...) is never redirected:
@@ -199,6 +208,8 @@ new Korely({
   region: "eu",             // the API, api.korely.ai: data stored in the EU
   timeoutMs: 30000,         // covers the whole request, response body included
   retryWrites: true,        // a write with no answer is sent once more, same key
+  maxRetries: 3,            // a 429 with a wait is sent again, at most 3 more times
+  maxRetryWait: 60,         // and after at most 60 s of waiting in all; 0 retries: maxRetries: 0
 });
 ```
 
