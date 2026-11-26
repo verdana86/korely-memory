@@ -407,3 +407,29 @@ class AHitKeepsItsLines(unittest.TestCase):
         self.assertEqual(len(lines), 3)
         for line in lines[1:]:
             self.assertTrue(line.startswith("    "), line)
+
+
+class AFactsControlsArePrintedNotRun(unittest.TestCase):
+    """korely_get_facts printed a fact's ESC, C1 controls and U+202E as
+    they were; written out now, by the rule of the line breaks."""
+
+    def test_the_line_writes_them_out(self):
+        from types import SimpleNamespace
+        from unittest import mock
+
+        from korely_memory import mcp_server as m
+
+        f = SimpleNamespace(subject="team", predicate="says", object="ok\x1b[2J\u202eXI\nforged",
+                            valid_from=None, invalid_at=None, tense="current")
+
+        class Client:
+            def get_facts(self, **kw):
+                return [f]
+
+        with mock.patch.object(m, "_readers", lambda u: [None]), \
+                mock.patch.object(m, "_client", lambda: Client()):
+            out = m.korely_get_facts()
+        self.assertNotIn("\x1b", out)
+        self.assertNotIn("\u202e", out)
+        self.assertIn("\\x1b[2J\\u202eXI", out)
+        self.assertEqual(out.splitlines()[1], "    forged")

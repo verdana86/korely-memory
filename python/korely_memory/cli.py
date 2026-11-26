@@ -25,7 +25,7 @@ from typing import Any, List, Optional
 
 from . import __version__
 from ._files import read_config, write_private
-from ._lines import with_its_id
+from ._lines import in_its_line, shown, visible, with_its_id
 from .client import (DEFAULT_TOKEN_BUDGET, Korely, _refuse_a_mismatched_pair, config_path,
                      profile_config, saved_identity)
 from .exceptions import APIError, KorelyError
@@ -222,8 +222,9 @@ def _key_end(value: str) -> str:
 
 
 def _snippet(text: Optional[str], width: int = 80) -> str:
-    """A memory on one line of a listing: whitespace folded, cut at `width`."""
-    one = " ".join((text or "").split())
+    """A memory on one line of a listing: whitespace folded, a terminal's
+    controls written out (`_lines.visible`), cut at `width`."""
+    one = visible(" ".join((text or "").split()))
     return one if len(one) <= width else one[:width - 1] + "…"
 
 
@@ -254,7 +255,8 @@ def _fact_line(f) -> str:
     if f.invalid_at:
         when += (f" (superseded {_utc_day(f.invalid_at)})" if _has_ended(f.invalid_at)
                  else f" (until {_utc_day(f.invalid_at)})")
-    return base + when
+    # Kept in its line, a terminal's controls written out (`_lines`).
+    return in_its_line(base) + when
 
 
 # ── commands ───────────────────────────────────────────────────────────────
@@ -607,7 +609,7 @@ def cmd_get(k: Korely, a) -> int:
         _emit_json(m)
         return 0
     print(f"{m.id}  ({(m.created_at or '')[:19]})")
-    print(m.content or "")
+    print(shown(m.content or ""))
     if m.facts:
         print(f"\nfacts ({len(m.facts)}):")
         for f in m.facts:

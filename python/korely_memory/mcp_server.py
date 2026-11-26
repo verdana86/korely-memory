@@ -43,7 +43,7 @@ from .exceptions import KorelyError
 
 # The protocol, standard library only (_mcp_stdio.py): the `mcp` package needs
 # Python 3.10, and mcp 2.0 removed the module this server imported.
-from ._lines import with_its_id
+from ._lines import in_its_line, with_its_id
 from ._mcp_stdio import Server
 from .client import __version__
 
@@ -201,7 +201,9 @@ def _fact_line(f) -> str:
         line += f"  [superseded {_utc_day(ia)}]"
     elif tense == "planned":
         line += "  [planned, not done]"
-    return line
+    # Kept in its line and with a terminal's controls written out (`_lines`),
+    # as a search hit is: a fact's words are anyone's who can write.
+    return in_its_line(line)
 
 
 @mcp.tool()

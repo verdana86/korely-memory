@@ -236,6 +236,34 @@ class TestParserWiring(unittest.TestCase):
             cli.cmd_facts(_client(rec), _args(["facts", "--reader", "planner"]))
         self.assertEqual(rec.last["params"]["reader"], "planner")
 
+    def test_a_terminals_controls_in_a_memory_are_printed_not_run(self):
+        """ESC (an ANSI/CSI sequence), BACKSPACE, a C1 control and U+202E
+        RIGHT-TO-LEFT OVERRIDE in what a memory or a fact holds reached the
+        terminal as they were: a memory could clear the screen, write over
+        a line or reverse the letters after it (review of 26 Nov 2026).
+        Every printer writes them out, by the rule of the line breaks."""
+        bad = "pay \x1b[2J\x1b[1Aok\x08\x9b \u202eXI\u202c and \U0001F469\u200D\U0001F4BB"
+        seen = "pay \\x1b[2J\\x1b[1Aok\\x08\\x9b \\u202eXI\\u202c and \U0001F469\u200D\U0001F4BB"
+        fact = {"id": "fct_1", "subject": "team", "predicate": "says", "object": bad}
+        rec = (_Recorder().queue(200, {"results": [{"id": "mem_1", "snippet": bad, "score": 0.5}]})
+               .queue(200, {"facts": [fact], "total": 1})
+               .queue(200, {"memories": [{"id": "mem_1", "content": bad}], "total": 1})
+               .queue(200, {"id": "mem_1", "content": bad + "\nline two\x07", "facts": [fact]}))
+        printed = []
+        for argv, cmd in ((["search", "pay"], cli.cmd_search), (["facts"], cli.cmd_facts),
+                          (["list"], cli.cmd_list), (["get", "mem_1"], cli.cmd_get)):
+            out = io.StringIO()
+            with redirect_stdout(out):
+                cmd(_client(rec), _args(argv))
+            printed.append(out.getvalue())
+        for text in printed:
+            for ch in ("\x1b", "\x08", "\x9b", "\x07", "\u202e", "\u202c"):
+                self.assertNotIn(ch, text)
+        self.assertIn(seen, printed[0])
+        self.assertIn(seen, printed[1])
+        self.assertIn(seen[:40], printed[2])
+        self.assertIn(seen + "\nline two\\x07", printed[3])
+
     def test_all_subcommands_present(self):
         # every documented command must parse (regression on accidental drops)
         for argv in (

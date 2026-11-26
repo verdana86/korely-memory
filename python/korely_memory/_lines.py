@@ -12,15 +12,63 @@ itself (datamarking, section III-C).
 """
 from __future__ import annotations
 
+import unicodedata
+
 #: What every line of a text after its first starts with.
 CONTINUED = "    "
 
+# The bidirectional classes of the characters that change the direction of
+# what follows them (UAX #9, Unicode Bidirectional Algorithm, table 4: the
+# explicit embeddings, overrides and isolates and their terminators), and of
+# the marks with a strong direction that are formats (LRM, RLM, ALM).
+_STEERS = frozenset({"LRE", "RLE", "LRO", "RLO", "PDF", "LRI", "RLI", "FSI", "PDI",
+                     "L", "R", "AL"})
+
+
+def _hidden(ch: str) -> bool:
+    """A character a terminal acts on instead of printing, by its Unicode
+    properties: a control (category Cc: ESC, which begins an ANSI/CSI
+    sequence, BACKSPACE, the C1 controls U+0080 to U+009F) that is not white
+    space, or a format character (Cf) that steers the direction of the text
+    (U+202E RIGHT-TO-LEFT OVERRIDE and the rest, CVE-2021-42574, "Trojan
+    Source"). The joiners (bidirectional class BN) are not: an emoji needs
+    them."""
+    cat = unicodedata.category(ch)
+    if cat == "Cc":
+        return not ch.isspace()
+    return cat == "Cf" and unicodedata.bidirectional(ch) in _STEERS
+
+
+def visible(text: str) -> str:
+    """`text` with every character `_hidden` says a terminal acts on written
+    as its escape (`\\x1b`, `\\u202e`), so what a memory holds is read, never
+    run: a memory could clear the screen, move the cursor over a line or
+    reverse the order of the letters after it."""
+    if not any(_hidden(ch) for ch in text):
+        return text
+    out = []
+    for ch in text:
+        if _hidden(ch):
+            cp = ord(ch)
+            out.append(f"\\x{cp:02x}" if cp < 0x100 else
+                       f"\\u{cp:04x}" if cp < 0x10000 else f"\\U{cp:08x}")
+        else:
+            out.append(ch)
+    return "".join(out)
+
 
 def in_its_line(text: str) -> str:
-    """`text` with every line after its first under CONTINUED. A line break
-    is whatever `str.splitlines` breaks on (LF, CR, CR LF, VT, FF, FS, GS,
-    RS, NEL, U+2028, U+2029). A text with none is itself."""
-    return ("\n" + CONTINUED).join(text.splitlines())
+    """`text` with every line after its first under CONTINUED, and each line
+    `visible`. A line break is whatever `str.splitlines` breaks on (LF, CR,
+    CR LF, VT, FF, FS, GS, RS, NEL, U+2028, U+2029). A text with neither is
+    itself."""
+    return ("\n" + CONTINUED).join(visible(line) for line in text.splitlines())
+
+
+def shown(text: str) -> str:
+    """A text printed alone, its lines at the margin as written, each line
+    `visible` (`korely get`)."""
+    return "\n".join(visible(line) for line in text.splitlines())
 
 
 def with_its_id(head: str, text: str, item_id: str) -> str:
