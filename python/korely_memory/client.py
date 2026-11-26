@@ -473,12 +473,14 @@ def _new_idempotency_key() -> str:
 
 
 def _retry_after_seconds(raw: Any) -> Optional[int]:
-    """Retry-After in whole seconds, rounded up, or None if absent/unreadable."""
+    """Retry-After in whole seconds, rounded up, or None if absent/unreadable.
+    `inf` and `nan` are unreadable too: math.ceil raised OverflowError and
+    ValueError on them, past the errors the library raises."""
     if raw is None:
         return None
     try:
         return max(0, math.ceil(float(raw)))
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         return None
 
 

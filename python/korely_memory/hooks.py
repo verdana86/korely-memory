@@ -735,7 +735,13 @@ def run_hook(event: str, tool: str, data: Dict[str, Any], *, every: int = DEFAUL
             from .client import Korely
 
             def client_factory(profile: Optional[str] = None) -> Any:
-                return Korely(timeout=NETWORK_TIMEOUT, client=tool, profile=profile)
+                # Never a wait on a 429 (max_retries=0): the assistant stops a
+                # hook after 8 to 10 seconds, 3 at the end of a session, and a
+                # hook asleep on a Retry-After was killed before it wrote its
+                # line in hook.log (review of 26 Nov 2026). The 429 is the
+                # hook's failure, logged, and the turns stay for the next one.
+                return Korely(timeout=NETWORK_TIMEOUT, client=tool, profile=profile,
+                              max_retries=0)
         ev = Event(data)
         scope = scope_for(ev.cwd, fixed_scope)
         repo = repo_name(ev.cwd)

@@ -286,7 +286,7 @@ except QuotaExceededError as err:   # 429, after the client's own waits
 
 A 429 that says how long to wait (Retry-After) is waited out by the client,
 which sends the same call again: at most 3 more times and 60 seconds of
-waiting in all for one call (`Korely(max_retries=3, max_retry_wait=60)`), a
+waiting in all for each request (`Korely(max_retries=3, max_retry_wait=60)`), a
 write with the same Idempotency-Key, so it is made once. A wait that would
 pass those bounds is not waited: `QuotaExceededError` comes at once, with
 `retry_after`. A 429 that names no wait (the month's quota, the agent cap)
@@ -559,7 +559,8 @@ key is told by its shape alone, with no list of vendors:
   secret pasted into a session.
 
 A hook never breaks the assistant: a failure is a line in
-`~/.korely/hook.log`, without the text of the session. A read that fails (a
+`~/.korely/hook.log`, without the text of the session. A hook never waits
+out a 429 either (the assistant would stop it first): it is logged at once. A read that fails (a
 timeout, a key that ended, no key) is also one line in what the assistant is
 handed, in the place of that memory: `Korely memory of user_id repo:<name>
 was not read (<the error>): it is missing from this context`, with what

@@ -186,7 +186,7 @@ a provider's brake; it asks for an hour).
 
 A 429 that says how long to wait (Retry-After) is waited out by the client,
 which sends the same call again: at most 3 more times and 60 seconds of
-waiting in all for one call (`maxRetries`, `maxRetryWait`), a write with the
+waiting in all for each request (`maxRetries`, `maxRetryWait`), a write with the
 same Idempotency-Key, so it is made once. A wait that would pass those bounds
 is not waited: `QuotaExceededError` rejects at once, with `retryAfter`, and so
 does a 429 that names no wait (the month's quota, the agent cap).

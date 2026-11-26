@@ -139,6 +139,19 @@ class AFourTwentyNineIsWaitedOut(unittest.TestCase):
             with self.subTest(**bad), self.assertRaises(KorelyError):
                 Korely(api_key="kor_live_test", **bad)
 
+    def test_an_unreadable_retry_after_is_the_librarys_error(self):
+        """`Retry-After: inf` raised OverflowError from math.ceil, and `nan`
+        a ValueError, past the library's errors: unreadable, so no wait, and
+        QuotaExceededError with retry_after None."""
+        for raw in ("inf", "-inf", "nan", "1e400", "soon"):
+            with self.subTest(retry_after=raw):
+                server = _Server(_limited(raw))
+                with self.assertRaises(QuotaExceededError) as caught:
+                    _client(server).search("tea", user_id="u")
+                self.assertIsNone(caught.exception.retry_after)
+                self.assertEqual(len(server.calls), 1)
+        self.assertEqual(self.slept, [])
+
     def test_other_errors_are_never_waited_for(self):
         for status in (400, 401, 403, 404, 409, 422, 500, 503):
             with self.subTest(status=status):

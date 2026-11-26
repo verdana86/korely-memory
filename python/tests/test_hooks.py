@@ -405,6 +405,44 @@ class NotRead(Base):
                                    FakeClient("")), "")
 
 
+class AHookNeverWaitsOnARateLimit(Base):
+    """The client waits out a 429 since 0.4.0, but the assistant stops a hook
+    after 8 to 10 seconds, 3 at the end of a session: a hook asleep on a
+    Retry-After was killed before it wrote its line in hook.log (review of 26
+    Nov 2026). The hooks' own client sends each call once: the 429 is logged
+    at once. A real server in this process, and the hook's own client."""
+
+    def setUp(self):
+        super().setUp()
+        from test_client import _Server
+
+        self.server = _Server(lambda method, path: (
+            429, {"Retry-After": "30"}, {"code": "rate_limit_exceeded", "message": "slow down"}))
+        self.addCleanup(self.server.close)
+        os.environ.update({"no_proxy": "*", "NO_PROXY": "*"})
+        for name in ("KORELY_API_KEY", "KORELY_BASE_URL", "KORELY_PROFILE"):
+            os.environ.pop(name, None)
+        config = Path(os.environ["KORELY_CONFIG_HOME"]) / "config.json"
+        config.parent.mkdir(parents=True, exist_ok=True)
+        config.write_text(json.dumps({"api_key": "kor_self_RRRRRRRRratelimitedAAAAAAA",
+                                      "base_url": self.server.url}))
+
+    def test_the_session_start_answers_at_once_and_logs_the_429(self):
+        from unittest import mock
+
+        from korely_memory import client as client_module
+
+        slept = []
+        with mock.patch.object(client_module.time, "sleep", slept.append):
+            hooks.run_hook("session-start", "claude-code",
+                           {"session_id": "r1", "cwd": str(self.repo)},
+                           background=self.background.append)
+        self.assertEqual(slept, [], "the hook waited on the Retry-After")
+        self.assertEqual(len(self.server.seen), 1)
+        log = (Path(os.environ["KORELY_CONFIG_HOME"]) / "hook.log").read_text()
+        self.assertIn("QuotaExceededError: slow down", log)
+
+
 class KeyEnds(Base):
     """Korely 1.0.23 says on every answer when the key ends
     (Korely-Key-Expires-At); the hook never read it, so a key's end reached
