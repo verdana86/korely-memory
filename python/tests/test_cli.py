@@ -376,7 +376,7 @@ class TheTenseOfAFactThatEndsLater(unittest.TestCase):
         already closed for every date we can read."""
         from korely_memory.cli import _fact_line
 
-        line = _fact_line(self._fact("non-una-data"))
+        line = _fact_line(self._fact("not-a-date"))
         self.assertIn("u1 · is_on · Gold", line)
         self.assertIn("superseded", line)
 
@@ -598,7 +598,7 @@ if __name__ == "__main__":
     unittest.main()
 
 
-class TestLaConformitaDel29Set(unittest.TestCase):
+class TheCliDoesWhatItsDocsPromise(unittest.TestCase):
     """The public conformance test of 2026-09-29: what the CLI docs promise."""
 
     def test_facts_json_has_the_api_shape(self):

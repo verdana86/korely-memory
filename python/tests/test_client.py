@@ -763,16 +763,16 @@ class TheSniTrap(unittest.TestCase):
 
 
 class TheServerItTalksTo(unittest.TestCase):
-    """Chi installa sulla propria macchina non deve finire sulla nostra.
+    """Whoever installs Korely on their own machine must not end up on ours.
 
-    `KORELY_BASE_URL` era letto dalla CLI e non dalla classe. Chi installava
-    Korely sul proprio server, esportava KORELY_API_KEY e KORELY_BASE_URL e
-    scriveva `Korely()` parlava con api.korely.ai. La chiave veniva rifiutata
-    con un 401, quindi non si memorizzava niente, ma la memoria era gia'
-    partita nel corpo della richiesta.
+    `KORELY_BASE_URL` was read by the CLI and not by the class. Somebody who
+    installed Korely on their own server, exported KORELY_API_KEY and
+    KORELY_BASE_URL and wrote `Korely()` was talking to api.korely.ai. The
+    key was refused with a 401, so nothing was stored, but the memory had
+    already travelled in the body of the request.
 
-    Per un prodotto venduto sul fatto che i dati restano sulla tua macchina,
-    mandarli altrove in silenzio non e' una scomodita'.
+    For a product sold on your data staying on your machine, sending it
+    somewhere else in silence is not a nuisance.
     """
 
     def setUp(self):
@@ -786,22 +786,21 @@ class TheServerItTalksTo(unittest.TestCase):
             else:
                 os.environ[k] = v
 
-    def test_la_variabile_e_rispettata(self):
+    def test_the_variable_is_honoured(self):
         os.environ["KORELY_BASE_URL"] = "https://203-0-113-64.nip.io"
         self.assertEqual(Korely().base_url, "https://203-0-113-64.nip.io")
 
-    def test_senza_variabile_resta_il_servizio_ospitato(self):
-        """Con una chiave del servizio ospitato, si intende: una `kor_self_`
-        senza indirizzo adesso viene rifiutata prima di partire, ed e' il punto
-        della riparazione."""
+    def test_without_the_variable_it_is_the_hosted_service(self):
+        """With a key of the hosted service, that is: a `kor_self_` key with
+        no address is now refused before anything is sent, which is the point
+        of the fix."""
         os.environ.pop("KORELY_BASE_URL", None)
         os.environ["KORELY_API_KEY"] = "kor_live_test"
         self.assertEqual(Korely().base_url, "https://api.korely.ai")
 
-    def test_una_chiave_di_casa_senza_indirizzo_viene_fermata(self):
-        """Il caso esatto che ha fatto partire una memoria verso di noi: chiave
-        della propria installazione, nessun indirizzo, e il default che vince.
-        Adesso non parte niente."""
+    def test_a_self_hosted_key_with_no_address_is_stopped(self):
+        """The very case that sent a memory to us: a key of one's own
+        install, no address, and the default winning. Now nothing is sent."""
         from korely_memory.exceptions import KorelyError
 
         os.environ.pop("KORELY_BASE_URL", None)
@@ -811,35 +810,34 @@ class TheServerItTalksTo(unittest.TestCase):
         self.assertIn("kor_self_", str(caught.exception))
         self.assertIn("base_url", str(caught.exception))
 
-    def test_una_chiave_ospitata_su_una_macchina_altrui_viene_fermata(self):
-        """Lo specchio: una credenziale che abbiamo emesso noi non si consegna
-        alla macchina di qualcun altro."""
+    def test_a_hosted_key_on_somebody_elses_machine_is_stopped(self):
+        """The mirror case: a credential the hosted service issued is never
+        handed to somebody else's machine."""
         from korely_memory.exceptions import KorelyError
 
         os.environ["KORELY_API_KEY"] = "kor_live_test"
         with self.assertRaises(KorelyError):
-            Korely(base_url="https://non-e-nostra.example")
+            Korely(base_url="https://not-ours.example")
 
-    def test_l_argomento_esplicito_vince_sulla_variabile(self):
-        """Un argomento e' una decisione, una variabile e' un'impostazione."""
-        os.environ["KORELY_BASE_URL"] = "https://variabile.example"
+    def test_the_explicit_argument_wins_over_the_variable(self):
+        """An argument is a decision, a variable is a setting."""
+        os.environ["KORELY_BASE_URL"] = "https://variable.example"
         self.assertEqual(
-            Korely(base_url="https://esplicito.example").base_url,
-            "https://esplicito.example")
+            Korely(base_url="https://explicit.example").base_url,
+            "https://explicit.example")
 
-    def test_la_barra_finale_non_raddoppia(self):
-        os.environ["KORELY_BASE_URL"] = "https://mio.example/"
-        self.assertEqual(Korely().base_url, "https://mio.example")
+    def test_the_trailing_slash_is_not_doubled(self):
+        os.environ["KORELY_BASE_URL"] = "https://mine.example/"
+        self.assertEqual(Korely().base_url, "https://mine.example")
 
 
-class IlPercorsoDocumentato(unittest.TestCase):
-    """`korely init --base-url ...`, poi `from korely_memory import Korely`.
+class TheDocumentedPath(unittest.TestCase):
+    """`korely init --base-url ...`, then `from korely_memory import Korely`.
 
-    La CLI scrive nel file di configurazione sia la chiave sia l'indirizzo, e
-    li rilegge entrambi. La classe rileggeva solo la chiave, quindi il percorso
-    che la documentazione chiama documentato prendeva una chiave self-hosted e
-    la mandava ad api.korely.ai. Stesso difetto della variabile d'ambiente,
-    nell'ultimo posto dove restava.
+    The CLI writes both the key and the address in the config file, and reads
+    both back. The class read back only the key, so the path the docs
+    describe took a self-hosted key and sent it to api.korely.ai. The same
+    defect as the environment variable's, in the last place it was left.
     """
 
     def setUp(self):
@@ -850,8 +848,8 @@ class IlPercorsoDocumentato(unittest.TestCase):
         os.environ.pop("KORELY_BASE_URL", None)
         os.environ.pop("KORELY_API_KEY", None)
         with open(os.path.join(self.dir, "config.json"), "w", encoding="utf-8") as fh:
-            json.dump({"api_key": "kor_self_dal_file",
-                       "base_url": "https://il-mio-server.example"}, fh)
+            json.dump({"api_key": "kor_self_from_the_file",
+                       "base_url": "https://my-server.example"}, fh)
 
     def tearDown(self):
         shutil.rmtree(self.dir, ignore_errors=True)
@@ -861,56 +859,56 @@ class IlPercorsoDocumentato(unittest.TestCase):
             else:
                 os.environ[k] = v
 
-    def test_prende_dal_file_sia_la_chiave_sia_l_indirizzo(self):
+    def test_it_takes_both_the_key_and_the_address_from_the_file(self):
         k = Korely()
-        self.assertEqual(k.api_key, "kor_self_dal_file")
-        self.assertEqual(k.base_url, "https://il-mio-server.example")
+        self.assertEqual(k.api_key, "kor_self_from_the_file")
+        self.assertEqual(k.base_url, "https://my-server.example")
 
-    def test_la_variabile_vince_sul_file(self):
-        os.environ["KORELY_BASE_URL"] = "https://dalla-variabile.example"
-        self.assertEqual(Korely().base_url, "https://dalla-variabile.example")
+    def test_the_variable_wins_over_the_file(self):
+        os.environ["KORELY_BASE_URL"] = "https://from-the-variable.example"
+        self.assertEqual(Korely().base_url, "https://from-the-variable.example")
 
-    def test_un_file_senza_indirizzo_non_rompe_niente(self):
-        """I file scritti da una `korely init` piu' vecchia hanno solo la
-        chiave. Devono continuare a funzionare, sul servizio ospitato."""
+    def test_a_file_with_no_address_breaks_nothing(self):
+        """Files written by an older `korely init` hold only the key. They
+        must keep working, on the hosted service."""
         with open(os.path.join(self.dir, "config.json"), "w", encoding="utf-8") as fh:
-            json.dump({"api_key": "kor_live_vecchio"}, fh)
+            json.dump({"api_key": "kor_live_old"}, fh)
         self.assertEqual(Korely().base_url, "https://api.korely.ai")
 
-    def test_un_file_illeggibile_non_rompe_niente(self):
+    def test_an_unreadable_file_breaks_nothing(self):
         with open(os.path.join(self.dir, "config.json"), "w", encoding="utf-8") as fh:
-            fh.write("non e json")
+            fh.write("not json")
         os.environ["KORELY_API_KEY"] = "kor_live_x"
         self.assertEqual(Korely().base_url, "https://api.korely.ai")
 
 
-class LoStatoDellaScrittura(unittest.TestCase):
-    """`status` era sul filo e non nel modello.
+class TheStatusOfAWrite(unittest.TestCase):
+    """`status` was on the wire and not in the model.
 
-    Il README del server dice, del risultato di una scrittura: "what the
-    `"status": "processing"` in the reply means". Il campo arrivava e veniva
-    buttato via, perche' `Memory` non lo dichiarava e `_take` tiene solo i campi
-    dichiarati.
+    The server's README says, of the result of a write: "what the
+    `"status": "processing"` in the reply means". The field arrived and was
+    thrown away, because `Memory` did not declare it and `_take` keeps only
+    the declared fields.
 
-    Non e' cosmetico: i fatti vengono estratti da un worker qualche secondo dopo
-    la scrittura, e "processing" e' il modo in cui una scrittura dice che i
-    fatti non ci sono ancora. Senza, distinguere una lista vuota da una lista
-    non-ancora si puo' fare solo tirando a indovinare o interrogando alla cieca.
+    It is not cosmetic: the facts are extracted by a worker a few seconds
+    after the write, and "processing" is how a write says its facts are not
+    there yet. Without it, telling an empty list from a list not ready yet
+    takes guessing or polling blind.
 
-    Trovato da un collaudatore che stava seguendo il README.
+    Found by a tester who was following the README.
     """
 
-    def test_lo_stato_arriva_fino_a_chi_chiama(self):
+    def test_the_status_reaches_the_caller(self):
         m = Memory.from_dict({"id": "mem_1", "content": "x", "status": "processing"})
         self.assertEqual(m.status, "processing")
 
-    def test_una_risposta_senza_stato_non_rompe_niente(self):
+    def test_an_answer_without_a_status_breaks_nothing(self):
         m = Memory.from_dict({"id": "mem_1", "content": "x"})
         self.assertIsNone(m.status)
 
-    def test_i_fatti_continuano_ad_arrivare(self):
-        """Il controllo del controllo: aggiungere un campo non deve aver
-        spostato quello che c'era."""
+    def test_the_facts_still_arrive(self):
+        """The check of the check: adding a field must not have moved what
+        was there."""
         m = Memory.from_dict({
             "id": "mem_1", "content": "x", "status": "done",
             "facts": [{"id": "fct_1", "subject": "a", "predicate": "b", "object": "c"}],
