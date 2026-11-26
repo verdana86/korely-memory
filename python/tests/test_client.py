@@ -1583,21 +1583,48 @@ class OnlyAStaleWriteIsAStaleWrite(unittest.TestCase):
                 self.assertEqual(caught.exception.code, "stale_write")
 
 
-class TheRetryAfterOfAPausedWrite(unittest.TestCase):
-    """The Cloud answers 503 `writes_paused`, with Retry-After, when its daily
-    model budget is spent (the Cloud's spending brake). The transport
-    read the header on every error and only a 429 kept it, so the one number
-    that says when writes resume was thrown away."""
+class TheAgentCapIsA429(unittest.TestCase):
+    """The Cloud refuses a new agent name past the plan's with a 429
+    `agent_cap_exceeded` and no Retry-After. Up to 0.3.0 the docstrings and
+    the README put it under NamespaceForbiddenError (403), so code written
+    from them caught the wrong class and never saw it."""
 
-    _PAUSED = {"code": "writes_paused",
-               "message": "Writes that need a model are paused until 00:00 UTC."}
+    _CAP = {"code": "agent_cap_exceeded", "message": "The Hobby plan holds 3 named agents.",
+            "limit": 3, "used": 3}
+
+    def test_it_is_raised_as_a_quota_error_without_a_wait(self):
+        with self.assertRaises(QuotaExceededError) as caught:
+            Korely._raise(429, dict(self._CAP))
+        e = caught.exception
+        self.assertNotIsInstance(e, NamespaceForbiddenError)
+        self.assertEqual((e.status, e.code, e.retry_after), (429, "agent_cap_exceeded", None))
+
+    def test_the_docstrings_put_it_under_its_class(self):
+        self.assertIn("agent_cap_exceeded", QuotaExceededError.__doc__)
+        doc = NamespaceForbiddenError.__doc__
+        self.assertNotIn('``code == "agent_cap_exceeded"``', doc)
+        self.assertIn("is a 429", doc)
+        for cls in (APIError, QuotaExceededError):
+            self.assertNotIn("writes_paused", cls.__doc__, cls.__name__)
+        self.assertNotIn("no rate limit", Korely.ping.__doc__)
+
+
+class TheRetryAfterOfAPausedWrite(unittest.TestCase):
+    """The server answers 503 `service_paused`, with Retry-After, when it does
+    not call the models now (a spending stop or a provider's brake). The
+    transport read the header on every error and only a 429 kept it, so the
+    one number that says when the model calls resume was thrown away."""
+
+    _PAUSED = {"code": "service_paused",
+               "message": "The service does not call the models now. Nothing was written; "
+                          "retry later (see Retry-After)."}
 
     def test_a_503_keeps_its_retry_after(self):
         with self.assertRaises(APIError) as caught:
             Korely._raise(503, dict(self._PAUSED, _retry_after="41234"))
         e = caught.exception
         self.assertNotIsInstance(e, QuotaExceededError)
-        self.assertEqual((e.status, e.code, e.retry_after), (503, "writes_paused", 41234))
+        self.assertEqual((e.status, e.code, e.retry_after), (503, "service_paused", 41234))
         self.assertEqual(e.body, self._PAUSED)
 
     def test_through_the_real_transport(self):
@@ -1617,7 +1644,7 @@ class TheRetryAfterOfAPausedWrite(unittest.TestCase):
         with mock.patch("korely_memory.client._open", paused):
             with self.assertRaises(APIError) as caught:
                 Korely(api_key="kor_live_transport").update("mem_1", content="x")
-        self.assertEqual(caught.exception.code, "writes_paused")
+        self.assertEqual(caught.exception.code, "service_paused")
         self.assertEqual(caught.exception.retry_after, 41234)
 
     def test_an_error_without_the_header_says_none(self):

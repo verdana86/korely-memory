@@ -84,8 +84,8 @@ Every method wraps exactly one REST endpoint.
 `AsyncKorely` has the same methods, awaitable (`iter_audit` is an
 `async for`).
 
-`ping()` checks a key without spending anything (no scope, no rate limit, no
-quota) and answers its `tier`, `region` and `scopes`, on the Cloud and on the
+`ping()` checks a key without spending any quota (no scope needed; the rate
+limit counts it, as every call) and answers its `tier`, `region` and `scopes`, on the Cloud and on the
 Self-hosted alike.
 
 `Korely.init_agent("my-app")` signs up for a key that costs nothing, with no
@@ -276,18 +276,18 @@ except QuotaExceededError as err:   # 429
 | Exception | Status | Typical `code` |
 |---|---|---|
 | `AuthenticationError` | 401 | `invalid_key` |
-| `NamespaceForbiddenError` | 403 | `agent_cap_exceeded`, missing scope |
+| `NamespaceForbiddenError` | 403 | missing scope |
 | `NotFoundError` | 404 | `not_found` |
 | `ConflictError` | 409 | `account_has_login` (Cloud), `fact_not_current` (`correct_fact()` of a fact that is history; `current_fact_id` is the fact to correct instead, None when nothing replaced it), `conflict` (Self-hosted) |
 | `StaleWriteError` (a `ConflictError`) | 409 | `stale_write` |
-| `QuotaExceededError` | 429 | `rate_limit_exceeded` (has `retry_after`), `quota_exceeded` (monthly, `retry_after` is None) |
+| `QuotaExceededError` | 429 | `rate_limit_exceeded` (has `retry_after`), `quota_exceeded` (monthly, `retry_after` is None), `agent_cap_exceeded` (Cloud: a new `agent_id` past the plan's named agents, `retry_after` is None) |
 | `TooManyBatchesError` (a `QuotaExceededError`) | 429 | `too_many_batches` (`batch()`, Cloud only: three imports still running; send again when one finishes) |
-| `APIError` | any other, and the base of all of the above | `invalid_request` (422), `search_unavailable` / `model_unavailable` (503, safe to retry), `writes_paused` (503, Cloud only, has `retry_after`) |
+| `APIError` | any other, and the base of all of the above | `invalid_request` (422), `search_unavailable` / `model_unavailable` (503, safe to retry), `service_paused` (503, has `retry_after`) |
 
 Every `APIError` has `retry_after`: the seconds of the server's `Retry-After`
 header, or None when it sent none. A rate limit sends it, and so does
-`writes_paused`, the Cloud's pause of the writes that need a model once its
-daily model budget is spent (until 00:00 UTC). The SDK does not retry these:
+`service_paused`, the pause of the calls to a model (a spending stop or a
+provider's brake; it asks for an hour). The SDK does not retry these:
 its one retry is of a write that got no answer at all (see `add()`).
 
 A key that expires ends with a 401 like any wrong key. To see it coming:

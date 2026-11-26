@@ -54,11 +54,12 @@ export class APIError extends KorelyError {
   /**
    * The server's Retry-After header in whole seconds, rounded up; undefined
    * when it sent none. Two answers carry it: a rate limit (429
-   * `rate_limit_exceeded`) and the pause of the writes that need a model (503
-   * `writes_paused`, Cloud only), which lasts until 00:00 UTC.
+   * `rate_limit_exceeded`) and the pause of the calls to a model (503
+   * `service_paused`: a spending stop or a provider's brake), whose
+   * Retry-After is an hour.
    *
    * On every status since 2026-10-06. Only QuotaExceededError kept it, so the
-   * 503 `writes_paused` lost the one number that says when to come back.
+   * 503 of a pause lost the one number that says when to come back.
    */
   readonly retryAfter?: number;
 
@@ -80,8 +81,9 @@ export class AuthenticationError extends APIError {
 }
 
 /**
- * 403: the key lacks a required scope, or the write would open an agent
- * namespace past the plan's cap (`code === "agent_cap_exceeded"`).
+ * 403: the key lacks a required scope, or the call reaches outside what the
+ * key may touch. A new agent namespace past the plan's cap
+ * (`agent_cap_exceeded`) is a 429, thrown as QuotaExceededError.
  */
 export class NamespaceForbiddenError extends APIError {
   constructor(message = "", opts: APIErrorOptions = {}) {
@@ -155,6 +157,9 @@ export class StaleWriteError extends ConflictError {
  * `code === "quota_exceeded"`: the monthly quota is used up, there is nothing
  * to wait for this month, and `retryAfter` is undefined.
  * `code === "too_many_batches"`: thrown as the subclass TooManyBatchesError.
+ * `code === "agent_cap_exceeded"` (Cloud): the write names a new `agent_id`
+ * past the plan's named agents; waiting does not help: reuse a name
+ * (`listAgents()`) or delete one (`deleteAgent()`).
  * `retryAfter` comes from APIError, which every error the server answers with
  * carries.
  */

@@ -492,7 +492,7 @@ class AgentsPage:
     - ``total``: the namespaces in this key's project, before pagination,
       which are exactly the ones this key can delete.
     - ``used``: the agent slots taken across the whole account, counted by
-      name. It reconciles with the ``agent_cap_exceeded`` 403, and is above
+      name. It reconciles with the ``agent_cap_exceeded`` 429, and is above
       ``total`` when other projects use names this project does not.
     - ``cap``: the plan's agent cap; 0 on a self-hosted install, which sets
       no ceiling.

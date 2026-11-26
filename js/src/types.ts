@@ -306,7 +306,7 @@ export interface AgentsPage extends Iterable<AgentScope> {
   cap: number;
   /**
    * Agent slots taken across the whole account, by name; reconciles with the
-   * `agent_cap_exceeded` 403. Above `total` when other projects use names this
+   * `agent_cap_exceeded` 429. Above `total` when other projects use names this
    * project does not.
    */
   used: number;

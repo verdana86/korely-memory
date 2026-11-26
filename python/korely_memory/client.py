@@ -875,8 +875,8 @@ class Korely:
             msg += (f" The call was redirected to {redirect}, and the key is never sent "
                     "after a redirect: if that is the server, use that address as base_url.")
         # Retry-After on every status (2026-10-06), not only on a 429: the
-        # Cloud's 503 `writes_paused` sends it too, and it is the one number
-        # that says when writes resume.
+        # 503 `service_paused` sends it too, and it is the one number that
+        # says when the model calls resume.
         ra = _retry_after_seconds(body.get("_retry_after") or body.get("retry_after"))
         if status == 401:
             raise AuthenticationError(msg, status=status, code=code, body=server_body,
@@ -921,10 +921,11 @@ class Korely:
         """GET /v1/ping: does this key work, and what may it do? Both
         products answer it, with the same shape.
 
-        The cheapest authenticated call there is: no scope, no rate limit, no
-        quota, so it is how to check a key that was just minted or rotated
-        without spending anything. ``users()`` was the usual stand-in, and it
-        needs ``memories:read`` and counts as a query."""
+        The cheapest authenticated call there is: no scope and no quota, so it
+        is how to check a key that was just minted or rotated without spending
+        any. It does count against the rate limit, as every call does: past
+        it, a 429 with ``retry_after``. ``users()`` was the usual stand-in,
+        and it needs ``memories:read`` and counts as a query."""
         return PingResponse.from_dict(self._call("GET", "/v1/ping"))
 
     def delete_account(self, *, confirm: Optional[str] = None) -> AccountDeleteReceipt:

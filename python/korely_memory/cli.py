@@ -258,7 +258,7 @@ def _fact_line(f) -> str:
 
 # ── commands ───────────────────────────────────────────────────────────────
 def cmd_auth(k: Korely, a) -> int:
-    # GET /v1/ping (2026-10-06): no scope, no rate limit, no quota. It was
+    # GET /v1/ping (2026-10-06): no scope, no quota (the rate limit counts it). It was
     # GET /v1/users, which needs memories:read, so a write-only key failed
     # the check it was meant to pass, and every check spent a query.
     #
@@ -1478,7 +1478,7 @@ def build_parser() -> argparse.ArgumentParser:
     sp.set_defaults(func=cmd_auth)
 
     sp = sub.add_parser("ping", parents=[common],
-                        help="the key's tier, region and scopes (no scope, no quota)")
+                        help="the key's tier, region and scopes (no scope or quota; the rate limit counts it)")
     sp.set_defaults(func=cmd_ping)
 
     sp = sub.add_parser("add", parents=[*both, write_flags],

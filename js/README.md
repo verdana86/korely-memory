@@ -114,7 +114,7 @@ Every method maps to one REST endpoint.
 | `events(opts?)` | `GET /v1/events` | Which writes are still being extracted; `limit` up to 200. |
 | `batch(memories, opts?)` | `POST /v1/batch` | Bulk import, for migrations. Each item takes `user_id` or `agent_id` and `timestamp`, as `add()` does. `opts.idempotency_key` as in `add()`. |
 | `batchStatus(jobId)` | `GET /v1/batch/:id` | Poll an import job. |
-| `ping()` | `GET /v1/ping` | Check a key without spending anything (no scope, rate limit or quota): its `tier`, `region` and `scopes`. Both products. |
+| `ping()` | `GET /v1/ping` | Check a key without spending any quota (no scope needed; the rate limit counts it, as every call): its `tier`, `region` and `scopes`. Both products. |
 | `Korely.initAgent(agentCaller?, opts?)` | `POST /v1/agents/init` | Cloud only. Static, no key needed: sign up for a key that costs nothing (shown once, save it), then `new Korely({ apiKey: result.api_key })`. The answer says when the key stops working (`expires_at`) and, in `note`, the trial's limits until the account is adopted and how to adopt it; `quotas` are the monthly numbers once adopted. `opts` takes `baseUrl`, `region`, `timeoutMs`, `fetch`. |
 | `deleteAccount({ confirm: "<account id>" })` | `DELETE /v1/account` | Cloud only. Delete the key's account for good, every key, memory and fact; for an account `korely init --agent` made, which nobody signs in to. One with a login rejects with `ConflictError` (`account_has_login`). `confirm` is the account's id, typed (`tenant_id` of `GET /admin/whoami`): the DELETE is sent only when it is a UUID equal, spaces trimmed, to the id `GET /admin/whoami` gives the key. Missing, `true`, `"true"` or another id: nothing is sent but that GET, and it rejects with `KorelyError` `confirmation_required`, whose message names the id to type. Only the answer `deleted: true` is a deletion; any other rejects. A server older than 1.0.23 takes only `?confirm=true`: the client does not fall back to it, deletes nothing and rejects with `APIError` `server_too_old` (upgrade the server, or use korely-memory 0.1.18). A key that may not read `GET /admin/whoami` (403, a key without the `admin` scope) deletes nothing: with no id typed it rejects with that `confirmation_required`, whose message says whoami could not be read; with the id typed, with the whoami's refusal, `NamespaceForbiddenError` (an `APIError`, `status` 403, `code` `forbidden`). The Self-hosted, which has no such route, stops at that 403 for a key without the `admin` scope, else answers 404 (405 where it serves its dashboard). |
 | `audit(opts?)` | `GET /v1/audit` | The trail of the key's project, newest first: `user_id`, `action`, `since` / `until` (ISO text or `Date`), `limit` up to 1000. Ids, never content. Each event's `api_key_id` names the key that made the call (Korely 1.0.23); `action` is `forget` for a memory forgotten with its text kept, `erase` for one gone for good, `fact_invalidate` for a fact closed (a forget was filed as `erase` before 1.0.23). Both products; needs `memories:read`, costs no quota. |
@@ -166,20 +166,22 @@ try {
 }
 ```
 
-`AuthenticationError` (401) · `NamespaceForbiddenError` (403, e.g.
-`agent_cap_exceeded`) · `NotFoundError` (404) · `ConflictError` (409, e.g.
+`AuthenticationError` (401) · `NamespaceForbiddenError` (403, e.g. a
+missing scope) · `NotFoundError` (404) · `ConflictError` (409, e.g.
 `account_has_login`; `fact_not_current` from `correctFact()` of a fact that is
 history, with `currentFactId` the fact to correct instead; `stale_write` is its
 subclass `StaleWriteError`) ·
 `QuotaExceededError` (429: `retryAfter` is set for `rate_limit_exceeded`,
-undefined for the monthly `quota_exceeded`) · `TooManyBatchesError` (a
+undefined for the monthly `quota_exceeded` and for `agent_cap_exceeded`, a
+new agent name past the plan's, Cloud only) · `TooManyBatchesError` (a
 `QuotaExceededError`: `too_many_batches` from `batch()`, Cloud only, three
 imports still running; send again when one finishes) · `APIError` (the base
 of all of these, and everything else: 422, 503; a write that names neither
 `user_id` nor `agent_id` is a 422 `identity_required` on Korely 1.0.19 and
 later, and this client sends only the ids each call names). Every `APIError` has
-`retryAfter` when the server sent `Retry-After`: a rate limit, and the Cloud's
-503 `writes_paused` (writes that need a model are paused until 00:00 UTC). The
+`retryAfter` when the server sent `Retry-After`: a rate limit, and the 503
+`service_paused` (the service does not call the models now, a spending stop or
+a provider's brake; it asks for an hour). The
 SDK does not retry these: its one retry is of a write that got no answer at
 all (see `add()`).
 

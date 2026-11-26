@@ -622,9 +622,9 @@ function raiseFor(
       : `${answered}${to} this client does not follow: a call that is not a GET is never ` +
         "redirected, so that is not its answer, and nothing says it was done.";
   }
-  // Retry-After on every status (2026-10-06), not only on a 429: the Cloud's
-  // 503 `writes_paused` sends it too, and it is the one number that says
-  // when writes resume.
+  // Retry-After on every status (2026-10-06), not only on a 429: the 503
+  // `service_paused` sends it too, and it is the one number that says when
+  // the model calls resume.
   const opts = {
     status,
     code,
@@ -920,9 +920,10 @@ export class Korely {
    * GET /v1/ping: does this key work, and what may it do? Both products answer
    * it, with the same shape.
    *
-   * The cheapest authenticated call there is: no scope, no rate limit, no
-   * quota, so it is how to check a key that was just minted or rotated without
-   * spending anything. `users()` was the usual stand-in, and it needs
+   * The cheapest authenticated call there is: no scope and no quota, so it is
+   * how to check a key that was just minted or rotated without spending any.
+   * It does count against the rate limit, as every call does: past it, a 429
+   * with `retryAfter`. `users()` was the usual stand-in, and it needs
    * `memories:read` and counts as a query.
    */
   async ping(): Promise<PingResponse> {

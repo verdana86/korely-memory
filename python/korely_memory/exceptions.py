@@ -58,8 +58,9 @@ class APIError(KorelyError):
 
     ``retry_after`` is the server's Retry-After header in whole seconds,
     rounded up, or None when it sent none. Two answers carry it: a rate limit
-    (429 ``rate_limit_exceeded``) and the pause of the writes that need a
-    model (503 ``writes_paused``, Cloud only), which lasts until 00:00 UTC.
+    (429 ``rate_limit_exceeded``) and the pause of the calls to a model (503
+    ``service_paused``: a spending stop or a provider's brake), whose
+    Retry-After is an hour.
     """
 
     def __init__(self, message: str = "", *, status: Optional[int] = None,
@@ -67,9 +68,9 @@ class APIError(KorelyError):
                  retry_after: Optional[int] = None):
         super().__init__(message, status=status, code=code, body=body)
         # On every status since 2026-10-06. Only QuotaExceededError kept it,
-        # so the 503 `writes_paused` the Cloud answers when its daily model
-        # budget is spent lost the one number that says when to come back,
-        # although the transport had read the header.
+        # so the 503 of a pause of the model calls (`service_paused`) lost the
+        # one number that says when to come back, although the transport had
+        # read the header.
         self.retry_after = retry_after
 
     def _field(self, name: str):
@@ -85,8 +86,9 @@ class AuthenticationError(APIError):
 
 
 class NamespaceForbiddenError(APIError):
-    """403: the key lacks a required scope, or the write would open an agent
-    namespace past the plan's cap (``code == "agent_cap_exceeded"``)."""
+    """403: the key lacks a required scope, or the call reaches outside what
+    the key may touch. A new agent namespace past the plan's cap
+    (``agent_cap_exceeded``) is a 429, raised as :class:`QuotaExceededError`."""
 
 
 class NotFoundError(APIError):
@@ -130,13 +132,16 @@ class StaleWriteError(ConflictError):
 
 
 class QuotaExceededError(APIError):
-    """429. Three causes, told apart by ``code``:
+    """429. Four causes, told apart by ``code``:
 
     - ``rate_limit_exceeded``: too many requests in a minute, hour or day. The
       server sends Retry-After, so ``retry_after`` holds the seconds to wait.
     - ``quota_exceeded``: the monthly write or query quota is used up. There is
       nothing to wait for short of the next month, so ``retry_after`` is None.
     - ``too_many_batches``: raised as the subclass :class:`TooManyBatchesError`.
+    - ``agent_cap_exceeded`` (Cloud): the write names a new ``agent_id`` past
+      the plan's named agents. Waiting does not help: reuse a name
+      (``list_agents()``) or delete one (``delete_agent()``).
 
     ``retry_after`` comes from :class:`APIError`, which every error the server
     answers with now carries.
