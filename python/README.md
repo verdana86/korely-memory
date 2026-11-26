@@ -531,8 +531,10 @@ key is told by its shape alone, with no list of vendors:
   base32 secrets (an authenticator's) and other keys of upper case and
   digits only; keys shaped like a UUID with dashes; a key split across lines
   into pieces under 24 characters; some base64 keys holding `/`, and keys
-  written URL-encoded. Do not count on it to keep a secret pasted into a
-  session.
+  written URL-encoded; and, rarely, a generated key whose characters repeat
+  more than chance usually lets them (3 of 30,000 keys drawn at random in
+  the tests: the spread it asks is not there). Do not count on it to keep a
+  secret pasted into a session.
 
 A hook never breaks the assistant: a failure is a line in
 `~/.korely/hook.log`, without the text of the session. A read that fails (a

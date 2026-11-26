@@ -103,7 +103,10 @@ class Redaction(unittest.TestCase):
     def test_what_the_readme_says_it_does_not_catch(self):
         """Declared, not a fault of the test: a key of letters alone, or of
         upper case and digits only, keeps its text (README "Not caught")."""
-        for key in ("QwErTyUiOpAsDfGhJkLzXcVbNm", "ABCD2345EFGH6789JKLM2345"):
+        # The third: drawn at random, but its characters repeat too much for
+        # the spread the rule asks (3 of 30,000 random keys, 26 Nov 2026).
+        for key in ("QwErTyUiOpAsDfGhJkLzXcVbNm", "ABCD2345EFGH6789JKLM2345",
+                    "tHX91Z1gmEHBZN499qtX4t59"):
             self.assertIn(key, hooks.redact(f"the key is {key} ok"), key)
 
     def test_hex_keys_are_masked_too(self):
