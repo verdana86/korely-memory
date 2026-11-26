@@ -253,6 +253,14 @@ class Context:
       way a healthy request retrieves it; the block then ends with a NOTE
       saying so to the model. ``degraded_parts`` says which: ``facts``
       and/or ``memories``.
+    - ``changed`` (with ``reader`` only, Korely 1.0.15+): the facts this
+      reader was handed before and that changed since, as the block's
+      section "Changed since you last read" shows them, newest first, at
+      most 3, each a dict as the server sends it (``fact_id``, ``was``,
+      ``now``, ``ended_at``, ``known_at``, ``origin``, ``source_memory_id``,
+      ``by_agent``). None without ``reader``.
+    - ``changed_more``: how many more changes wait for this reader; None
+      without ``reader``, or when the changes could not be read this time.
     """
     context: str = ""
     tokens: int = 0
@@ -262,6 +270,8 @@ class Context:
     stable: Optional[str] = None
     volatile: Optional[str] = None
     stable_hash: Optional[str] = None
+    changed: Optional[List[dict]] = None
+    changed_more: Optional[int] = None
 
     @classmethod
     def from_dict(cls, d: dict) -> "Context":

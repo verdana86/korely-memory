@@ -200,16 +200,17 @@ const AUDIT_KEYS = keysOf<AuditOptions>()("user_id", "action", "since", "until",
 const ITER_AUDIT_KEYS = keysOf<IterAuditOptions>()("user_id", "action", "since", "until", "offset", "page_size");
 const FACTS_KEYS = keysOf<GetFactsOptions>()(
   "subject", "entity", "predicate", "predicate_family", "include_invalidated", "as_of",
-  "known_as_of", "user_id", "agent_id", "limit", "offset", "exclude_sessions");
+  "known_as_of", "user_id", "agent_id", "limit", "offset", "exclude_sessions", "reader");
 const TRIPLE_KEYS = keysOf<AddFactTripleOptions>()(
   "user_id", "agent_id", "run_id", "subject_type", "object_is_literal", "confidence",
   "valid_from", "tense");
 const PROFILE_KEYS = keysOf<GetProfileOptions>()(
   "user_id", "agent_id", "as_of", "known_as_of", "exclude_sessions");
 const CONTEXT_KEYS = keysOf<GetContextOptions>()(
-  "query", "user_id", "agent_id", "token_budget", "known_as_of", "exclude_sessions");
+  "query", "user_id", "agent_id", "token_budget", "known_as_of", "exclude_sessions", "reader",
+  "changes");
 const CONTEXT_EXTRA_KEYS = keysOf<Omit<GetContextOptions, "query">>()(
-  "user_id", "agent_id", "token_budget", "known_as_of", "exclude_sessions");
+  "user_id", "agent_id", "token_budget", "known_as_of", "exclude_sessions", "reader", "changes");
 
 /** Refuse an option this method does not read (options.ts). */
 function checkOptions(method: string, opts: unknown, known: readonly string[]): void {
@@ -1359,6 +1360,7 @@ export class Korely {
       agent_id: opts.agent_id,
       limit: opts.limit ?? 50,
       offset: opts.offset ?? 0,
+      reader: opts.reader,
     };
     if (opts.include_invalidated) params.include_invalidated = "true";
     if (opts.exclude_sessions) params.exclude_sessions = "true";
@@ -1499,6 +1501,8 @@ export class Korely {
         token_budget: o.token_budget ?? DEFAULT_TOKEN_BUDGET,
         known_as_of: o.known_as_of,
         exclude_sessions: o.exclude_sessions ? "true" : undefined,
+        reader: o.reader,
+        changes: o.changes,
       },
     });
   }

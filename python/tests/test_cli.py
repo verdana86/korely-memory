@@ -222,6 +222,20 @@ class TestParserWiring(unittest.TestCase):
         for line in lines[1:]:  # none at the margin, where a hit begins
             self.assertTrue(line.startswith("    "), line)
 
+    def test_context_and_facts_take_a_reader(self):
+        """`korely context --reader NAME [--changes all]` and `korely facts
+        --reader NAME`: the agent notices from the command line."""
+        rec = (_Recorder().queue(200, {"context": "block", "tokens": 1, "sources": []})
+               .queue(200, {"facts": [], "total": 0}))
+        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+            cli.cmd_context(_client(rec), _args(["context", "release day", "--agent-id", "planner",
+                                                 "--reader", "planner", "--changes", "all"]))
+        self.assertEqual((rec.last["params"]["reader"], rec.last["params"]["changes"]),
+                         ("planner", "all"))
+        with redirect_stdout(io.StringIO()):
+            cli.cmd_facts(_client(rec), _args(["facts", "--reader", "planner"]))
+        self.assertEqual(rec.last["params"]["reader"], "planner")
+
     def test_all_subcommands_present(self):
         # every documented command must parse (regression on accidental drops)
         for argv in (

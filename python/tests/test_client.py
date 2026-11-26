@@ -234,6 +234,31 @@ class TestMemories(unittest.TestCase):
         k.get_context("q", user_id="u", exclude_sessions=True)
         self.assertEqual(rec.last["params"]["exclude_sessions"], "true")
 
+    def test_a_reader_and_its_changes_are_sent_and_read_back(self):
+        """Agent notices (Korely 1.0.15): `reader` on the facts and the
+        context block, `changes=all` on the block, and the block's `changed`
+        and `changed_more`. Up to 0.3.0 neither client sent them, and the CLI
+        had no way to use the notices (10 Nov 2026)."""
+        change = {"fact_id": "fct_1", "was": "team · releases_on · Friday",
+                  "now": {"fact_id": "fct_2", "text": "team · releases_on · Thursday"},
+                  "ended_at": "2026-11-20T10:00:00Z", "known_at": "2026-11-20T10:00:00Z",
+                  "origin": "corrected", "source_memory_id": None, "by_agent": "planner"}
+        rec = (_Recorder().queue(200, {"facts": [], "total": 0})
+               .queue(200, {"context": "## Changed since you last read", "tokens": 9,
+                            "sources": [], "changed": [change], "changed_more": 2})
+               .queue(200, {"context": "", "tokens": 0, "sources": []}))
+        k = _client(rec)
+        k.get_facts(agent_id="planner", reader="planner")
+        self.assertEqual(rec.last["params"]["reader"], "planner")
+        ctx = k.get_context("release day", agent_id="planner", reader="planner", changes="all")
+        self.assertEqual((rec.last["params"]["reader"], rec.last["params"]["changes"]),
+                         ("planner", "all"))
+        self.assertEqual((ctx.changed, ctx.changed_more), ([change], 2))
+        plain = k.get_context("release day")
+        self.assertNotIn("reader", rec.last["params"])
+        self.assertNotIn("changes", rec.last["params"])
+        self.assertEqual((plain.changed, plain.changed_more), (None, None))
+
     def test_declare_name_posts_the_name_for_the_end_user(self):
         rec = _Recorder().queue(201, {"user_id": "maria", "name": "Maria Rossi",
                                       "agent_id": None, "since": "2026-10-18T10:00:00Z"})

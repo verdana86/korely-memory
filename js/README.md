@@ -105,12 +105,12 @@ Every method maps to one REST endpoint.
 | `users(opts?)` | `GET /v1/users` | Your end users, with counts. |
 | `listAgents(opts?)` | `GET /v1/agents` | This project's agent namespaces, with counts. `total` counts this project's names, `used` the cap slots taken across the account. Call after `agent_cap_exceeded` to reuse an id. |
 | `deleteAgent(agentId)` | `DELETE /v1/agents/:agent_id` | Purge an agent namespace of this project. `NotFoundError` for a name the project does not use; the receipt's `slot_freed` is always undefined, because no Korely server sends it: read `cap` and `used` from `listAgents()` to see whether a slot is free. |
-| `getFacts(opts?)` | `GET /v1/facts` | Typed facts; `as_of` for what was true on a date, `known_as_of` for what the store knew on it. The array also carries `total`. |
+| `getFacts(opts?)` | `GET /v1/facts` | Typed facts; `as_of` for what was true on a date, `known_as_of` for what the store knew on it; `reader` keeps the facts handed over for that reader's next `getContext`. The array also carries `total`. |
 | `addFactTriple(s, p, o, opts?)` | `POST /v1/facts` | Write a fact directly (bi-temporal; `tense: "past"` for one that is over). |
 | `correctFact(id, changes)` | `PATCH /v1/facts/:id` | Supersede a fact with a corrected one; `invalidated` lists what it closed. Restating the fact as it stands reconfirms it (`invalidated: []`). |
 | `forgetFact(id, { at? })` | `POST /v1/facts/:id/forget` | Close a fact; it stays in history. |
 | `getProfile({ user_id, as_of?, known_as_of? })` | `GET /v1/profile` | The assembled profile of one end user. |
-| `getContext({ query, user_id?, known_as_of? })` | `GET /v1/context` | One call, a prompt-ready context block; `known_as_of` rebuilds it as the store could have built it then. |
+| `getContext({ query, user_id?, known_as_of?, reader?, changes? })` | `GET /v1/context` | One call, a prompt-ready context block; `known_as_of` rebuilds it as the store could have built it then. `reader` (your agent's own name, Korely 1.0.15+) opens the block with what changed since in the facts that reader was handed: `changed` (at most 3) and `changed_more`; `changes: "all"` adds the closures read from memories in an agent's memory with no end user. |
 | `events(opts?)` | `GET /v1/events` | Which writes are still being extracted; `limit` up to 200. |
 | `batch(memories, opts?)` | `POST /v1/batch` | Bulk import, for migrations. Each item takes `user_id` or `agent_id` and `timestamp`, as `add()` does. `opts.idempotency_key` as in `add()`. |
 | `batchStatus(jobId)` | `GET /v1/batch/:id` | Poll an import job. |

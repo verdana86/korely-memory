@@ -174,6 +174,27 @@ export interface Context {
   volatile?: string;
   /** SHA-256 (hex) of `stable`: the same value means the same prefix, so a cached system prompt is still valid. */
   stable_hash?: string;
+  /**
+   * With `reader` only (Korely 1.0.15+): the facts this reader was handed
+   * before and that changed since, newest first, at most 3, each told once.
+   */
+  changed?: ContextChange[];
+  /** With `reader` only: how many more changes wait; null when they could not be read this time. */
+  changed_more?: number | null;
+}
+
+/** A fact a reader was handed and that has ended since (agent notices). */
+export interface ContextChange {
+  fact_id: string;
+  /** It, as the block writes a fact; null when the memory that stated it was forgotten. */
+  was: string | null;
+  /** What holds now in its place, when this key may read it; null: no longer true. */
+  now: { fact_id: string; text: string } | null;
+  ended_at: string | null;
+  known_at: string | null;
+  origin: "corrected" | "forgotten" | "stated" | "read_from_memory";
+  source_memory_id: string | null;
+  by_agent: string | null;
 }
 
 /**
@@ -629,6 +650,13 @@ export interface GetFactsOptions {
   offset?: number;
   /** Leave out the work sessions (`kind: "session"`) and what only they stated (Korely Agent 0.1.42). */
   exclude_sessions?: boolean;
+  /**
+   * Your agent's own name (Korely 1.0.15+, agent notices): the server keeps
+   * the ids of the facts this read hands over, and a later
+   * `getContext({ reader })` of the same name opens with what changed since in
+   * them. It filters nothing.
+   */
+  reader?: string;
 }
 
 export interface AddFactTripleOptions {
@@ -676,6 +704,18 @@ export interface GetContextOptions {
   known_as_of?: string;
   /** Leave out the work sessions (`kind: "session"`) and what only they stated (Korely Agent 0.1.42). */
   exclude_sessions?: boolean;
+  /**
+   * Your agent's own name (Korely 1.0.15+, agent notices): the block opens
+   * with what changed since in the facts this reader was handed, and the
+   * facts it hands over are kept for the next read. Not authenticated:
+   * whoever holds the key can give any name.
+   */
+  reader?: string;
+  /**
+   * `"all"`: with `reader`, in an agent's memory with no end user, also the
+   * closures the store read from memories; left out, only the explicit ones.
+   */
+  changes?: "all";
 }
 
 

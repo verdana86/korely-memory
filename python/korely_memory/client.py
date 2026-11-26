@@ -1399,7 +1399,8 @@ class Korely:
                   user_id: Optional[str] = None, agent_id: Optional[str] = None,
                   limit: int = 50, offset: int = 0,
                   known_as_of: Optional[str] = None,
-                  exclude_sessions: bool = False) -> FactList:
+                  exclude_sessions: bool = False,
+                  reader: Optional[str] = None) -> FactList:
         """GET /v1/facts: typed (subject, predicate, object) triples with
         bi-temporal validity. Pass ``as_of`` (ISO date) for a point-in-time
         query: what was true on that date.
@@ -1412,6 +1413,12 @@ class Korely:
         store knew of on that date (``closed_known_at`` says when it learned
         it). Servers before Korely Agent 0.1.26 ignore the parameter.
 
+        ``reader`` (Korely 1.0.15+): your agent's own name. The server keeps
+        the ids of the facts this read hands over, and the next
+        ``get_context(reader=...)`` of the same name opens with what changed
+        since in them (agent notices). It filters nothing; a read of the past
+        or of the history keeps nothing.
+
         Returns a list of Fact. It also carries ``.total``, how many facts
         match the filters across all pages, so ``offset`` can walk them."""
         params = _clean({
@@ -1419,6 +1426,7 @@ class Korely:
             "predicate_family": predicate_family, "as_of": as_of,
             "known_as_of": known_as_of,
             "user_id": user_id, "agent_id": agent_id, "limit": limit, "offset": offset,
+            "reader": reader,
         })
         if include_invalidated:
             params["include_invalidated"] = "true"
@@ -1527,7 +1535,9 @@ class Korely:
                     agent_id: Optional[str] = None,
                     token_budget: int = DEFAULT_TOKEN_BUDGET,
                     known_as_of: Optional[str] = None,
-                    exclude_sessions: bool = False) -> Context:
+                    exclude_sessions: bool = False,
+                    reader: Optional[str] = None,
+                    changes: Optional[str] = None) -> Context:
         """GET /v1/context: one call that assembles a prompt-ready context
         block (profile + relevant facts + memories) within a token budget:
         ``token_budget``, 50 to 8000, 1,500 by default (``DEFAULT_TOKEN_BUDGET``,
@@ -1539,13 +1549,23 @@ class Korely:
         ``known_as_of`` (ISO date): the block as the store could have built
         it then, the facts it knew and the memories it had received, to see
         what an agent could have known when it decided. Rebuilt with today's
-        ranking. Servers before Korely Agent 0.1.26 ignore it."""
+        ranking. Servers before Korely Agent 0.1.26 ignore it.
+
+        ``reader`` (Korely 1.0.15+, agent notices): your agent's own name. The
+        block then opens with what changed since in the facts this reader was
+        handed by an earlier read (``Context.changed``, at most 3, each told
+        once; ``changed_more`` counts the rest), and the facts it hands over
+        are kept for the next one. ``changes="all"`` also tells, in an
+        agent's memory with no end user, the closures the store read from
+        memories, which left out are only the explicit ones. Not
+        authenticated: whoever holds the key can give any name."""
         if not query or not str(query).strip():
             raise KorelyError("get_context needs a query.")
         body = self._call("GET", "/v1/context", params=_clean({
             "query": query, "user_id": user_id, "agent_id": agent_id,
             "token_budget": token_budget, "known_as_of": known_as_of,
             "exclude_sessions": "true" if exclude_sessions else None,
+            "reader": reader, "changes": changes,
         }))
         return Context.from_dict(body)
 

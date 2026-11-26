@@ -71,7 +71,7 @@ Every method wraps exactly one REST endpoint.
 | `correct_fact(fact_id, *, subject=, predicate=, object=)` | `PATCH /v1/facts/:id` |
 | `forget_fact(fact_id, *, at=)` | `POST /v1/facts/:id/forget` |
 | `get_profile(*, user_id, agent_id=, as_of=, known_as_of=)` | `GET /v1/profile` |
-| `get_context(*, query, user_id=, agent_id=, token_budget=, known_as_of=)` | `GET /v1/context` |
+| `get_context(*, query, user_id=, agent_id=, token_budget=, known_as_of=, reader=, changes=)` | `GET /v1/context` |
 | `events(*, user_id=, status=, limit=)` | `GET /v1/events` |
 | `batch(memories, *, idempotency_key=)` | `POST /v1/batch`; `idempotency_key=` as in `add()` |
 | `batch_status(job_id)` | `GET /v1/batch/:id` |
@@ -195,6 +195,15 @@ prompt, where the model provider's prompt cache reuses it; `stable_hash` says
 when it changed), and `volatile`, the facts and memories for this question.
 `degraded` is True when part of the block could not be retrieved, and
 `degraded_parts` says which.
+
+Agent notices (Korely 1.0.15 and later): pass your agent's own name as
+`reader=` to `get_facts()` and `get_context()`. The server keeps which facts
+that reader was handed, and its next block opens with what changed since in
+them, each change told once: `changed` holds them (at most 3), `changed_more`
+counts the rest. `changes="all"` adds, in an agent's memory with no end user,
+the closures the store read from memories. The name is not authenticated:
+whoever holds the key can give any. From the CLI: `korely context QUERY
+--reader NAME [--changes all]` and `korely facts --reader NAME`.
 
 `get_facts()` returns a list of `Fact` that also carries `.total`, the number of
 facts matching the filters across all pages, so `offset` knows when to stop.
@@ -325,11 +334,11 @@ same refusal.
 | `korely auth` / `korely ping` | `GET /v1/ping`; `auth` also prints when the key ends (`key ends <UTC moment> UTC`, `key_expires_at` with `--json`), when the server says it (Korely 1.0.23 and later; no line for a key that never ends) |
 | `korely add TEXT` / `korely update ID TEXT` | `POST /v1/memories` / `PATCH /v1/memories/:id` (`-` or a pipe reads stdin) |
 | `korely search QUERY [--types memories,facts] [--full-text]` | `POST /v1/memories/search`; `--types` searches the facts too (or `facts` alone) and prints each hit's type; `--full-text` prints the whole text, not its first 280 characters (Korely 1.0.13 and later) |
-| `korely context QUERY` | `GET /v1/context` |
+| `korely context QUERY [--reader NAME] [--changes all]` | `GET /v1/context` |
 | `korely list [--limit] [--offset]` | `GET /v1/memories` |
 | `korely get ID` / `korely history ID` | `GET /v1/memories/:id` / `.../history` |
 | `korely events [--status error]` | `GET /v1/events` |
-| `korely facts [--as-of DATE]` | `GET /v1/facts` |
+| `korely facts [--as-of DATE] [--offset N] [--reader NAME]` | `GET /v1/facts` |
 | `korely add-fact SUBJECT PREDICATE OBJECT` | `POST /v1/facts` (`--valid-from`, `--tense`) |
 | `korely correct-fact ID --object O` | `PATCH /v1/facts/:id` |
 | `korely forget-fact ID [--at DATE]` | `POST /v1/facts/:id/forget` |

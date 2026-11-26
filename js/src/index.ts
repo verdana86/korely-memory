@@ -37,6 +37,7 @@ export type {
   DeleteReceipt,
   BulkReceipt,
   Context,
+  ContextChange,
   BatchJob,
   BatchMemory,
   Profile,

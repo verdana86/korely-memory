@@ -1380,6 +1380,25 @@ test("add sends the kind of the text", async () => {
   assert.equal(JSON.parse(f.calls[0].init.body).kind, "session");
 });
 
+test("a reader and its changes are sent, and the block's changes read back (agent notices)", async () => {
+  const change = { fact_id: "fct_1", was: "team · releases_on · Friday",
+                   now: { fact_id: "fct_2", text: "team · releases_on · Thursday" },
+                   ended_at: "2026-11-20T10:00:00Z", known_at: "2026-11-20T10:00:00Z",
+                   origin: "corrected", source_memory_id: null, by_agent: "planner" };
+  const { k, f } = client([{ body: { facts: [], total: 0 } },
+                           { body: { context: "x", tokens: 1, sources: [], changed: [change], changed_more: 2 } },
+                           { body: { context: "", tokens: 0, sources: [] } }]);
+  await k.getFacts({ agent_id: "planner", reader: "planner" });
+  assert.match(f.calls[0].url, /reader=planner/);
+  const ctx = await k.getContext("release day", { reader: "planner", changes: "all" });
+  assert.match(f.calls[1].url, /reader=planner/);
+  assert.match(f.calls[1].url, /changes=all/);
+  assert.deepEqual(ctx.changed, [change]);
+  assert.equal(ctx.changed_more, 2);
+  await k.getContext("release day");
+  assert.doesNotMatch(f.calls[2].url, /reader|changes/);
+});
+
 test("exclude_sessions is sent only when true", async () => {
   const { k, f } = client([{ body: { results: [] } }, { body: { results: [] } },
                            { body: { facts: [], total: 0 } }, { body: { memories: [], total: 0 } }]);

@@ -512,7 +512,8 @@ def cmd_search(k: Korely, a) -> int:
 def cmd_context(k: Korely, a) -> int:
     ctx = k.get_context(query=a.query, user_id=a.user_id, agent_id=a.agent_id,
                         token_budget=a.token_budget, known_as_of=a.known_as_of,
-                        exclude_sessions=getattr(a, "exclude_sessions", False))
+                        exclude_sessions=getattr(a, "exclude_sessions", False),
+                        reader=getattr(a, "reader", None), changes=getattr(a, "changes", None))
     if a.json:
         _emit_json(ctx)
         return 0
@@ -541,7 +542,7 @@ def cmd_facts(k: Korely, a) -> int:
                         include_invalidated=a.include_invalidated, limit=a.limit,
                         offset=getattr(a, "offset", 0),
                         exclude_sessions=getattr(a, "exclude_sessions", False),
-                        known_as_of=a.known_as_of)
+                        known_as_of=a.known_as_of, reader=getattr(a, "reader", None))
     if a.json:
         # The API's own shape ({"facts": [...], "total": n}), as the docs show
         # (`jq '.facts[]'`); it was a bare list until 2026-09-29.
@@ -1548,6 +1549,12 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--known-as-of", help="ISO date: the block as Korely knew it then")
     sp.add_argument("--exclude-sessions", action="store_true",
                     help="leave out the work sessions and what only they stated")
+    sp.add_argument("--reader", metavar="NAME",
+                    help="your agent's own name: the block opens with what changed since in "
+                         "the facts this reader was handed (agent notices, Korely 1.0.15+)")
+    sp.add_argument("--changes", choices=["all"],
+                    help="with --reader, in an agent's memory with no end user: also the "
+                         "closures read from memories, not only the explicit ones")
     sp.set_defaults(func=cmd_context)
 
     sp = sub.add_parser("facts", parents=both,
@@ -1565,6 +1572,9 @@ def build_parser() -> argparse.ArgumentParser:
     sp.add_argument("--offset", type=int, default=0, help="skip this many, to page")
     sp.add_argument("--exclude-sessions", action="store_true",
                     help="leave out the work sessions and what only they stated")
+    sp.add_argument("--reader", metavar="NAME",
+                    help="your agent's own name: the facts shown are kept, and a later "
+                         "context --reader NAME tells what changed in them (Korely 1.0.15+)")
     sp.set_defaults(func=cmd_facts)
 
     sp = sub.add_parser("add-fact", parents=both,
