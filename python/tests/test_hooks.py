@@ -15,9 +15,21 @@ from unittest import mock
 from korely_memory import hooks
 
 
-def _random_key(n):
+# One seed for the whole file: the keys are the same at every run. Unseeded,
+# about one run in 45 drew a key the rule declares it does not catch (letters
+# alone, no digit: README "Not caught"), and the test failed by itself.
+_RNG = random.Random(2026)
+
+
+def _random_key(n, rng=_RNG):
+    """A generated key of `n` characters of the shape the rule covers: upper
+    case, lower case and digits, each at least once. The shapes it does not
+    cover are tested apart (`test_what_the_readme_says_it_does_not_catch`)."""
+    pools = (string.ascii_uppercase, string.ascii_lowercase, string.digits)
     alphabet = string.ascii_letters + string.digits
-    return "".join(random.choice(alphabet) for _ in range(n))
+    chars = [rng.choice(pool) for pool in pools] + [rng.choice(alphabet) for _ in range(n - 3)]
+    rng.shuffle(chars)
+    return "".join(chars)
 
 
 class FakeContext:
@@ -80,6 +92,19 @@ class Redaction(unittest.TestCase):
                     "ghp_" + _random_key(36), "kor_live_" + _random_key(40),
                     "xoxb-" + _random_key(12) + "-" + _random_key(24), _random_key(24)):
             self.assertNotIn(key, hooks.redact(f"the key is {key} ok"), key)
+
+    def test_generated_keys_are_masked_at_every_draw(self):
+        """The shape the rule covers, 2,000 draws: every one masked."""
+        rng = random.Random(45)
+        for _ in range(2000):
+            key = _random_key(24, rng)
+            self.assertNotIn(key, hooks.redact(f"the key is {key} ok"), key)
+
+    def test_what_the_readme_says_it_does_not_catch(self):
+        """Declared, not a fault of the test: a key of letters alone, or of
+        upper case and digits only, keeps its text (README "Not caught")."""
+        for key in ("QwErTyUiOpAsDfGhJkLzXcVbNm", "ABCD2345EFGH6789JKLM2345"):
+            self.assertIn(key, hooks.redact(f"the key is {key} ok"), key)
 
     def test_hex_keys_are_masked_too(self):
         """A key of hex digits alone has no upper case, and went to the
