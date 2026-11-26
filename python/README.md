@@ -60,7 +60,7 @@ Every method wraps exactly one REST endpoint.
 | `get_all(*, user_id=, agent_id=, run_id=, limit=, offset=)` | `GET /v1/memories` |
 | `get(memory_id)` | `GET /v1/memories/:id` |
 | `update(memory_id, *, content, expected_updated_at=)` | `PATCH /v1/memories/:id` |
-| `delete(memory_id)` | `DELETE /v1/memories/:id` |
+| `delete(memory_id, *, erase=False)` | `DELETE /v1/memories/:id` (`erase=True`: `?erase=true`, for good) |
 | `delete_all(*, user_id)` | `DELETE /v1/users/:user_id/memories` |
 | `history(memory_id)` | `GET /v1/memories/:id/history` |
 | `users(*, agent_id=, limit=, offset=)` | `GET /v1/users` |

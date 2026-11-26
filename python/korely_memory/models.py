@@ -161,12 +161,18 @@ class DeleteReceipt:
     ``facts_invalidated`` counts the facts it ended. ``facts_reopened`` counts
     the facts that are true again: facts of other memories that this one's
     facts had closed, given back as new rows. None from a server older than
-    Korely 1.0.2, which does not send it."""
+    Korely 1.0.2, which does not send it.
+
+    With ``delete(..., erase=True)``: ``status`` is ``erased``, ``erasure``
+    is ``"permanent"`` and ``facts_deleted`` counts the facts only this
+    memory stated, deleted for good. Both None on a forget."""
     id: Optional[str] = None
     status: Optional[str] = None
     facts_invalidated: Optional[int] = None
     audit_id: Optional[str] = None
     facts_reopened: Optional[int] = None
+    erasure: Optional[str] = None
+    facts_deleted: Optional[int] = None
 
     @classmethod
     def from_dict(cls, d: dict) -> "DeleteReceipt":

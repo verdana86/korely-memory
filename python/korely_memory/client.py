@@ -1236,14 +1236,20 @@ class Korely:
                           }))
         return Memory.from_dict(body)
 
-    def delete(self, memory_id: str) -> DeleteReceipt:
+    def delete(self, memory_id: str, *, erase: bool = False) -> DeleteReceipt:
         """DELETE /v1/memories/:id: forget one memory. It drops out of every
         default read, and the facts only it asserted are invalidated (kept as
         history, audited). The facts its facts had closed are true again:
-        the receipt counts them in ``facts_reopened``. For erasure use
-        ``delete_all``."""
+        the receipt counts them in ``facts_reopened``.
+
+        ``erase=True`` erases it for good instead: the row, its text and the
+        facts it alone stated go from the database; the receipt then says
+        ``status == "erased"``, ``erasure == "permanent"`` and counts
+        ``facts_deleted``. A memory forgotten earlier can be erased too. For
+        every memory of one end user, ``delete_all``."""
         return DeleteReceipt.from_dict(
-            self._call("DELETE", "/v1/memories/" + _seg(memory_id, "memory_id")))
+            self._call("DELETE", "/v1/memories/" + _seg(memory_id, "memory_id"),
+                       params={"erase": "true"} if erase else None))
 
     def delete_all(self, *, user_id: str) -> BulkReceipt:
         """DELETE /v1/users/:user_id/memories: ERASE every memory and fact of

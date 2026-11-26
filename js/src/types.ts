@@ -118,10 +118,15 @@ export interface MemoryPage extends Iterable<Memory> {
  */
 export interface DeleteReceipt {
   id?: string;
+  /** "forgotten", or "erased" with `delete(id, { erase: true })`. */
   status?: string;
   facts_invalidated?: number;
   audit_id?: string;
   facts_reopened?: number;
+  /** "permanent": in an erasure's receipt only. */
+  erasure?: string;
+  /** In an erasure's receipt only: the facts only this memory stated, deleted for good. */
+  facts_deleted?: number;
 }
 
 /**

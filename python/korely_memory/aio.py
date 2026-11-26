@@ -118,8 +118,8 @@ class AsyncKorely:
     async def update(self, memory_id: str, **kw) -> Memory:
         return await self._run(lambda: self._sync.update(memory_id, **kw))
 
-    async def delete(self, memory_id: str) -> DeleteReceipt:
-        return await self._run(self._sync.delete, memory_id)
+    async def delete(self, memory_id: str, *, erase: bool = False) -> DeleteReceipt:
+        return await self._run(lambda: self._sync.delete(memory_id, erase=erase))
 
     async def delete_all(self, **kw) -> BulkReceipt:
         return await self._run(lambda: self._sync.delete_all(**kw))

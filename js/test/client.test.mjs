@@ -1399,6 +1399,21 @@ test("a reader and its changes are sent, and the block's changes read back (agen
   assert.doesNotMatch(f.calls[2].url, /reader|changes/);
 });
 
+test("delete can erase, and the receipt says what went", async () => {
+  const { k, f } = client([{ body: { id: "mem_1", status: "erased", erasure: "permanent",
+                                     facts_invalidated: 0, facts_deleted: 2, facts_reopened: 0,
+                                     audit_id: "aud_1" } },
+                           { body: { id: "mem_2", status: "forgotten", facts_invalidated: 1,
+                                     facts_reopened: 0, audit_id: "aud_2" } }]);
+  const r = await k.delete("mem_1", { erase: true });
+  assert.match(f.calls[0].url, /\/v1\/memories\/mem_1\?erase=true$/);
+  assert.equal(r.erasure, "permanent");
+  assert.equal(r.facts_deleted, 2);
+  await k.delete("mem_2");
+  assert.doesNotMatch(f.calls[1].url, /erase/);
+  await assert.rejects(k.delete("mem_3", { erse: true }), /erse/);
+});
+
 test("exclude_sessions is sent only when true", async () => {
   const { k, f } = client([{ body: { results: [] } }, { body: { results: [] } },
                            { body: { facts: [], total: 0 } }, { body: { memories: [], total: 0 } }]);

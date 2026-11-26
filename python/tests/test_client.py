@@ -259,6 +259,23 @@ class TestMemories(unittest.TestCase):
         self.assertNotIn("changes", rec.last["params"])
         self.assertEqual((plain.changed, plain.changed_more), (None, None))
 
+    def test_delete_can_erase_and_the_receipt_says_what_went(self):
+        """`DELETE /v1/memories/{id}?erase=true` answers `erasure` and
+        `facts_deleted`; the receipt had neither field and `delete()` could
+        not ask for an erasure (review of 1 Nov 2026)."""
+        rec = (_Recorder().queue(200, {"id": "mem_1", "status": "erased", "erasure": "permanent",
+                                       "facts_invalidated": 0, "facts_deleted": 2,
+                                       "facts_reopened": 0, "audit_id": "aud_1"})
+               .queue(200, {"id": "mem_2", "status": "forgotten", "facts_invalidated": 1,
+                            "facts_reopened": 0, "audit_id": "aud_2"}))
+        k = _client(rec)
+        r = k.delete("mem_1", erase=True)
+        self.assertEqual(rec.last["params"], {"erase": "true"})
+        self.assertEqual((r.status, r.erasure, r.facts_deleted), ("erased", "permanent", 2))
+        r = k.delete("mem_2")
+        self.assertFalse(rec.last["params"])
+        self.assertEqual((r.erasure, r.facts_deleted), (None, None))
+
     def test_declare_name_posts_the_name_for_the_end_user(self):
         rec = _Recorder().queue(201, {"user_id": "maria", "name": "Maria Rossi",
                                       "agent_id": None, "since": "2026-10-18T10:00:00Z"})

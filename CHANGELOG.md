@@ -20,6 +20,11 @@ changes (`korely search` and the stdio MCP server's `korely_search`).
   since, at most 3, as the server sends them) and `changed_more`. CLI:
   `korely context QUERY --reader NAME [--changes all]` and
   `korely facts --reader NAME`. Up to 0.3.0 neither client sent them.
+- **`delete(memory_id, erase=True)`** (Node: `delete(id, { erase: true })`)
+  erases one memory for good, as `DELETE /v1/memories/{id}?erase=true`
+  does, and `DeleteReceipt` has the two fields of that answer, `erasure`
+  and `facts_deleted` (None on a forget). Up to 0.3.0 the clients could not
+  ask for it and dropped the two fields.
 - **A hit's own line breaks never print a line of another hit.** `korely
   search` printed a snippet's line breaks under the indent of the id line,
   so a memory could print a line just like another hit's id; the stdio MCP
