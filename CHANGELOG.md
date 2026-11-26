@@ -8,6 +8,50 @@ The server side of the entries marked "API" shipped on 2026-09-28. Against an
 older server these clients keep working: the old field names are still read,
 and a batch `timestamp` is refused there with a 422.
 
+## Python 0.3.1, npm 0.3.1 (Unreleased)
+
+Patch releases. Nothing that worked stops working; one printed layout
+changes (`korely search` and the stdio MCP server's `korely_search`).
+
+- **Agent notices in both clients and the CLI.** `reader=` on `get_facts()`
+  and `get_context()` (Node: `reader` in `getFacts` and `getContext`), and
+  `changes="all"` on the block, the parameters of Korely 1.0.15 and later.
+  `Context` carries `changed` (the facts this reader was handed that changed
+  since, at most 3, as the server sends them) and `changed_more`. CLI:
+  `korely context QUERY --reader NAME [--changes all]` and
+  `korely facts --reader NAME`. Up to 0.3.0 neither client sent them.
+- **A hit's own line breaks never print a line of another hit.** `korely
+  search` printed a snippet's line breaks under the indent of the id line,
+  so a memory could print a line just like another hit's id; the stdio MCP
+  server's `korely_search` printed them at the margin, where a result
+  begins. Both now follow the rule of Korely's server: the lines after the
+  first start with four spaces, and the id ends the first line,
+  `[0.812] text  (mem_..., memory)`. A script that read the id from the
+  line after the text must read it from the end of the first line, or use
+  `--json`.
+- **`korely forget-fact --at` a later day** says `ends on DATE` and that the
+  fact is current until then. It said `forgotten`.
+- **`korely facts` says when a page is not all of them** (`1-200 of 204
+  fact(s); the next page: --offset 200`) and takes `--offset`. Past the 200
+  of a page the rest were out of sight with nothing saying so.
+- **The help says what the server takes**: `add-fact` 200 characters for
+  the subject and the predicate, 500 for the object; `facts --limit` up to
+  200; `context --token-budget` 50 to 8,000, with at most 10 facts in a
+  block, so more room adds memories.
+- **Docstrings and READMEs corrected**: `agent_cap_exceeded` is a 429
+  (`QuotaExceededError`, no `retry_after`), not a 403; the 503 pause of the
+  model calls is `service_paused`, whose Retry-After is an hour, not
+  `writes_paused` until 00:00 UTC; `ping()` costs no quota but counts
+  against the rate limit like every call.
+- **Tests:** the redaction tests draw their keys from a fixed seed and in
+  the shape the rule covers (unseeded, 110 runs of 5,000 failed by
+  themselves). The shapes the rule does not cover are tested apart, and one
+  more is declared in the README's "Not caught": a random key whose
+  characters repeat more than chance usually lets them (3 of 30,000 drawn).
+
+Not changed: the SDKs still do not wait on a 429 or a 503 by themselves;
+`retry_after` says how long.
+
 ## Python 0.3.0, npm 0.3.0 (2026-11-25)
 
 A minor version, not a patch, because one change breaks code that worked.
