@@ -171,6 +171,39 @@ class TestParserWiring(unittest.TestCase):
             cli.cmd_facts(k, _args(["facts"]))
         self.assertIn("fct_" + "a" * 32 + "  maria · lives_in · Milan", out.getvalue())
 
+    def test_facts_says_when_a_page_is_not_all_of_them(self):
+        """`--limit` stops at 200 and nothing said there were more: 4 facts
+        of 204 out of sight (6 Nov 2026). The page says which and how to
+        read the next one, as `list` does, and `--offset` is sent."""
+        rows = [{"id": f"fct_{n}", "subject": "team", "predicate": "decided", "object": str(n)}
+                for n in range(200)]
+        rec = _Recorder().queue(200, {"facts": rows, "total": 204})
+        k = Korely(api_key="kor_live_x")
+        k._send = rec
+        out = io.StringIO()
+        with redirect_stdout(out):
+            cli.cmd_facts(k, _args(["facts", "--limit", "200"]))
+        self.assertIn("1-200 of 204 fact(s); the next page: --offset 200", out.getvalue())
+        rec.queue(200, {"facts": rows[:4], "total": 204})
+        out = io.StringIO()
+        with redirect_stdout(out):
+            cli.cmd_facts(k, _args(["facts", "--limit", "200", "--offset", "200"]))
+        self.assertEqual(rec.last["params"]["offset"], 200)
+        self.assertIn("201-204 of 204 fact(s)", out.getvalue())
+        rec.queue(200, {"facts": rows[:3], "total": 3})
+        out = io.StringIO()
+        with redirect_stdout(out):
+            cli.cmd_facts(k, _args(["facts"]))
+        self.assertNotIn(" of 3 fact(s)", out.getvalue())
+
+    def test_add_fact_help_says_the_lengths_the_server_takes(self):
+        """An object past 500 characters is a 422 the help did not announce."""
+        helps = {act.dest: act.help for act in
+                 cli.build_parser()._subparsers._group_actions[0].choices["add-fact"]._actions}
+        self.assertIn("500 characters", helps["object"])
+        self.assertIn("200 characters", helps["subject"])
+        self.assertIn("200 characters", helps["predicate"])
+
     def test_all_subcommands_present(self):
         # every documented command must parse (regression on accidental drops)
         for argv in (

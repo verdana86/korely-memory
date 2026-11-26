@@ -536,6 +536,7 @@ def cmd_facts(k: Korely, a) -> int:
                         predicate_family=a.family,
                         user_id=a.user_id, agent_id=a.agent_id, as_of=a.as_of,
                         include_invalidated=a.include_invalidated, limit=a.limit,
+                        offset=getattr(a, "offset", 0),
                         exclude_sessions=getattr(a, "exclude_sessions", False),
                         known_as_of=a.known_as_of)
     if a.json:
@@ -550,6 +551,13 @@ def cmd_facts(k: Korely, a) -> int:
         return 0
     if when:
         print(f"# {when}\n")
+    # A page that is not all of them says so, as `list` does: past the 200 of
+    # a page the rest were not shown and nothing said there were more (the
+    # team's use of 6 Nov 2026: 4 facts of 204 out of sight).
+    offset = getattr(a, "offset", 0) or 0
+    if offset or len(facts) < facts.total:
+        print(f"{offset + 1}-{offset + len(facts)} of {facts.total} fact(s); "
+              f"the next page: --offset {offset + len(facts)}")
     for f in facts:
         print(" ", _fact_row(f))
     return 0
@@ -1550,16 +1558,17 @@ def build_parser() -> argparse.ArgumentParser:
                     help="ISO date: what Korely knew on that day (a change told later is not in it)")
     sp.add_argument("--include-invalidated", action="store_true",
                     help="also show superseded facts")
-    sp.add_argument("--limit", type=int, default=50)
+    sp.add_argument("--limit", type=int, default=50, help="up to 200 (default 50)")
+    sp.add_argument("--offset", type=int, default=0, help="skip this many, to page")
     sp.add_argument("--exclude-sessions", action="store_true",
                     help="leave out the work sessions and what only they stated")
     sp.set_defaults(func=cmd_facts)
 
     sp = sub.add_parser("add-fact", parents=both,
                         help="write a typed fact directly, no extraction (contradiction-checked)")
-    sp.add_argument("subject")
-    sp.add_argument("predicate")
-    sp.add_argument("object")
+    sp.add_argument("subject", help="up to 200 characters")
+    sp.add_argument("predicate", help="up to 200 characters")
+    sp.add_argument("object", help="up to 500 characters")
     sp.add_argument("--run-id", help="optional run/session id")
     sp.add_argument("--valid-from", help="ISO date it became true (default: now)")
     sp.add_argument("--tense", choices=["current", "past", "planned"],
