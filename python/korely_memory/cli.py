@@ -712,6 +712,16 @@ def cmd_forget_fact(k: Korely, a) -> int:
     if a.json:
         _emit_json(r)
         return 0
+    # An end still to come (`--at` a later day) leaves the fact current until
+    # then: "forgotten" said it was gone already (review of 1 Nov 2026).
+    from datetime import datetime, timezone
+    from .hooks import _moment
+
+    end = _moment(r.invalid_at)
+    if r.status != "already_forgotten" and end is not None and end > datetime.now(timezone.utc):
+        print(f"ends on {_utc_day(r.invalid_at)}  {r.id}  (current until then, then kept in "
+              f"history, audit {r.audit_id})")
+        return 0
     word = "already forgotten" if r.status == "already_forgotten" else "forgotten"
     ended = f", true until {_utc_day(r.invalid_at)}" if r.invalid_at else ""
     print(f"{word}  {r.id}  (kept in history{ended}, audit {r.audit_id})")
@@ -1571,7 +1581,8 @@ def build_parser() -> argparse.ArgumentParser:
     sp = sub.add_parser("forget-fact", parents=[common],
                         help="close a fact: no longer current, kept in history")
     sp.add_argument("fact_id")
-    sp.add_argument("--at", help="ISO date it STOPPED being true (default: now)")
+    sp.add_argument("--at", help="ISO date it STOPPED being true (default: now); "
+                                 "a later day keeps it current until then")
     sp.set_defaults(func=cmd_forget_fact)
 
     sp = sub.add_parser("profile", parents=both, help="assembled profile of one end user")

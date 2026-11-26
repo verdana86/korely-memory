@@ -1288,6 +1288,17 @@ class TheAgentFactAndBatchCommands(_RunsCommands):
         rc, data = self._run(rec, ["forget-fact", "fct_1", "--json"])
         self.assertEqual(data["status"], "already_forgotten")
 
+    def test_forget_fact_with_an_end_to_come_says_it_is_still_current(self):
+        """`--at` a later day closes the fact on that day: until then it is
+        current. The line said "forgotten" (review of 1 Nov 2026)."""
+        rec = _Recorder().queue(200, {"id": "fct_1", "status": "forgotten",
+                                      "invalid_at": "2099-01-01T00:00:00+00:00", "audit_id": "aud_4"})
+        rc, out = self._run(rec, ["forget-fact", "fct_1", "--at", "2099-01-01"])
+        self.assertEqual(rc, 0)
+        self.assertNotIn("forgotten", out)
+        self.assertIn("ends on 2099-01-01  fct_1  (current until then, then kept in history, "
+                      "audit aud_4)", out)
+
     def _file(self, text):
         import tempfile
         fd, path = tempfile.mkstemp(suffix=".json")
